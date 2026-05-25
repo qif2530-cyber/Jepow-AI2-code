@@ -52,7 +52,11 @@ extern "C" int jepow_cycles_render_frame(
       "jepow-cycles not built with libcycles. See native/jepow-cycles/README.md");
   return -1;
 #else
-  /* TODO: map scene_path → Cycles session, write output_path */
+  /*
+   * TODO: map scene_path -> Cycles session, create a Blender 4 Principled BSDF
+   * shader graph from req->material_json, then apply req->render_settings_json
+   * to samples, bounces, denoise and color management before writing output_path.
+   */
   set_error("libcycles integration not implemented yet");
   return -1;
 #endif

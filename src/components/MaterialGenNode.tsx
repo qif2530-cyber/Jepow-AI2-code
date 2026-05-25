@@ -8,6 +8,7 @@ import { Canvas } from "@react-three/fiber";
 import { OrbitControls } from "@react-three/drei";
 import * as THREE from "three";
 import api from "../lib/api";
+import { createCyclesMaterial } from "../lib/cycles-material";
 
 interface MaterialGenNodeProps {
   id: string;
@@ -27,6 +28,22 @@ interface MaterialGenNodeProps {
     displacementScale?: number;
     transmission?: number;
     ior?: number;
+    specular?: number;
+    clearcoat?: number;
+    emissionStrength?: number;
+    alpha?: number;
+    specularTint?: number;
+    anisotropic?: number;
+    anisotropicRotation?: number;
+    coatRoughness?: number;
+    coatIor?: number;
+    sheenWeight?: number;
+    sheenRoughness?: number;
+    thinFilmThickness?: number;
+    thinFilmIor?: number;
+    displacementMidlevel?: number;
+    emissionColor?: string;
+    cyclesMaterial?: ReturnType<typeof createCyclesMaterial>;
   };
   selected?: boolean;
 }
@@ -45,6 +62,12 @@ function MaterialPreviewSphere({
   displacementScale,
   transmission,
   ior,
+  specular,
+  clearcoat,
+  coatRoughness,
+  alpha,
+  emissionColor,
+  emissionStrength,
   tiling
 }: any) {
   const [textures, setTextures] = useState<any>({});
@@ -114,6 +137,13 @@ function MaterialPreviewSphere({
         bumpScale={displacementScale * 0.05}
         transmission={transmission ?? 0.0}
         ior={ior ?? 1.5}
+        reflectivity={specular ?? 0.5}
+        clearcoat={clearcoat ?? 0.0}
+        clearcoatRoughness={coatRoughness ?? Math.min(1, (roughness ?? 0.4) * 0.65)}
+        transparent={(alpha ?? 1.0) < 1.0}
+        opacity={alpha ?? 1.0}
+        emissive={new THREE.Color(emissionColor || tint || "#ffffff")}
+        emissiveIntensity={emissionStrength ?? 0.0}
         thickness={transmission > 0 ? 1.0 : 0.0}
       />
     </mesh>
@@ -302,8 +332,10 @@ export function MaterialGenNode({ id, data, selected }: MaterialGenNodeProps) {
         headers: { "Content-Type": "multipart/form-data" }
       });
       const url = res.data.url;
+      const nextRaw = { ...data, [key]: url };
       updateNodeData(id, {
         [key]: url,
+        cyclesMaterial: createCyclesMaterial(nextRaw),
         status: "done"
       });
       addToPersistentHistory(url);
@@ -333,14 +365,37 @@ export function MaterialGenNode({ id, data, selected }: MaterialGenNodeProps) {
       ).length === 1,
   );
 
-  // Gather default dynamic values
-  const tint = data.tint || "#ffffff";
-  const roughness = data.roughness !== undefined ? data.roughness : 0.4;
-  const metalness = data.metalness !== undefined ? data.metalness : 0.3;
-  const normalScale = data.normalScale !== undefined ? data.normalScale : 1.0;
-  const displacementScale = data.displacementScale !== undefined ? data.displacementScale : 0.0;
-  const transmission = data.transmission !== undefined ? data.transmission : 0.0;
-  const ior = data.ior !== undefined ? data.ior : 1.5;
+  // Cycles is the source of truth. Legacy flat fields are read only for migration.
+  const cyclesMaterial = createCyclesMaterial(data);
+  const cycles = cyclesMaterial.principled;
+  const tint = cycles.baseColor;
+  const roughness = cycles.roughness;
+  const metalness = cycles.metallic;
+  const normalScale = cycles.normalStrength;
+  const displacementScale = cycles.displacementScale;
+  const transmission = cycles.transmissionWeight;
+  const ior = cycles.ior;
+  const specular = cycles.specularIorLevel;
+  const clearcoat = cycles.coatWeight;
+  const emissionStrength = cycles.emissionStrength;
+  const alpha = cycles.alpha;
+  const specularTint = cycles.specularTint;
+  const anisotropic = cycles.anisotropic;
+  const anisotropicRotation = cycles.anisotropicRotation;
+  const coatRoughness = cycles.coatRoughness;
+  const coatIor = cycles.coatIor;
+  const sheenWeight = cycles.sheenWeight;
+  const sheenRoughness = cycles.sheenRoughness;
+  const thinFilmThickness = cycles.thinFilmThickness;
+  const thinFilmIor = cycles.thinFilmIor;
+  const displacementMidlevel = cycles.displacementMidlevel;
+  const emissionColor = cycles.emissionColor;
+
+  useEffect(() => {
+    if (!data.cyclesMaterial) {
+      updateNodeData(id, { cyclesMaterial });
+    }
+  }, [data.cyclesMaterial, id, updateNodeData, cyclesMaterial]);
 
   const nodes = getNodes();
   const edges = getEdges();
@@ -362,7 +417,11 @@ export function MaterialGenNode({ id, data, selected }: MaterialGenNodeProps) {
   // Propagate tiling shifts
   useEffect(() => {
     if (tilingScale !== data.tiling) {
-      updateNodeData(id, { tiling: tilingScale });
+      const nextRaw = { ...data, tiling: tilingScale };
+      updateNodeData(id, {
+        tiling: tilingScale,
+        cyclesMaterial: createCyclesMaterial(nextRaw),
+      });
     }
   }, [tilingScale]);
 
@@ -401,6 +460,15 @@ export function MaterialGenNode({ id, data, selected }: MaterialGenNodeProps) {
         metalnessUrl: res.data.metalnessUrl,
         tiling: tilingScale,
         tint: "#ffffff",
+        cyclesMaterial: createCyclesMaterial({
+          ...data,
+          colorUrl: res.data.colorUrl,
+          normalUrl: res.data.normalUrl,
+          roughnessUrl: res.data.roughnessUrl,
+          metalnessUrl: res.data.metalnessUrl,
+          tiling: tilingScale,
+          tint: "#ffffff",
+        }),
         status: "done"
       });
 
@@ -426,12 +494,28 @@ export function MaterialGenNode({ id, data, selected }: MaterialGenNodeProps) {
       metalnessUrl: undefined,
       status: undefined,
       tint: "#ffffff",
-      roughness: 0.4,
-      metalness: 0.3,
+      roughness: 0.5,
+      metalness: 0.0,
       normalScale: 1.0,
       displacementScale: 0.0,
       transmission: 0.0,
-      ior: 1.5
+      ior: 1.5,
+      specular: 0.5,
+      clearcoat: 0.0,
+      emissionStrength: 0.0,
+      alpha: 1.0,
+      specularTint: 0.0,
+      anisotropic: 0.0,
+      anisotropicRotation: 0.0,
+      coatRoughness: 0.25,
+      coatIor: 1.5,
+      sheenWeight: 0.0,
+      sheenRoughness: 0.5,
+      thinFilmThickness: 0.0,
+      thinFilmIor: 1.33,
+      displacementMidlevel: 0.5,
+      emissionColor: "#ffffff",
+      cyclesMaterial: createCyclesMaterial({})
     });
     setProgress(0);
   };
@@ -465,7 +549,20 @@ export function MaterialGenNode({ id, data, selected }: MaterialGenNodeProps) {
         displacementScale: analysis.displacementScale,
         transmission: 0.0,
         status: "done",
-        tiling: tilingScale
+        tiling: tilingScale,
+        cyclesMaterial: createCyclesMaterial({
+          ...data,
+          colorUrl: imgUrl,
+          normalUrl: undefined,
+          roughnessUrl: undefined,
+          metalnessUrl: undefined,
+          tint: analysis.tint,
+          roughness: analysis.roughness,
+          metalness: analysis.metalness,
+          displacementScale: analysis.displacementScale,
+          transmission: 0.0,
+          tiling: tilingScale,
+        }),
       });
 
       addToPersistentHistory(imgUrl);
@@ -480,7 +577,11 @@ export function MaterialGenNode({ id, data, selected }: MaterialGenNodeProps) {
   };
 
   const handleValChange = (key: string, val: any) => {
-    updateNodeData(id, { [key]: val });
+    const nextRaw = { ...data, [key]: val };
+    updateNodeData(id, {
+      [key]: val,
+      cyclesMaterial: createCyclesMaterial(nextRaw),
+    });
   };
 
   return (
@@ -546,6 +647,12 @@ export function MaterialGenNode({ id, data, selected }: MaterialGenNodeProps) {
                 displacementScale={displacementScale}
                 transmission={transmission}
                 ior={ior}
+                specular={specular}
+                clearcoat={clearcoat}
+                coatRoughness={coatRoughness}
+                alpha={alpha}
+                emissionColor={emissionColor}
+                emissionStrength={emissionStrength}
                 tiling={tilingScale}
               />
               <OrbitControls enableZoom={false} enablePan={false} autoRotate autoRotateSpeed={0.8} target={[0, 0, 0]} />
@@ -576,19 +683,32 @@ export function MaterialGenNode({ id, data, selected }: MaterialGenNodeProps) {
       {/* Expanded Control Preset floating control */}
       {selected && isOnlySelected && (
         <div
-          className="absolute z-[9999] pointer-events-auto animate-in fade-in slide-in-from-top-4 duration-300 animate-out fade-out"
+          className="absolute z-[9999] pointer-events-auto nodrag nopan nowheel animate-in fade-in slide-in-from-top-4 duration-300 animate-out fade-out"
           style={{
             top: "100%",
-            marginTop: 20 * (1 / Math.max(0.01, zoom)),
+            marginTop: 12 * (1 / Math.max(0.01, zoom)),
             left: "50%",
             transform: `translateX(-50%) scale(${1 / Math.max(0.01, zoom)})`,
             transformOrigin: "top center",
           }}
+          onPointerDown={(e) => e.stopPropagation()}
+          onPointerMove={(e) => e.stopPropagation()}
+          onWheel={(e) => e.stopPropagation()}
         >
-          <div className="nodrag w-[520px] bg-[#161616]/95 border border-neutral-800 rounded-lg p-4 shadow-2xl flex flex-col gap-3.5 max-h-[580px] overflow-y-auto backdrop-blur-md">
+          <div
+            id={`material-floating-panel-${id}`}
+            className="nodrag nopan nowheel w-[420px] bg-[#151515]/96 border border-neutral-800 rounded-lg p-2.5 shadow-2xl flex flex-col gap-2 max-h-[430px] overflow-y-auto backdrop-blur-md"
+          >
+            <style dangerouslySetInnerHTML={{ __html: `
+              #material-floating-panel-${id} input[type="range"] { height: 3px; margin-top: 6px; }
+              #material-floating-panel-${id} .material-param-grid > div { padding: 8px !important; gap: 4px !important; border-radius: 7px !important; }
+              #material-floating-panel-${id} .material-param-grid span { font-size: 10px !important; }
+              #material-floating-panel-${id} .material-param-grid input[type="text"] { height: 24px !important; font-size: 9px !important; }
+              #material-floating-panel-${id} .material-param-grid input[type="color"] { width: 24px !important; height: 24px !important; }
+            `}} />
             {assetSelectorOpenFor ? (
-              <div className="flex flex-col gap-2.5 animate-in fade-in zoom-in-95 duration-150">
-                <div className="flex items-center justify-between border-b border-neutral-800/80 pb-2">
+              <div className="flex flex-col gap-2 animate-in fade-in zoom-in-95 duration-150">
+                <div className="flex items-center justify-between border-b border-neutral-800/80 pb-1.5">
                   <span className="text-xs font-bold text-emerald-400 flex items-center gap-1">
                     <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
                     关联{getSlotName(assetSelectorOpenFor)}
@@ -601,7 +721,7 @@ export function MaterialGenNode({ id, data, selected }: MaterialGenNodeProps) {
                   </button>
                 </div>
                 
-                <div className="grid grid-cols-5 gap-2 max-h-[260px] overflow-y-auto pr-1 py-1">
+                <div className="grid grid-cols-6 gap-1.5 max-h-[220px] overflow-y-auto pr-1 py-1">
                   {/* Upload new option tile */}
                   <div
                     onClick={() => {
@@ -621,8 +741,10 @@ export function MaterialGenNode({ id, data, selected }: MaterialGenNodeProps) {
                       <div
                         key={idx}
                         onClick={() => {
+                          const nextRaw = { ...data, [assetSelectorOpenFor]: url };
                           updateNodeData(id, {
                             [assetSelectorOpenFor]: url,
+                            cyclesMaterial: createCyclesMaterial(nextRaw),
                             status: "done"
                           });
                           addToPersistentHistory(url);
@@ -656,7 +778,11 @@ export function MaterialGenNode({ id, data, selected }: MaterialGenNodeProps) {
                   {data[assetSelectorOpenFor as keyof typeof data] && (
                     <button
                       onClick={() => {
-                        updateNodeData(id, { [assetSelectorOpenFor]: undefined });
+                        const nextRaw = { ...data, [assetSelectorOpenFor]: undefined };
+                        updateNodeData(id, {
+                          [assetSelectorOpenFor]: undefined,
+                          cyclesMaterial: createCyclesMaterial(nextRaw),
+                        });
                         setAssetSelectorOpenFor(null);
                       }}
                       className="text-[10px] text-red-500 bg-red-950/20 border border-red-900/30 px-2.5 py-1 rounded transition-all hover:bg-red-500 hover:text-white"
@@ -674,18 +800,21 @@ export function MaterialGenNode({ id, data, selected }: MaterialGenNodeProps) {
               </div>
             ) : (
               <>
-                <div className="flex items-center gap-2 border-b border-neutral-800/80 pb-2 mb-1 justify-between select-none">
+                <div className="flex items-center gap-2 border-b border-neutral-800/80 pb-1.5 justify-between select-none">
                   <div className="flex items-center gap-2">
-                    <Sparkles className="w-4 h-4 text-emerald-400" />
-                    <span className="text-xs font-bold text-neutral-200">生成式材质精细调节面板 (PBR Material Console)</span>
+                    <Sparkles className="w-3.5 h-3.5 text-emerald-400" />
+                    <span className="text-[11px] font-bold text-neutral-200">Cycles Principled BSDF</span>
                   </div>
-                  <span className="text-[8.5px] bg-emerald-950/80 text-emerald-400 border border-emerald-900/60 font-semibold px-2 py-0.5 rounded-full font-mono">
-                    2K SHARP RESOLUTION
+                  <span className="text-[8px] bg-emerald-950/80 text-emerald-400 border border-emerald-900/60 font-semibold px-1.5 py-0.5 rounded-full font-mono">
+                    CYCLES
                   </span>
+                </div>
+                <div className="rounded-md border border-emerald-900/30 bg-emerald-950/15 px-2 py-1.5 text-[9px] leading-snug text-emerald-100/70">
+                  输出 <strong className="text-emerald-300">cyclesMaterial</strong>，视口仅预览，物理渲染读取同一套参数。
                 </div>
 
                 {/* PBR parameter grids */}
-                <div className="flex flex-col gap-2 pt-0.5">
+                <div className="flex flex-col gap-1.5 pt-0.5">
                   {/* Hidden direct channel picker */}
                   <input
                     id={`direct-slot-picker-${id}`}
@@ -701,7 +830,7 @@ export function MaterialGenNode({ id, data, selected }: MaterialGenNodeProps) {
                     }}
                   />
 
-                  <div className="grid grid-cols-2 gap-3 pb-1 text-[11px] select-none text-white">
+                  <div className="material-param-grid grid grid-cols-2 gap-2 pb-1 text-[10px] select-none text-white">
                     {/* 1. Diffuse Tint */}
                     <div className="flex flex-col gap-1.5 bg-neutral-900/60 p-2.5 rounded-lg border border-neutral-800/40 hover:border-neutral-700/80 transition-all duration-200">
                       <div className="flex items-center justify-between min-w-0">
@@ -723,7 +852,7 @@ export function MaterialGenNode({ id, data, selected }: MaterialGenNodeProps) {
                               <Plus className="w-3 h-3 text-neutral-500 group-hover:text-emerald-400" />
                             )}
                           </div>
-                          <span className="text-[11px] font-bold text-neutral-300 truncate">漫反射底色贴图</span>
+                          <span className="text-[11px] font-bold text-neutral-300 truncate">Base Color / 底色</span>
                         </div>
                         <span className="text-[10px] font-mono font-bold text-neutral-400 px-1.5 py-0.5 bg-neutral-950 rounded border border-neutral-805">{tint}</span>
                       </div>
@@ -766,7 +895,7 @@ export function MaterialGenNode({ id, data, selected }: MaterialGenNodeProps) {
                               <Plus className="w-3 h-3 text-neutral-500 group-hover:text-emerald-400" />
                             )}
                           </div>
-                          <span className="text-[11px] font-bold text-neutral-300 truncate">表面粗糙度贴图</span>
+                          <span className="text-[11px] font-bold text-neutral-300 truncate">Roughness / 粗糙度</span>
                         </div>
                         <span className="text-[10px] font-mono font-bold text-emerald-400 px-1.5 py-0.5 bg-emerald-950/40 rounded border border-emerald-900/40">{roughness.toFixed(2)}</span>
                       </div>
@@ -803,7 +932,7 @@ export function MaterialGenNode({ id, data, selected }: MaterialGenNodeProps) {
                               <Plus className="w-3 h-3 text-neutral-500 group-hover:text-emerald-400" />
                             )}
                           </div>
-                          <span className="text-[11px] font-bold text-neutral-300 truncate">金属质感贴图</span>
+                          <span className="text-[11px] font-bold text-neutral-300 truncate">Metallic / 金属度</span>
                         </div>
                         <span className="text-[10px] font-mono font-bold text-emerald-400 px-1.5 py-0.5 bg-emerald-950/40 rounded border border-emerald-900/40">{metalness.toFixed(2)}</span>
                       </div>
@@ -840,7 +969,7 @@ export function MaterialGenNode({ id, data, selected }: MaterialGenNodeProps) {
                               <Plus className="w-3 h-3 text-neutral-500 group-hover:text-emerald-400" />
                             )}
                           </div>
-                          <span className="text-[11px] font-bold text-neutral-300 truncate">法线凹凸贴图</span>
+                          <span className="text-[11px] font-bold text-neutral-300 truncate">Normal Map / 法线</span>
                         </div>
                         <span className="text-[10px] font-mono font-bold text-emerald-400 px-1.5 py-0.5 bg-emerald-950/40 rounded border border-emerald-900/40">{normalScale.toFixed(2)}x</span>
                       </div>
@@ -877,7 +1006,7 @@ export function MaterialGenNode({ id, data, selected }: MaterialGenNodeProps) {
                               <Plus className="w-3 h-3 text-neutral-500 group-hover:text-emerald-400" />
                             )}
                           </div>
-                          <span className="text-[11px] font-bold text-neutral-300 truncate">高度凹凸贴图</span>
+                          <span className="text-[11px] font-bold text-neutral-300 truncate">Height / Bump（预览球）</span>
                         </div>
                         <span className="text-[10px] font-mono font-bold text-emerald-400 px-1.5 py-0.5 bg-emerald-950/40 rounded border border-emerald-900/40">{displacementScale.toFixed(2)}x</span>
                       </div>
@@ -896,7 +1025,7 @@ export function MaterialGenNode({ id, data, selected }: MaterialGenNodeProps) {
                     {/* 6. Transmission */}
                     <div className="flex flex-col gap-1.5 bg-neutral-900/60 p-2.5 rounded-lg border border-neutral-800/40 hover:border-neutral-700/80 transition-all duration-200 font-sans">
                       <div className="flex justify-between items-center text-[11px] font-bold text-neutral-300">
-                        <span>半透玻璃质感</span>
+                        <span>Transmission（预留离线渲染）</span>
                         <span className="text-[10px] font-mono font-bold text-emerald-400 px-1.5 py-0.5 bg-emerald-950/40 rounded border border-emerald-900/40">{transmission.toFixed(2)}</span>
                       </div>
                       <input
@@ -914,7 +1043,7 @@ export function MaterialGenNode({ id, data, selected }: MaterialGenNodeProps) {
                     {/* 7. IOR */}
                     <div className="flex flex-col gap-1.5 bg-neutral-900/60 p-2.5 rounded-lg border border-neutral-800/40 hover:border-neutral-700/80 transition-all duration-200 font-sans">
                       <div className="flex justify-between items-center text-[11px] font-bold text-neutral-300">
-                        <span>物理折射率 (IOR)</span>
+                        <span>IOR（预留离线渲染）</span>
                         <span className="text-[10px] font-mono font-bold text-emerald-400 px-1.5 py-0.5 bg-emerald-950/40 rounded border border-emerald-900/40">{ior.toFixed(2)}</span>
                       </div>
                       <input
@@ -930,6 +1059,268 @@ export function MaterialGenNode({ id, data, selected }: MaterialGenNodeProps) {
                     </div>
 
                     {/* 8. Tiling repetitiveness */}
+                    <div className="flex flex-col gap-1.5 bg-neutral-900/60 p-2.5 rounded-lg border border-neutral-800/40 hover:border-neutral-700/80 transition-all duration-200 font-sans">
+                      <div className="flex justify-between items-center text-[11px] font-bold text-neutral-300">
+                        <span>Alpha / 透明度</span>
+                        <span className="text-[10px] font-mono font-bold text-emerald-400 px-1.5 py-0.5 bg-emerald-950/40 rounded border border-emerald-900/40">{alpha.toFixed(2)}</span>
+                      </div>
+                      <input
+                        type="range"
+                        min="0.0"
+                        max="1.0"
+                        step="0.05"
+                        value={alpha}
+                        onChange={(e) => handleValChange("alpha", parseFloat(e.target.value))}
+                        onMouseDown={(e) => e.stopPropagation()}
+                        className="w-full h-1 bg-neutral-800 rounded appearance-none cursor-pointer accent-emerald-500 mt-2.5"
+                      />
+                    </div>
+
+                    <div className="flex flex-col gap-1.5 bg-neutral-900/60 p-2.5 rounded-lg border border-neutral-800/40 hover:border-neutral-700/80 transition-all duration-200 font-sans">
+                      <div className="flex justify-between items-center text-[11px] font-bold text-neutral-300">
+                        <span>Specular IOR Level</span>
+                        <span className="text-[10px] font-mono font-bold text-emerald-400 px-1.5 py-0.5 bg-emerald-950/40 rounded border border-emerald-900/40">{specular.toFixed(2)}</span>
+                      </div>
+                      <input
+                        type="range"
+                        min="0.0"
+                        max="1.0"
+                        step="0.05"
+                        value={specular}
+                        onChange={(e) => handleValChange("specular", parseFloat(e.target.value))}
+                        onMouseDown={(e) => e.stopPropagation()}
+                        className="w-full h-1 bg-neutral-800 rounded appearance-none cursor-pointer accent-emerald-500 mt-2.5"
+                      />
+                    </div>
+
+                    <div className="flex flex-col gap-1.5 bg-neutral-900/60 p-2.5 rounded-lg border border-neutral-800/40 hover:border-neutral-700/80 transition-all duration-200 font-sans">
+                      <div className="flex justify-between items-center text-[11px] font-bold text-neutral-300">
+                        <span>Specular Tint</span>
+                        <span className="text-[10px] font-mono font-bold text-emerald-400 px-1.5 py-0.5 bg-emerald-950/40 rounded border border-emerald-900/40">{specularTint.toFixed(2)}</span>
+                      </div>
+                      <input
+                        type="range"
+                        min="0.0"
+                        max="1.0"
+                        step="0.05"
+                        value={specularTint}
+                        onChange={(e) => handleValChange("specularTint", parseFloat(e.target.value))}
+                        onMouseDown={(e) => e.stopPropagation()}
+                        className="w-full h-1 bg-neutral-800 rounded appearance-none cursor-pointer accent-emerald-500 mt-2.5"
+                      />
+                    </div>
+
+                    <div className="flex flex-col gap-1.5 bg-neutral-900/60 p-2.5 rounded-lg border border-neutral-800/40 hover:border-neutral-700/80 transition-all duration-200 font-sans">
+                      <div className="flex justify-between items-center text-[11px] font-bold text-neutral-300">
+                        <span>Anisotropic / 各向异性</span>
+                        <span className="text-[10px] font-mono font-bold text-emerald-400 px-1.5 py-0.5 bg-emerald-950/40 rounded border border-emerald-900/40">{anisotropic.toFixed(2)}</span>
+                      </div>
+                      <input
+                        type="range"
+                        min="0.0"
+                        max="1.0"
+                        step="0.05"
+                        value={anisotropic}
+                        onChange={(e) => handleValChange("anisotropic", parseFloat(e.target.value))}
+                        onMouseDown={(e) => e.stopPropagation()}
+                        className="w-full h-1 bg-neutral-800 rounded appearance-none cursor-pointer accent-emerald-500 mt-2.5"
+                      />
+                    </div>
+
+                    <div className="flex flex-col gap-1.5 bg-neutral-900/60 p-2.5 rounded-lg border border-neutral-800/40 hover:border-neutral-700/80 transition-all duration-200 font-sans">
+                      <div className="flex justify-between items-center text-[11px] font-bold text-neutral-300">
+                        <span>Anisotropic Rotation</span>
+                        <span className="text-[10px] font-mono font-bold text-emerald-400 px-1.5 py-0.5 bg-emerald-950/40 rounded border border-emerald-900/40">{anisotropicRotation.toFixed(2)}</span>
+                      </div>
+                      <input
+                        type="range"
+                        min="0.0"
+                        max="1.0"
+                        step="0.05"
+                        value={anisotropicRotation}
+                        onChange={(e) => handleValChange("anisotropicRotation", parseFloat(e.target.value))}
+                        onMouseDown={(e) => e.stopPropagation()}
+                        className="w-full h-1 bg-neutral-800 rounded appearance-none cursor-pointer accent-emerald-500 mt-2.5"
+                      />
+                    </div>
+
+                    <div className="flex flex-col gap-1.5 bg-neutral-900/60 p-2.5 rounded-lg border border-neutral-800/40 hover:border-neutral-700/80 transition-all duration-200 font-sans">
+                      <div className="flex justify-between items-center text-[11px] font-bold text-neutral-300">
+                        <span>Coat Weight / 清漆层</span>
+                        <span className="text-[10px] font-mono font-bold text-emerald-400 px-1.5 py-0.5 bg-emerald-950/40 rounded border border-emerald-900/40">{clearcoat.toFixed(2)}</span>
+                      </div>
+                      <input
+                        type="range"
+                        min="0.0"
+                        max="1.0"
+                        step="0.05"
+                        value={clearcoat}
+                        onChange={(e) => handleValChange("clearcoat", parseFloat(e.target.value))}
+                        onMouseDown={(e) => e.stopPropagation()}
+                        className="w-full h-1 bg-neutral-800 rounded appearance-none cursor-pointer accent-emerald-500 mt-2.5"
+                      />
+                    </div>
+
+                    <div className="flex flex-col gap-1.5 bg-neutral-900/60 p-2.5 rounded-lg border border-neutral-800/40 hover:border-neutral-700/80 transition-all duration-200 font-sans">
+                      <div className="flex justify-between items-center text-[11px] font-bold text-neutral-300">
+                        <span>Coat Roughness</span>
+                        <span className="text-[10px] font-mono font-bold text-emerald-400 px-1.5 py-0.5 bg-emerald-950/40 rounded border border-emerald-900/40">{coatRoughness.toFixed(2)}</span>
+                      </div>
+                      <input
+                        type="range"
+                        min="0.0"
+                        max="1.0"
+                        step="0.05"
+                        value={coatRoughness}
+                        onChange={(e) => handleValChange("coatRoughness", parseFloat(e.target.value))}
+                        onMouseDown={(e) => e.stopPropagation()}
+                        className="w-full h-1 bg-neutral-800 rounded appearance-none cursor-pointer accent-emerald-500 mt-2.5"
+                      />
+                    </div>
+
+                    <div className="flex flex-col gap-1.5 bg-neutral-900/60 p-2.5 rounded-lg border border-neutral-800/40 hover:border-neutral-700/80 transition-all duration-200 font-sans">
+                      <div className="flex justify-between items-center text-[11px] font-bold text-neutral-300">
+                        <span>Coat IOR</span>
+                        <span className="text-[10px] font-mono font-bold text-emerald-400 px-1.5 py-0.5 bg-emerald-950/40 rounded border border-emerald-900/40">{coatIor.toFixed(2)}</span>
+                      </div>
+                      <input
+                        type="range"
+                        min="1.0"
+                        max="3.0"
+                        step="0.05"
+                        value={coatIor}
+                        onChange={(e) => handleValChange("coatIor", parseFloat(e.target.value))}
+                        onMouseDown={(e) => e.stopPropagation()}
+                        className="w-full h-1 bg-neutral-800 rounded appearance-none cursor-pointer accent-emerald-500 mt-2.5"
+                      />
+                    </div>
+
+                    <div className="flex flex-col gap-1.5 bg-neutral-900/60 p-2.5 rounded-lg border border-neutral-800/40 hover:border-neutral-700/80 transition-all duration-200 font-sans">
+                      <div className="flex justify-between items-center text-[11px] font-bold text-neutral-300">
+                        <span>Sheen Weight</span>
+                        <span className="text-[10px] font-mono font-bold text-emerald-400 px-1.5 py-0.5 bg-emerald-950/40 rounded border border-emerald-900/40">{sheenWeight.toFixed(2)}</span>
+                      </div>
+                      <input
+                        type="range"
+                        min="0.0"
+                        max="1.0"
+                        step="0.05"
+                        value={sheenWeight}
+                        onChange={(e) => handleValChange("sheenWeight", parseFloat(e.target.value))}
+                        onMouseDown={(e) => e.stopPropagation()}
+                        className="w-full h-1 bg-neutral-800 rounded appearance-none cursor-pointer accent-emerald-500 mt-2.5"
+                      />
+                    </div>
+
+                    <div className="flex flex-col gap-1.5 bg-neutral-900/60 p-2.5 rounded-lg border border-neutral-800/40 hover:border-neutral-700/80 transition-all duration-200 font-sans">
+                      <div className="flex justify-between items-center text-[11px] font-bold text-neutral-300">
+                        <span>Sheen Roughness</span>
+                        <span className="text-[10px] font-mono font-bold text-emerald-400 px-1.5 py-0.5 bg-emerald-950/40 rounded border border-emerald-900/40">{sheenRoughness.toFixed(2)}</span>
+                      </div>
+                      <input
+                        type="range"
+                        min="0.0"
+                        max="1.0"
+                        step="0.05"
+                        value={sheenRoughness}
+                        onChange={(e) => handleValChange("sheenRoughness", parseFloat(e.target.value))}
+                        onMouseDown={(e) => e.stopPropagation()}
+                        className="w-full h-1 bg-neutral-800 rounded appearance-none cursor-pointer accent-emerald-500 mt-2.5"
+                      />
+                    </div>
+
+                    <div className="flex flex-col gap-1.5 bg-neutral-900/60 p-2.5 rounded-lg border border-neutral-800/40 hover:border-neutral-700/80 transition-all duration-200 font-sans">
+                      <div className="flex justify-between items-center text-[11px] font-bold text-neutral-300">
+                        <span>Emission Strength / 自发光</span>
+                        <span className="text-[10px] font-mono font-bold text-emerald-400 px-1.5 py-0.5 bg-emerald-950/40 rounded border border-emerald-900/40">{emissionStrength.toFixed(2)}</span>
+                      </div>
+                      <input
+                        type="range"
+                        min="0.0"
+                        max="8.0"
+                        step="0.1"
+                        value={emissionStrength}
+                        onChange={(e) => handleValChange("emissionStrength", parseFloat(e.target.value))}
+                        onMouseDown={(e) => e.stopPropagation()}
+                        className="w-full h-1 bg-neutral-800 rounded appearance-none cursor-pointer accent-emerald-500 mt-2.5"
+                      />
+                    </div>
+
+                    <div className="flex flex-col gap-1.5 bg-neutral-900/60 p-2.5 rounded-lg border border-neutral-800/40 hover:border-neutral-700/80 transition-all duration-200">
+                      <div className="flex items-center justify-between min-w-0">
+                        <span className="text-[11px] font-bold text-neutral-300 truncate">Emission Color</span>
+                        <span className="text-[10px] font-mono font-bold text-neutral-400 px-1.5 py-0.5 bg-neutral-950 rounded border border-neutral-805">{emissionColor}</span>
+                      </div>
+                      <div className="flex items-center gap-1.5 h-7 mt-0.5">
+                        <input
+                          type="color"
+                          value={emissionColor}
+                          onChange={(e) => handleValChange("emissionColor", e.target.value)}
+                          onMouseDown={(e) => e.stopPropagation()}
+                          className="w-7 h-7 rounded border border-neutral-800 bg-transparent cursor-pointer shrink-0"
+                        />
+                        <input
+                          type="text"
+                          value={emissionColor}
+                          onChange={(e) => handleValChange("emissionColor", e.target.value)}
+                          onMouseDown={(e) => e.stopPropagation()}
+                          className="h-7 text-[10px] font-mono bg-neutral-950 border border-neutral-850 text-white rounded px-2 w-full focus:outline-none focus:border-emerald-600"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="flex flex-col gap-1.5 bg-neutral-900/60 p-2.5 rounded-lg border border-neutral-800/40 hover:border-neutral-700/80 transition-all duration-200 font-sans">
+                      <div className="flex justify-between items-center text-[11px] font-bold text-neutral-300">
+                        <span>Thin Film Thickness</span>
+                        <span className="text-[10px] font-mono font-bold text-emerald-400 px-1.5 py-0.5 bg-emerald-950/40 rounded border border-emerald-900/40">{thinFilmThickness.toFixed(0)}nm</span>
+                      </div>
+                      <input
+                        type="range"
+                        min="0"
+                        max="2000"
+                        step="10"
+                        value={thinFilmThickness}
+                        onChange={(e) => handleValChange("thinFilmThickness", parseFloat(e.target.value))}
+                        onMouseDown={(e) => e.stopPropagation()}
+                        className="w-full h-1 bg-neutral-800 rounded appearance-none cursor-pointer accent-emerald-500 mt-2.5"
+                      />
+                    </div>
+
+                    <div className="flex flex-col gap-1.5 bg-neutral-900/60 p-2.5 rounded-lg border border-neutral-800/40 hover:border-neutral-700/80 transition-all duration-200 font-sans">
+                      <div className="flex justify-between items-center text-[11px] font-bold text-neutral-300">
+                        <span>Thin Film IOR</span>
+                        <span className="text-[10px] font-mono font-bold text-emerald-400 px-1.5 py-0.5 bg-emerald-950/40 rounded border border-emerald-900/40">{thinFilmIor.toFixed(2)}</span>
+                      </div>
+                      <input
+                        type="range"
+                        min="1.0"
+                        max="3.0"
+                        step="0.05"
+                        value={thinFilmIor}
+                        onChange={(e) => handleValChange("thinFilmIor", parseFloat(e.target.value))}
+                        onMouseDown={(e) => e.stopPropagation()}
+                        className="w-full h-1 bg-neutral-800 rounded appearance-none cursor-pointer accent-emerald-500 mt-2.5"
+                      />
+                    </div>
+
+                    <div className="flex flex-col gap-1.5 bg-neutral-900/60 p-2.5 rounded-lg border border-neutral-800/40 hover:border-neutral-700/80 transition-all duration-200 font-sans">
+                      <div className="flex justify-between items-center text-[11px] font-bold text-neutral-300">
+                        <span>Displacement Midlevel</span>
+                        <span className="text-[10px] font-mono font-bold text-emerald-400 px-1.5 py-0.5 bg-emerald-950/40 rounded border border-emerald-900/40">{displacementMidlevel.toFixed(2)}</span>
+                      </div>
+                      <input
+                        type="range"
+                        min="0.0"
+                        max="1.0"
+                        step="0.05"
+                        value={displacementMidlevel}
+                        onChange={(e) => handleValChange("displacementMidlevel", parseFloat(e.target.value))}
+                        onMouseDown={(e) => e.stopPropagation()}
+                        className="w-full h-1 bg-neutral-800 rounded appearance-none cursor-pointer accent-emerald-500 mt-2.5"
+                      />
+                    </div>
+
+                    {/* 11. Tiling repetitiveness */}
                     <div className="flex flex-col gap-1.5 bg-neutral-900/60 p-2.5 rounded-lg border border-neutral-800/40 hover:border-neutral-700/80 transition-all duration-200 font-sans">
                       <div className="flex justify-between items-center text-[11px] font-bold text-neutral-300">
                         <span>贴图密度 (Tiling)</span>

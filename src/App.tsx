@@ -142,6 +142,29 @@ import { MaterialReplaceNode } from "./components/MaterialReplaceNode";
 import { ThreeDEditorNode } from "./components/ThreeDEditorNode";
 import { ModelAssetNode } from "./components/ModelAssetNode";
 import { ThreeDRenderNode } from "./components/ThreeDRenderNode";
+import { CyclesLightNode } from "./components/CyclesLightNode";
+import { CyclesRenderSettingsNode } from "./components/CyclesRenderSettingsNode";
+import { CyclesPrincipledNode } from "./components/cycles/CyclesPrincipledNode";
+import { CyclesImageTextureNode } from "./components/cycles/CyclesImageTextureNode";
+import { CyclesNormalMapNode } from "./components/cycles/CyclesNormalMapNode";
+import { CyclesDisplacementNode } from "./components/cycles/CyclesDisplacementNode";
+import {
+  CyclesGammaNode,
+  CyclesBrightContrastNode,
+  CyclesRgbCurvesNode,
+  CyclesRgbRampNode,
+  CyclesMixColorNode,
+  CyclesMapRangeNode,
+  CyclesRgbToBwNode,
+} from "./components/cycles/CyclesColorAdjustNodes";
+import { CyclesPaletteMenu } from "./components/cycles/CyclesPaletteMenu";
+import { PaneNodeContextMenu } from "./components/canvas/PaneNodeContextMenu";
+import { getCyclesNodeDefaultData } from "./lib/cycles-node-registry";
+import {
+  edgeStyleForNative3dConnection,
+  normalizeNative3dConnection,
+  validateNative3dConnection,
+} from "./lib/native-3d-pipeline";
 import { DeletableEdge } from "./components/DeletableEdge";
 import { HistoryPanel } from "./components/HistoryPanel";
 import { ShotContext } from "./ShotContext";
@@ -3000,6 +3023,19 @@ export default function App() {
       threeDEditorNode: ThreeDEditorNode,
       threeDRenderNode: ThreeDRenderNode,
       modelAssetNode: ModelAssetNode,
+      cyclesPrincipledNode: CyclesPrincipledNode,
+      cyclesImageTextureNode: CyclesImageTextureNode,
+      cyclesNormalMapNode: CyclesNormalMapNode,
+      cyclesDisplacementNode: CyclesDisplacementNode,
+      cyclesGammaNode: CyclesGammaNode,
+      cyclesBrightContrastNode: CyclesBrightContrastNode,
+      cyclesRgbCurvesNode: CyclesRgbCurvesNode,
+      cyclesRgbRampNode: CyclesRgbRampNode,
+      cyclesMixColorNode: CyclesMixColorNode,
+      cyclesMapRangeNode: CyclesMapRangeNode,
+      cyclesRgbToBwNode: CyclesRgbToBwNode,
+      cyclesLightNode: CyclesLightNode,
+      cyclesRenderSettingsNode: CyclesRenderSettingsNode,
     }),
     [],
   );
@@ -4113,8 +4149,16 @@ export default function App() {
 
   const onConnect = useCallback((params: Connection) => {
     setEdges((eds) => {
-      const sourceNode = nodesRef.current.find((n) => n.id === params.source);
-      const targetNode = nodesRef.current.find((n) => n.id === params.target);
+      const normalized = normalizeNative3dConnection(params, nodesRef.current);
+      const validation = validateNative3dConnection(normalized, nodesRef.current);
+      if (!validation.ok) {
+        toast.error(validation.reason || "该连接不符合 3D 原生链路规范");
+        return eds;
+      }
+
+      const sourceNode = nodesRef.current.find((n) => n.id === normalized.source);
+      const targetNode = nodesRef.current.find((n) => n.id === normalized.target);
+      const edgeStyle = edgeStyleForNative3dConnection(normalized, nodesRef.current);
 
       let newEdgesToAdd: Edge[] = [];
 
@@ -4124,23 +4168,29 @@ export default function App() {
         );
         selectedNodes.forEach((node) => {
           newEdgesToAdd.push({
-            ...params,
+            ...normalized,
             source: node.id,
             type: "deletable",
             animated: true,
-            style: { stroke: "#8b5cf6", strokeWidth: 3 },
+            style: { stroke: edgeStyle.stroke, strokeWidth: edgeStyle.strokeWidth },
           } as Edge);
         });
       } else {
         newEdgesToAdd.push({
-          ...params,
+          ...normalized,
           type: "deletable",
           animated: true,
-          style: { stroke: "#8b5cf6", strokeWidth: 3 },
+          style: { stroke: edgeStyle.stroke, strokeWidth: edgeStyle.strokeWidth },
         } as Edge);
       }
 
-      let nextEds = [...eds];
+      let nextEds = eds.filter(
+        (e) =>
+          !(
+            e.target === normalized.target &&
+            e.targetHandle === normalized.targetHandle
+          ),
+      );
 
       for (const edge of newEdgesToAdd) {
         if (targetNode?.type === "imageShotNode") {
@@ -4198,6 +4248,9 @@ export default function App() {
           }
         }
       }
+      const normalized = normalizeNative3dConnection(connection, nodesRef.current);
+      const validation = validateNative3dConnection(normalized, nodesRef.current);
+      if (!validation.ok) return false;
       return true;
     },
     []
@@ -6593,6 +6646,7 @@ export default function App() {
     flowPos?: { x: number; y: number },
   ) => {
     const id = `${type}-${Date.now()}`;
+    const defaultData = getCyclesNodeDefaultData(type) ?? {};
     let centerPos = flowPos;
     if (!centerPos && reactFlowInstance) {
       centerPos = reactFlowInstance.screenToFlowPosition({
@@ -6610,7 +6664,7 @@ export default function App() {
           x: Math.random() * 200 + 100,
           y: Math.random() * 200 + 100,
         },
-        data: {},
+        data: defaultData,
       },
     ]);
     setRadialMenu(null);
@@ -7027,7 +7081,6 @@ export default function App() {
         <DesktopHomeScreen
           user={user}
           projects={cloudProjects}
-          siteLogo={siteConfig?.logo}
           onNewProject={() => setShowNewProjectSaveDialog(true)}
           onOpenProject={handleLoadCloudProject}
           onDeleteProject={handleDeleteCloudProject}
@@ -7285,13 +7338,10 @@ export default function App() {
                         }}
                         title={canvasOnly ? "返回工程首页" : "返回首页"}
                       >
-                        <Logo
-                          url={siteConfig?.logo}
-                          className="w-10 h-10 drop-shadow-md"
-                        />
+                        <Logo className="w-10 h-10 drop-shadow-md" />
                       </button>
 
-                      <div className="absolute top-full left-0 mt-2 flex flex-col gap-1 bg-neutral-900/95 backdrop-blur-xl p-2 rounded-2xl shadow-2xl border border-neutral-800 opacity-0 -translate-y-4 scale-95 pointer-events-none group-hover:opacity-100 group-hover:translate-y-0 group-hover:scale-100 group-hover:pointer-events-auto transition-all duration-300 origin-top">
+                      <div className="absolute top-full left-0 pt-3 flex flex-col gap-1 bg-neutral-900/95 backdrop-blur-xl p-2 rounded-2xl shadow-2xl border border-neutral-800 opacity-0 -translate-y-3 scale-95 pointer-events-none group-hover:opacity-100 group-hover:translate-y-0 group-hover:scale-100 group-hover:pointer-events-auto transition-all duration-200 origin-top before:content-[''] before:absolute before:left-0 before:right-0 before:-top-3 before:h-3">
                         {/* 个人中心 */}
                         <button
                           className="w-10 h-10 rounded-xl transition-all duration-200 bg-transparent text-neutral-400 hover:bg-neutral-800 hover:text-white flex items-center justify-center relative group/btn"
@@ -7388,14 +7438,14 @@ export default function App() {
 
                   <Panel
                     position="top-right"
-                    className={`fixed top-0 bottom-0 right-0 flex flex-col transition-[width,background,box-shadow,border-color] duration-300 ease-in-out z-[95] pointer-events-none ${
+                    className={`fixed top-6 bottom-6 right-4 flex flex-col transition-[width,background,box-shadow,border-color] duration-300 ease-in-out z-[95] pointer-events-none rounded-l-3xl rounded-r-2xl ${
                       showAiChat
-                        ? "bg-[#0d0d10]/98 backdrop-blur-xl shadow-[0_0_60px_rgba(0,0,0,0.45)] border-l border-white/10"
+                        ? "bg-[#101012]/98 backdrop-blur-xl shadow-[0_24px_80px_rgba(0,0,0,0.35)] border border-white/10"
                         : "bg-transparent border-l-0 shadow-none"
                     }`}
                     style={{
-                      height: "100vh",
-                      width: showAiChat ? "380px" : "0px",
+                      height: "calc(100vh - 48px)",
+                      width: showAiChat ? "360px" : "0px",
                     }}
                   >
                     {/* Synchronized sliding tab button */}
@@ -7403,7 +7453,7 @@ export default function App() {
                       onClick={() => setShowAiChat(!showAiChat)}
                       className={`absolute top-1/2 -translate-y-1/2 flex items-center justify-center cursor-pointer transition-all duration-300 pointer-events-auto ${
                         showAiChat
-                          ? "-left-9 h-16 w-9 rounded-l-2xl border-y border-l border-white/10 bg-[#0d0d10]/95 shadow-2xl text-neutral-300 hover:text-white hover:bg-neutral-900"
+                          ? "-left-9 h-14 w-9 rounded-l-2xl border-y border-l border-white/10 bg-[#101012]/95 shadow-2xl text-neutral-300 hover:text-white hover:bg-neutral-900"
                           : "-left-3 h-10 w-3 border-0 bg-transparent shadow-none text-transparent hover:-left-4 hover:w-4"
                       }`}
                       title={showAiChat ? "收起 AI 助手" : "打开 AI 助手"}
@@ -7419,14 +7469,14 @@ export default function App() {
                     {showAiChat && (
                     <div
                       ref={aiPanelRef}
-                      className="h-full w-full flex flex-col overflow-hidden pointer-events-auto relative rounded-none"
+                      className="h-full w-full flex flex-col overflow-hidden pointer-events-auto relative rounded-l-3xl rounded-r-2xl"
                       onClick={(e) => e.stopPropagation()}
                     >
                       {/* Sidebar Header */}
-                      <div className="relative flex items-center justify-between px-4 py-4 border-b border-white/10 bg-[radial-gradient(circle_at_top_left,rgba(16,185,129,0.16),transparent_38%),linear-gradient(180deg,#111116,#09090b)] shrink-0 select-none overflow-hidden">
+                      <div className="relative flex items-center justify-between px-4 py-3.5 border-b border-white/10 bg-[radial-gradient(circle_at_top_left,rgba(16,185,129,0.14),transparent_38%),linear-gradient(180deg,#151519,#0f0f12)] shrink-0 select-none overflow-hidden">
                         <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-emerald-400/40 to-transparent" />
                         <div className="flex items-center gap-2.5">
-                          <div className="w-9 h-9 rounded-2xl bg-emerald-400/10 border border-emerald-400/25 flex items-center justify-center shadow-[0_0_22px_rgba(16,185,129,0.12)]">
+                          <div className="w-8 h-8 rounded-2xl bg-emerald-400/10 border border-emerald-400/25 flex items-center justify-center shadow-[0_0_22px_rgba(16,185,129,0.12)]">
                             <Sparkles className="w-4 h-4 text-emerald-300" />
                           </div>
                           <div className="flex flex-col">
@@ -7447,12 +7497,12 @@ export default function App() {
                         </button>
                       </div>
 
-                      <div className="flex-1 overflow-y-auto px-4 py-4 space-y-4 scrollbar-hide bg-[linear-gradient(180deg,rgba(255,255,255,0.02),transparent_22%)]">
+                      <div className="flex-1 overflow-y-auto px-4 py-5 space-y-4 scrollbar-hide bg-[linear-gradient(180deg,rgba(255,255,255,0.025),transparent_22%)]">
                         {aiMessages.length === 0 ? (
-                          <div className="h-full min-h-[260px] flex flex-col items-center justify-center text-center px-5 text-neutral-500 gap-4 select-none">
-                            <div className="relative w-16 h-16 rounded-3xl bg-emerald-400/10 border border-emerald-400/20 flex items-center justify-center shadow-[0_0_40px_rgba(16,185,129,0.12)]">
+                          <div className="h-full min-h-[320px] flex flex-col items-center justify-center text-center px-5 text-neutral-500 gap-4 select-none">
+                            <div className="relative w-14 h-14 rounded-3xl bg-emerald-400/10 border border-emerald-400/20 flex items-center justify-center shadow-[0_0_40px_rgba(16,185,129,0.12)]">
                               <div className="absolute inset-2 rounded-2xl border border-white/5" />
-                              <Sparkles className="w-7 h-7 text-emerald-300/90" />
+                              <Sparkles className="w-6 h-6 text-emerald-300/90" />
                             </div>
                             <div>
                               <p className="text-sm font-semibold text-neutral-200 mb-1">
@@ -7564,7 +7614,7 @@ export default function App() {
                         <div ref={aiChatEndRef} />
                       </div>
 
-                      <div className="shrink-0 border-t border-white/10 bg-[linear-gradient(180deg,#0b0b0e,#08080a)] p-4 shadow-[0_-18px_40px_rgba(0,0,0,0.2)]">
+                      <div className="shrink-0 border-t border-white/10 bg-[linear-gradient(180deg,#101012,#0b0b0d)] p-3.5 shadow-[0_-18px_40px_rgba(0,0,0,0.18)]">
                         <form
                           onSubmit={handleAiSubmit}
                           className="flex flex-col gap-3"
@@ -8481,14 +8531,7 @@ export default function App() {
       )}
 
       {paneContextMenu && (
-        <div
-          className="fixed z-50 bg-white/80 p-1.5 rounded-md shadow-lg border border-black/20 flex flex-col items-stretch gap-1 animate-in fade-in zoom-in-95 duration-100"
-          style={{
-            left: paneContextMenu.x,
-            top: paneContextMenu.y,
-            minWidth: "140px",
-          }}
-        >
+        <PaneNodeContextMenu x={paneContextMenu.x} y={paneContextMenu.y}>
           <button
             className="flex items-center justify-start h-9 px-3 rounded-md text-xs font-medium transition-all duration-200 bg-transparent text-neutral-600 hover:bg-black/5 hover:text-neutral-900"
             onClick={() => {
@@ -8552,6 +8595,10 @@ export default function App() {
           </button>
 
           <div className="h-px w-full bg-neutral-100 my-0.5" />
+
+          <div className="px-2 py-0.5 text-[8px] font-semibold tracking-wide text-neutral-400 uppercase select-none">
+            3D · AI 工作流
+          </div>
 
           <button
             className="flex items-center justify-start h-9 px-3 rounded-md text-xs font-medium transition-all duration-200 bg-transparent text-neutral-600 hover:bg-black/5 hover:text-neutral-900"
@@ -8630,7 +8677,19 @@ export default function App() {
             <Camera className="w-4 h-4 mr-2.5 text-neutral-500" />
             3D AI场景渲染
           </button>
-        </div>
+
+          <div className="h-px w-full bg-neutral-100 my-0.5" />
+
+          <CyclesPaletteMenu
+            onAdd={(type) => {
+              handleAddGenericNode(type, {
+                x: paneContextMenu.flowX,
+                y: paneContextMenu.flowY,
+              });
+              setPaneContextMenu(null);
+            }}
+          />
+        </PaneNodeContextMenu>
       )}
 
       {fullscreenImage && (

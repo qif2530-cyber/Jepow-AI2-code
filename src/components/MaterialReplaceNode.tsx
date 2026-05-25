@@ -5,6 +5,10 @@ import { Button } from "@/src/components/ui/button";
 import { Input } from "@/src/components/ui/input";
 import { toast } from "sonner";
 import api from "../lib/api";
+import {
+  materialNodeDataForPreview,
+  resolveModelFromSourceNode,
+} from "../lib/native-3d-pipeline";
 
 interface MaterialReplaceNodeProps {
   id: string;
@@ -41,25 +45,26 @@ export function MaterialReplaceNode({ id, data, selected }: MaterialReplaceNodeP
   // 1. Resolve parent GLB Model link
   const modelEdge = edges.find((e) => e.target === id && e.targetHandle === "model");
   const modelNode = modelEdge ? nodes.find((n) => n.id === modelEdge.source) : null;
-  const incomingGlbUrl = modelNode ? (modelNode.data.glbUrl as string) : "";
+  const resolvedModel = resolveModelFromSourceNode(modelNode, nodes, edges);
+  const incomingGlbUrl = resolvedModel?.glbUrl || (data.glbUrl as string) || "";
 
-  // 2. Resolve parent Material Texture mappings
   const materialEdge = edges.find((e) => e.target === id && e.targetHandle === "material");
   const materialNode = materialEdge ? nodes.find((n) => n.id === materialEdge.source) : null;
-  const incomingColorUrl = materialNode ? (materialNode.data.colorUrl as string) : "";
-  const incomingNormalUrl = materialNode ? (materialNode.data.normalUrl as string) : "";
-  const incomingRoughnessUrl = materialNode ? (materialNode.data.roughnessUrl as string) : "";
-  const incomingMetalnessUrl = materialNode ? (materialNode.data.metalnessUrl as string) : "";
-  const incomingTiling = materialNode ? (materialNode.data.tiling as number) : 1;
-
-  // New incoming physical override values
-  const incomingTint = materialNode ? (materialNode.data.tint as string) : "";
-  const incomingRoughness = materialNode ? (materialNode.data.roughness as number) : undefined;
-  const incomingMetalness = materialNode ? (materialNode.data.metalness as number) : undefined;
-  const incomingNormalScale = materialNode ? (materialNode.data.normalScale as number) : undefined;
-  const incomingDisplacementScale = materialNode ? (materialNode.data.displacementScale as number) : undefined;
-  const incomingTransmission = materialNode ? (materialNode.data.transmission as number) : undefined;
-  const incomingIor = materialNode ? (materialNode.data.ior as number) : undefined;
+  const materialPreview = materialNode
+    ? materialNodeDataForPreview(materialNode, nodes, edges)
+    : null;
+  const incomingColorUrl = (materialPreview?.colorUrl as string) || "";
+  const incomingNormalUrl = (materialPreview?.normalUrl as string) || "";
+  const incomingRoughnessUrl = (materialPreview?.roughnessUrl as string) || "";
+  const incomingMetalnessUrl = (materialPreview?.metalnessUrl as string) || "";
+  const incomingTiling = (materialPreview?.tiling as number) || 1;
+  const incomingTint = (materialPreview?.tint as string) || "";
+  const incomingRoughness = materialPreview?.roughness as number | undefined;
+  const incomingMetalness = materialPreview?.metalness as number | undefined;
+  const incomingNormalScale = materialPreview?.normalScale as number | undefined;
+  const incomingDisplacementScale = materialPreview?.displacementScale as number | undefined;
+  const incomingTransmission = materialPreview?.transmission as number | undefined;
+  const incomingIor = materialPreview?.ior as number | undefined;
 
   const activeGlb = incomingGlbUrl || data.glbUrl;
   const activeColor = incomingColorUrl || data.colorUrl;

@@ -75,6 +75,8 @@ export const jepowNativeViewportEngine: ViewportEngine = {
       lightPitch: lit?.pitch,
       lightAmbient: lit?.ambient,
       lightDiffuse: lit?.directional,
+      lightExposure: lit?.exposure,
+      environmentIntensity: lit?.environment,
       x: tr?.x,
       y: tr?.y,
       z: tr?.z,
@@ -85,10 +87,24 @@ export const jepowNativeViewportEngine: ViewportEngine = {
       materialTint: mat?.tint,
       materialRoughness: mat?.roughness,
       materialMetalness: mat?.metalness,
+      materialSpecular: mat?.specular,
+      materialClearcoat: mat?.clearcoat,
+      materialTransmission: mat?.transmission,
+      materialEmissionStrength: mat?.emissionStrength,
       shading: opts.shading,
       liveRender: opts.liveRender,
       previewQuality: opts.previewQuality,
     }) as unknown as Promise<RenderPreviewResult>;
+  },
+
+  async renderCyclesFrame(
+    opts: RenderPreviewOptions & Record<string, unknown>,
+  ): Promise<RenderPreviewResult> {
+    const api = vp();
+    if (!api?.renderCyclesFrame) {
+      return { ok: false, error: 'Cycles renderer API 不可用' };
+    }
+    return api.renderCyclesFrame(opts) as unknown as Promise<RenderPreviewResult>;
   },
 
   async readPreviewDataUrl(previewUrl: string) {

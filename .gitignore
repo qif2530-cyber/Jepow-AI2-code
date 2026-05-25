@@ -13,6 +13,10 @@ uploads/
 
 # GPL Cycles component
 native/jepow-cycles/build/
+native/jepow-cycles/build-*/
+native/jepow-cycles/.venv-build/
+native/jepow-cycles/.tools/
+native/jepow-cycles/render-cache/
 native/jepow-cycles/third_party/blender/
 dist/compliance/
 

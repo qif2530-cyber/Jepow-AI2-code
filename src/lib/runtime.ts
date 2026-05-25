@@ -40,6 +40,7 @@ declare global {
         openScene: (scenePath: string) => Promise<Record<string, unknown>>;
         sceneInfo: (scenePath: string) => Promise<Record<string, unknown>>;
         renderPreview: (opts: Record<string, unknown>) => Promise<Record<string, unknown>>;
+        renderCyclesFrame?: (opts: Record<string, unknown>) => Promise<Record<string, unknown>>;
         readPreview: (previewUrl: string) => Promise<string | null>;
       };
       assets?: {

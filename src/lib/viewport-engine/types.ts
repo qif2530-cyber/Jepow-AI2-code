@@ -47,6 +47,10 @@ export interface ViewportLighting {
   pitch?: number;
   ambient?: number;
   directional?: number;
+  /** Render exposure stop multiplier, CL/OC/RS style camera exposure approximation */
+  exposure?: number;
+  /** Environment/HDRI contribution for physical render preview */
+  environment?: number;
 }
 
 export interface ViewportObjectTransform {
@@ -64,6 +68,10 @@ export interface ViewportMaterialPreview {
   tint?: string;
   roughness?: number;
   metalness?: number;
+  specular?: number;
+  clearcoat?: number;
+  transmission?: number;
+  emissionStrength?: number;
 }
 
 export interface RenderPreviewOptions {
@@ -83,9 +91,12 @@ export interface RenderPreviewOptions {
 export interface RenderPreviewResult {
   ok: boolean;
   previewUrl?: string;
+  previewDataUrl?: string;
   localPath?: string;
+  outputPath?: string;
   renderer?: string;
   frameMs?: number;
+  renderSeconds?: number;
   daemon?: boolean;
   error?: string;
 }
@@ -94,6 +105,7 @@ export interface ViewportEngine {
   getCapabilities(): Promise<ViewportCapabilities>;
   openScene(scenePath: string): Promise<SceneInfo>;
   renderPreview(opts: RenderPreviewOptions): Promise<RenderPreviewResult>;
+  renderCyclesFrame?(opts: RenderPreviewOptions & Record<string, unknown>): Promise<RenderPreviewResult>;
   readPreviewDataUrl(previewUrl: string): Promise<string | null>;
   pickSceneFile(): Promise<{ canceled: boolean; filePath: string | null }>;
 }

@@ -648,7 +648,7 @@ export function LandingPage({
           className="flex flex-1 items-center justify-start gap-2 cursor-pointer pointer-events-auto"
           onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })}
         >
-          <Logo url={siteConfig?.logo} className="w-8 h-8 rounded-md" />
+          <Logo className="w-8 h-8 rounded-md" />
         </div>
 
         <div className="flex flex-1 items-center justify-end pointer-events-auto">

@@ -6,12 +6,15 @@ import * as THREE from "three";
 import { Box, Settings, Compass, Sun, Sliders, RefreshCw, ZoomIn, Eye, Plus, GripHorizontal, Pause, Play } from "lucide-react";
 import { Button } from "@/src/components/ui/button";
 import { isDesktopApp } from "../lib/runtime";
-import { parseLocalAssetRef, toLocalAssetRef } from "../lib/local-assets";
+import { parseLocalAssetRef } from "../lib/local-assets";
 import { loadModelGroup } from "../lib/model-asset-loader";
 import { JepowViewportPreview } from "./JepowViewportPreview";
 import { useDesktopScenePath } from "../hooks/useDesktopScenePath";
 import { getLocalUserId } from "../lib/local-user-id";
 import { getCurrentProjectId } from "../lib/current-project";
+import { createCyclesMaterial, cyclesToViewportMaterial } from "../lib/cycles-material";
+import { resolveEditorInputs } from "../lib/native-3d-pipeline";
+import { getViewportEngine } from "../lib/viewport-engine";
 
 interface ThreeDEditorNodeProps {
   id: string;
@@ -91,11 +94,14 @@ function ModelRenderer({
     let roughnessTex: THREE.Texture | null = null;
     let metalnessTex: THREE.Texture | null = null;
 
+    const cyclesMaterial = createCyclesMaterial(material);
+    const cycles = cyclesMaterial.principled;
     const repeatVal = material.tiling || 1;
+    const textureSlots = cyclesMaterial.textures;
 
     try {
-      if (material.colorUrl) {
-        colorTex = textureLoader.load(material.colorUrl);
+      if (textureSlots.baseColor) {
+        colorTex = textureLoader.load(textureSlots.baseColor);
         loadedTextures.push(colorTex);
         colorTex.wrapS = THREE.RepeatWrapping;
         colorTex.wrapT = THREE.RepeatWrapping;
@@ -104,8 +110,8 @@ function ModelRenderer({
         colorTex.generateMipmaps = true;
         colorTex.minFilter = THREE.LinearMipmapLinearFilter;
       }
-      if (material.normalUrl) {
-        normalTex = textureLoader.load(material.normalUrl);
+      if (textureSlots.normal) {
+        normalTex = textureLoader.load(textureSlots.normal);
         loadedTextures.push(normalTex);
         normalTex.wrapS = THREE.RepeatWrapping;
         normalTex.wrapT = THREE.RepeatWrapping;
@@ -114,8 +120,8 @@ function ModelRenderer({
         normalTex.generateMipmaps = true;
         normalTex.minFilter = THREE.LinearMipmapLinearFilter;
       }
-      if (material.roughnessUrl) {
-        roughnessTex = textureLoader.load(material.roughnessUrl);
+      if (textureSlots.roughness) {
+        roughnessTex = textureLoader.load(textureSlots.roughness);
         loadedTextures.push(roughnessTex);
         roughnessTex.wrapS = THREE.RepeatWrapping;
         roughnessTex.wrapT = THREE.RepeatWrapping;
@@ -124,8 +130,8 @@ function ModelRenderer({
         roughnessTex.generateMipmaps = true;
         roughnessTex.minFilter = THREE.LinearMipmapLinearFilter;
       }
-      if (material.metalnessUrl) {
-        metalnessTex = textureLoader.load(material.metalnessUrl);
+      if (textureSlots.metallic) {
+        metalnessTex = textureLoader.load(textureSlots.metallic);
         loadedTextures.push(metalnessTex);
         metalnessTex.wrapS = THREE.RepeatWrapping;
         metalnessTex.wrapT = THREE.RepeatWrapping;
@@ -140,39 +146,41 @@ function ModelRenderer({
         if (child.isMesh) {
           // Upgrade to MeshPhysicalMaterial to support full physical properties (roughness, metalness, normal, bump, glass refraction)
           const customMat = new THREE.MeshPhysicalMaterial({
-            roughness: material?.roughness !== undefined ? material.roughness : 0.4,
-            metalness: material?.metalness !== undefined ? material.metalness : 0.3,
+            color: new THREE.Color(cycles.baseColor),
+            roughness: cycles.roughness,
+            metalness: cycles.metallic,
+            reflectivity: cycles.specularIorLevel,
+            clearcoat: cycles.coatWeight,
+            clearcoatRoughness: cycles.coatRoughness,
+            transparent: cycles.alpha < 1.0,
+            opacity: cycles.alpha,
           });
           createdMaterials.push(customMat);
 
           if (colorTex) customMat.map = colorTex;
           if (normalTex) {
             customMat.normalMap = normalTex;
-            const nScale = material?.normalScale !== undefined ? material.normalScale : 1.0;
+            const nScale = cycles.normalStrength;
             customMat.normalScale.set(nScale, nScale);
           }
           if (roughnessTex) customMat.roughnessMap = roughnessTex;
           if (metalnessTex) customMat.metalnessMap = metalnessTex;
 
           // Custom bump mapping detail
-          if (material?.displacementScale && (colorTex || normalTex)) {
+          if (cycles.displacementScale > 0 && (colorTex || normalTex)) {
             customMat.bumpMap = colorTex || normalTex;
-            customMat.bumpScale = material.displacementScale * 0.05;
+            customMat.bumpScale = cycles.displacementScale * 0.05;
           }
 
-          // Transmission (glass refraction) properties
-          if (material?.transmission !== undefined) {
-            customMat.transmission = material.transmission;
-          }
-          if (material?.ior !== undefined) {
-            customMat.ior = material.ior;
-          }
-          if (material?.transmission && material.transmission > 0) {
+          customMat.transmission = cycles.transmissionWeight;
+          customMat.ior = cycles.ior;
+          if (cycles.transmissionWeight > 0) {
             customMat.thickness = 1.0;
           }
 
-          if (material?.tint) {
-            customMat.color.set(new THREE.Color(material.tint));
+          if (cycles.emissionStrength > 0) {
+            customMat.emissive.set(new THREE.Color(cycles.emissionColor));
+            customMat.emissiveIntensity = cycles.emissionStrength;
           }
 
           child.material = customMat;
@@ -371,6 +379,9 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
   const [canvasMounted, setCanvasMounted] = useState(false);
 
   const renderActive = data.renderActive === true;
+  const [viewportMode, setViewportMode] = useState<"preview" | "render">(
+    "preview",
+  );
   const toggleRenderActive = () => {
     updateNodeData(id, { renderActive: !renderActive });
   };
@@ -382,79 +393,51 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
     return () => clearTimeout(timer);
   }, []);
 
-  // Find incoming model stream
   const nodes = getNodes();
   const edges = getEdges();
 
   const modelEdge = edges.find((e) => e.target === id && e.targetHandle === "modelInput");
   const modelNode = modelEdge ? nodes.find((n) => n.id === modelEdge.source) : null;
 
-  const materialEdge = edges.find((e) => e.target === id && e.targetHandle === "material");
-  const materialNode = materialEdge ? nodes.find((n) => n.id === materialEdge.source) : null;
+  const editorPipeline = useMemo(
+    () =>
+      resolveEditorInputs(
+        { id, type: "threeDEditorNode", data, position: { x: 0, y: 0 } },
+        nodes,
+        edges,
+      ),
+    [id, data, nodes, edges],
+  );
 
-  // Derive model data
-  let activeGlb = "";
-  let activeMaterial: any = null;
-  let activeModelName = "";
+  const activeGlb =
+    editorPipeline.model?.glbUrl ||
+    data.texturedModel?.glbUrl ||
+    (data.sceneData as { glbUrl?: string } | undefined)?.glbUrl ||
+    "";
+  const activeModelName =
+    editorPipeline.model?.modelName ||
+    (data.texturedModel as { modelName?: string } | undefined)?.modelName ||
+    "";
+  const activeMaterial = editorPipeline.materialPreview;
+  const activeCyclesMaterial = editorPipeline.cyclesMaterial;
+  const activeViewportMaterial = useMemo(
+    () =>
+      activeCyclesMaterial
+        ? cyclesToViewportMaterial({ cyclesMaterial: activeCyclesMaterial })
+        : null,
+    [activeCyclesMaterial],
+  );
 
-  if (modelNode) {
-    const nodeData = modelNode.data as any;
-    if (nodeData.modelName) {
-      activeModelName = nodeData.modelName;
-    }
-    if (modelNode.type === "materialReplaceNode" && nodeData.texturedModel) {
-      activeGlb = nodeData.texturedModel.glbUrl;
-      activeMaterial = nodeData.texturedModel.material;
-      if (nodeData.texturedModel.modelName) {
-        activeModelName = nodeData.texturedModel.modelName;
-      }
-    } else if (modelNode.type === "imageTo3DNode" && nodeData.glbUrl) {
-      activeGlb = nodeData.glbUrl;
-    } else if (
-      modelNode.type === "modelAssetNode" &&
-      (nodeData.localAssetPath || nodeData.glbUrl || nodeData.localPreviewUrl)
-    ) {
-      activeGlb = nodeData.localAssetPath
-        ? toLocalAssetRef(nodeData.localAssetPath)
-        : nodeData.localPreviewUrl || nodeData.glbUrl;
-    } else if (modelNode.type === "threeDEditorNode") {
-      // Direct pass-through
-      activeGlb = nodeData.texturedModel?.glbUrl || "";
-      activeMaterial = nodeData.texturedModel?.material || null;
-      if (nodeData.texturedModel?.modelName) {
-        activeModelName = nodeData.texturedModel.modelName;
-      }
-    }
-  } else if (data.texturedModel) {
-    activeGlb = data.texturedModel.glbUrl;
-    activeMaterial = data.texturedModel.material;
-    activeModelName = (data.texturedModel as any).modelName || "";
-  }
-
-  // Override or supply material directly from linked material node
-  if (materialNode) {
-    activeMaterial = materialNode.data;
-  }
-
-  // Fallback to offline procedural preview if no active connection (completely bypassing raw.githubusercontent.com)
   const glbToRender = activeGlb || "";
-  const modelNodeData = (modelNode?.data || {}) as {
-    nativeScenePath?: string;
-    localAssetPath?: string;
-    glbUrl?: string;
-    modelName?: string;
-  };
-
   const {
     scenePath: resolvedScenePath,
     resolving: scenePathResolving,
     error: scenePathError,
   } = useDesktopScenePath(getLocalUserId(), {
-    nativeScenePath:
-      modelNodeData.nativeScenePath || modelNodeData.localAssetPath,
-    localAssetPath: modelNodeData.localAssetPath,
-    glbUrl: glbToRender || modelNodeData.glbUrl,
-    modelName: activeModelName || modelNodeData.modelName,
+    nativeScenePath: editorPipeline.model?.nativeScenePath,
+    localAssetPath: editorPipeline.model?.nativeScenePath,
+    glbUrl: glbToRender,
+    modelName: activeModelName,
     projectId: getCurrentProjectId(),
   });
 
@@ -516,15 +499,70 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
     dirY: 5,
     dirZ: 5,
     yaw: 45,
-    pitch: 35
+    pitch: 35,
+    exposure: 1.0,
+    environment: 1.0,
+    areaSize: 4.0,
   });
+  const [renderSettings, setRenderSettings] = useState({
+    samples: 128,
+    bounces: 8,
+    denoise: true,
+    engine: "jepow-cl-preview",
+  });
+  const [cyclesFrame, setCyclesFrame] = useState<{
+    status: "idle" | "rendering" | "done" | "error";
+    previewDataUrl?: string;
+    error?: string;
+    renderSeconds?: number;
+  }>({ status: "idle" });
 
-  const nativeLighting = {
-    yaw: lights.yaw,
-    pitch: lights.pitch,
-    ambient: lights.ambient,
-    directional: lights.directional,
-  };
+  const connectedCyclesLight = editorPipeline.cyclesLight as {
+    yaw?: number;
+    pitch?: number;
+    keyStrength?: number;
+    environmentStrength?: number;
+  } | null;
+  const connectedCyclesSettings = editorPipeline.cyclesRenderSettings as {
+    samples?: number;
+    bounces?: number;
+    width?: number;
+    height?: number;
+    device?: string;
+    denoise?: boolean;
+  } | null;
+  const effectiveRenderSettings = useMemo(
+    () => ({
+      ...renderSettings,
+      ...(connectedCyclesSettings || {}),
+    }),
+    [renderSettings, connectedCyclesSettings],
+  );
+
+  const nativeLighting = useMemo(
+    () => ({
+      yaw: Number(connectedCyclesLight?.yaw ?? lights.yaw),
+      pitch: Number(connectedCyclesLight?.pitch ?? lights.pitch),
+      ambient: lights.ambient,
+      directional:
+        connectedCyclesLight?.keyStrength != null
+          ? Math.max(0, Number(connectedCyclesLight.keyStrength) / 325)
+          : lights.directional,
+      exposure: lights.exposure,
+      environment: Number(
+        connectedCyclesLight?.environmentStrength ?? lights.environment,
+      ),
+    }),
+    [
+      connectedCyclesLight,
+      lights.yaw,
+      lights.pitch,
+      lights.ambient,
+      lights.directional,
+      lights.exposure,
+      lights.environment,
+    ],
+  );
 
   const updateLightAngle = (newYaw: number, newPitch: number) => {
     const radius = 8.6;
@@ -548,12 +586,84 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
     updateNodeData(id, {
       sceneData: {
         glbUrl: glbToRender,
-        material: activeMaterial,
+        material: activeCyclesMaterial,
         transform,
-        lights
+        lights,
+        renderSettings,
+        cyclesLight: connectedCyclesLight,
       }
     });
-  }, [glbToRender, activeMaterial, transform, lights]);
+  }, [
+    glbToRender,
+    activeCyclesMaterial,
+    transform,
+    lights,
+    renderSettings,
+    connectedCyclesLight,
+    updateNodeData,
+    id,
+  ]);
+
+  useEffect(() => {
+    if (viewportMode !== "render" || !renderActive || !activeCyclesMaterial) return;
+    let cancelled = false;
+    const timer = window.setTimeout(() => {
+      setCyclesFrame((prev) => ({ ...prev, status: "rendering", error: undefined }));
+      const engine = getViewportEngine();
+      if (!engine.renderCyclesFrame) {
+        setCyclesFrame({ status: "error", error: "Cycles 渲染入口不可用" });
+        return;
+      }
+      engine
+        .renderCyclesFrame({
+          scenePath: resolvedScenePath || glbToRender || "cycles-preview.xml",
+          width: effectiveRenderSettings.width || 768,
+          height: effectiveRenderSettings.height || 512,
+          material: activeCyclesMaterial as any,
+          cyclesMaterial: activeCyclesMaterial,
+          renderSettings: effectiveRenderSettings,
+          cyclesLight: connectedCyclesLight,
+          samples: effectiveRenderSettings.samples,
+          lighting: nativeLighting,
+          device: effectiveRenderSettings.device || "CPU",
+        } as any)
+        .then((res) => {
+          if (cancelled) return;
+          if (res.ok && res.previewDataUrl) {
+            setCyclesFrame({
+              status: "done",
+              previewDataUrl: res.previewDataUrl,
+              renderSeconds: res.renderSeconds,
+            });
+          } else {
+            setCyclesFrame({
+              status: "error",
+              error: res.error || "Cycles 渲染失败",
+            });
+          }
+        })
+        .catch((err: unknown) => {
+          if (cancelled) return;
+          setCyclesFrame({
+            status: "error",
+            error: err instanceof Error ? err.message : "Cycles 渲染失败",
+          });
+        });
+    }, 220);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [
+    viewportMode,
+    renderActive,
+    activeCyclesMaterial,
+    effectiveRenderSettings,
+    connectedCyclesLight,
+    resolvedScenePath,
+    glbToRender,
+    nativeLighting,
+  ]);
 
   const handleResetTransforms = () => {
     setTransform({
@@ -578,6 +688,9 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
       dirZ: 5,
       yaw: 45,
       pitch: 35,
+      exposure: 1.0,
+      environment: 1.0,
+      areaSize: 4.0,
     });
   };
 
@@ -616,6 +729,26 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
         <Plus className="w-5 h-5 pointer-events-none" />
       </Handle>
       <Handle
+        type="target"
+        position={Position.Left}
+        id="cyclesLight"
+        className="!w-7 !h-7 !bg-[#2A2A2A] !border-[1.5px] !border-amber-500 hover:!border-amber-300 transition-all rounded-full !left-[-14px] z-[100] flex items-center justify-center text-amber-400 hover:text-white shadow-xl"
+        style={{ top: "78%" }}
+        title="接入 Cycles Light 节点"
+      >
+        <Plus className="w-4 h-4 pointer-events-none" />
+      </Handle>
+      <Handle
+        type="target"
+        position={Position.Left}
+        id="cyclesSettings"
+        className="!w-7 !h-7 !bg-[#2A2A2A] !border-[1.5px] !border-blue-500 hover:!border-blue-300 transition-all rounded-full !left-[-14px] z-[100] flex items-center justify-center text-blue-400 hover:text-white shadow-xl"
+        style={{ top: "88%" }}
+        title="接入 Cycles Render Settings 节点"
+      >
+        <Plus className="w-4 h-4 pointer-events-none" />
+      </Handle>
+      <Handle
         type="source"
         position={Position.Right}
         id="sceneData"
@@ -642,6 +775,39 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
             </div>
           </div>
           <div className="flex gap-1.5 pointer-events-auto">
+            <div className="h-7 p-0.5 rounded bg-black/60 border border-neutral-800/80 backdrop-blur-sm flex items-center gap-0.5">
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setViewportMode("preview");
+                }}
+                className={`h-6 px-2 rounded text-[9px] font-bold transition-all ${
+                  viewportMode === "preview"
+                    ? "bg-purple-500/25 text-purple-200"
+                    : "text-neutral-500 hover:text-neutral-200"
+                }`}
+                title="预览模式：轻量白膜，只检查模型、构图和视角"
+              >
+                预览
+              </button>
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setViewportMode("render");
+                  if (!renderActive) updateNodeData(id, { renderActive: true });
+                }}
+                className={`h-6 px-2 rounded text-[9px] font-bold transition-all ${
+                  viewportMode === "render"
+                    ? "bg-emerald-500/25 text-emerald-200"
+                    : "text-neutral-500 hover:text-neutral-200"
+                }`}
+                title="渲染模式：读取 Cycles Principled BSDF 材质参数并进行实时预览"
+              >
+                Cycles
+              </button>
+            </div>
             <Button
               type="button"
               size="icon"
@@ -689,7 +855,7 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
             liveRender
             lockRenderSize
             highPerformanceMode={highPerfDynamic}
-            shading={highPerfDynamic ? "render" : "clay"}
+            shading={viewportMode === "render" ? "render" : "clay"}
             transform={{
               x: transform.x,
               y: transform.y,
@@ -701,12 +867,8 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
             }}
             lighting={nativeLighting}
             material={
-              activeMaterial
-                ? {
-                    tint: activeMaterial.tint,
-                    roughness: activeMaterial.roughness,
-                    metalness: activeMaterial.metalness,
-                  }
+              viewportMode === "render" && activeViewportMaterial
+                ? activeViewportMaterial
                 : null
             }
             resetViewToken={viewportResetToken}
@@ -718,8 +880,13 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
               fill
               mode="turntable"
               liveRender={false}
-              shading="clay"
+              shading={viewportMode === "render" ? "render" : "clay"}
               lighting={nativeLighting}
+              material={
+                viewportMode === "render" && activeViewportMaterial
+                  ? activeViewportMaterial
+                  : null
+              }
               resetViewToken={viewportResetToken}
             />
             <div className="absolute inset-0 z-10 flex flex-col items-center justify-center bg-black/55 pointer-events-none">
@@ -812,6 +979,44 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
             </div>
           )
         )}
+
+        {viewportMode === "render" && cyclesFrame.previewDataUrl && (
+          <div className="absolute inset-0 z-[8] bg-black pointer-events-none">
+            <img
+              src={cyclesFrame.previewDataUrl}
+              alt="Cycles Render"
+              className="w-full h-full object-cover"
+            />
+          </div>
+        )}
+
+        {viewportMode === "render" && cyclesFrame.status !== "idle" && (
+          <div className="absolute left-3 bottom-3 z-[12] pointer-events-none rounded-md border border-emerald-900/50 bg-black/75 backdrop-blur-sm px-2 py-1.5 shadow-xl">
+            <div className="flex items-center gap-1.5">
+              <span
+                className={`w-1.5 h-1.5 rounded-full ${
+                  cyclesFrame.status === "rendering"
+                    ? "bg-amber-400 animate-pulse"
+                    : cyclesFrame.status === "done"
+                      ? "bg-emerald-400"
+                      : "bg-red-400"
+                }`}
+              />
+              <span className="text-[9px] font-bold text-neutral-200">
+                {cyclesFrame.status === "rendering"
+                  ? "Cycles Path Tracing..."
+                  : cyclesFrame.status === "done"
+                    ? `Cycles ${cyclesFrame.renderSeconds?.toFixed(2) ?? ""}s`
+                    : "Cycles Error"}
+              </span>
+            </div>
+            {cyclesFrame.error && (
+              <div className="mt-1 max-w-[220px] truncate text-[8px] text-red-300">
+                {cyclesFrame.error}
+              </div>
+            )}
+          </div>
+        )}
  
         {loadError && (
           <div className="absolute inset-0 bg-black/92 flex flex-col items-center justify-center p-5 text-center z-20 pointer-events-auto">
@@ -864,34 +1069,43 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
       {/* Floating Control Panel */}
       {selected && isOnlySelected && (
         <div
-          className="absolute z-[9999] pointer-events-auto animate-in fade-in slide-in-from-top-4 duration-300"
+          className="absolute z-[9999] pointer-events-auto nodrag nopan nowheel animate-in fade-in slide-in-from-top-4 duration-300"
           style={{
             top: "100%",
-            marginTop: 24 * (1 / Math.max(0.01, zoom)),
+            marginTop: 12 * (1 / Math.max(0.01, zoom)),
             left: "50%",
             transform: `translateX(-50%) scale(${1 / Math.max(0.01, zoom)})`,
             transformOrigin: "top center",
           }}
+          onPointerDown={(e) => e.stopPropagation()}
+          onPointerMove={(e) => e.stopPropagation()}
+          onWheel={(e) => e.stopPropagation()}
         >
-          <div className="nodrag w-[480px] bg-[#161616]/95 border border-neutral-800 rounded-lg p-4 shadow-2xl flex flex-col gap-3.5 backdrop-blur-md">
-            <div className="flex flex-col gap-1 border-b border-neutral-800/80 pb-2">
+          <div
+            id={`editor-floating-panel-${id}`}
+            className="nodrag nopan nowheel w-[390px] bg-[#151515]/96 border border-neutral-800 rounded-lg p-2.5 shadow-2xl flex flex-col gap-2 backdrop-blur-md"
+          >
+            <style dangerouslySetInnerHTML={{ __html: `
+              #editor-floating-panel-${id} input[type="range"] { height: 3px; margin-top: 6px; }
+              #editor-floating-panel-${id} .editor-param-card { padding: 8px !important; gap: 4px !important; border-radius: 7px !important; }
+            `}} />
+            <div className="flex flex-col gap-1 border-b border-neutral-800/80 pb-1.5">
               <div className="flex items-center gap-2">
-                <Sun className="w-4 h-4 text-purple-400" />
-                <span className="text-xs font-bold text-neutral-200">3D 光源调节控制台</span>
+                <Sun className="w-3.5 h-3.5 text-purple-400" />
+                <span className="text-[11px] font-bold text-neutral-200">CL 渲染参数</span>
               </div>
               {hasNativeScene && (
-                <p className="text-[9px] text-amber-300/90 leading-snug">
-                  接入模型后直接进入三维视口（GPU 常驻）。
-                  {highPerfDynamic
-                    ? " 本机性能良好：2K 动态预览。"
-                    : " 本机性能一般：可点 ⏸ 暂停以省资源。"}
+                <p className="text-[9px] text-amber-300/90 leading-snug truncate">
+                  {viewportMode === "render"
+                    ? `${renderSettings.samples}spp / ${renderSettings.bounces} bounces / ${renderSettings.denoise ? "denoise on" : "denoise off"}`
+                    : "Preview clay mode"}
                 </p>
               )}
             </div>
 
-            <div className="grid grid-cols-2 gap-3.5">
+            <div className="grid grid-cols-2 gap-2">
               {/* Card 1: Ambient Intensity */}
-              <div className="flex flex-col gap-2.5 bg-neutral-900/40 p-3 rounded-md border border-neutral-800/40">
+              <div className="editor-param-card flex flex-col gap-2.5 bg-neutral-900/40 p-3 rounded-md border border-neutral-800/40">
                 <div className="flex items-center justify-between text-[11px] font-medium text-neutral-300">
                   <span className="flex items-center gap-1.5 font-sans text-xs">
                     <Sun className="w-3.5 h-3.5 text-purple-400" />
@@ -915,7 +1129,7 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
               </div>
 
               {/* Card 2: Directional Intensity */}
-              <div className="flex flex-col gap-2.5 bg-neutral-900/40 p-3 rounded-md border border-neutral-800/40">
+              <div className="editor-param-card flex flex-col gap-2.5 bg-neutral-900/40 p-3 rounded-md border border-neutral-800/40">
                 <div className="flex items-center justify-between text-[11px] font-medium text-neutral-300">
                   <span className="flex items-center gap-1.5 font-sans text-xs">
                     <Compass className="w-3.5 h-3.5 text-amber-500" />
@@ -938,8 +1152,56 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
                 />
               </div>
 
-              {/* Card 3: Yaw Angle */}
-              <div className="flex flex-col gap-2.5 bg-neutral-900/40 p-3 rounded-md border border-neutral-800/40">
+              {/* Card 3: Environment */}
+              <div className="editor-param-card flex flex-col gap-2.5 bg-neutral-900/40 p-3 rounded-md border border-neutral-800/40">
+                <div className="flex items-center justify-between text-[11px] font-medium text-neutral-300">
+                  <span className="flex items-center gap-1.5 font-sans text-xs">
+                    <Sun className="w-3.5 h-3.5 text-cyan-400" />
+                    环境/HDRI 强度
+                  </span>
+                  <span className="text-cyan-400 font-mono text-[10px] font-bold bg-cyan-950/40 px-1.5 py-0.5 rounded border border-cyan-900/30">
+                    {lights.environment.toFixed(2)}x
+                  </span>
+                </div>
+                <input
+                  type="range"
+                  min="0"
+                  max="4"
+                  step="0.05"
+                  value={lights.environment}
+                  onChange={(e) => setLights({ ...lights, environment: parseFloat(e.target.value) })}
+                  onMouseDown={(e) => e.stopPropagation()}
+                  onTouchStart={(e) => e.stopPropagation()}
+                  className="w-full h-1 bg-neutral-800 rounded appearance-none cursor-pointer accent-cyan-500 nodrag"
+                />
+              </div>
+
+              {/* Card 4: Exposure */}
+              <div className="editor-param-card flex flex-col gap-2.5 bg-neutral-900/40 p-3 rounded-md border border-neutral-800/40">
+                <div className="flex items-center justify-between text-[11px] font-medium text-neutral-300">
+                  <span className="flex items-center gap-1.5 font-sans text-xs">
+                    <Sliders className="w-3.5 h-3.5 text-pink-400" />
+                    Camera Exposure
+                  </span>
+                  <span className="text-pink-400 font-mono text-[10px] font-bold bg-pink-950/40 px-1.5 py-0.5 rounded border border-pink-900/30">
+                    {lights.exposure.toFixed(2)}x
+                  </span>
+                </div>
+                <input
+                  type="range"
+                  min="0.1"
+                  max="3"
+                  step="0.05"
+                  value={lights.exposure}
+                  onChange={(e) => setLights({ ...lights, exposure: parseFloat(e.target.value) })}
+                  onMouseDown={(e) => e.stopPropagation()}
+                  onTouchStart={(e) => e.stopPropagation()}
+                  className="w-full h-1 bg-neutral-800 rounded appearance-none cursor-pointer accent-pink-500 nodrag"
+                />
+              </div>
+
+              {/* Card 5: Yaw Angle */}
+              <div className="editor-param-card flex flex-col gap-2.5 bg-neutral-900/40 p-3 rounded-md border border-neutral-800/40">
                 <div className="flex items-center justify-between text-[11px] font-medium text-neutral-300">
                   <span className="flex items-center gap-1.5 font-sans text-xs">
                     <Sliders className="w-3.5 h-3.5 text-blue-400" />
@@ -962,8 +1224,8 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
                 />
               </div>
 
-              {/* Card 4: Pitch Angle */}
-              <div className="flex flex-col gap-2.5 bg-neutral-900/40 p-3 rounded-md border border-neutral-800/40">
+              {/* Card 6: Pitch Angle */}
+              <div className="editor-param-card flex flex-col gap-2.5 bg-neutral-900/40 p-3 rounded-md border border-neutral-800/40">
                 <div className="flex items-center justify-between text-[11px] font-medium text-neutral-300">
                   <span className="flex items-center gap-1.5 font-sans text-xs">
                     <Sliders className="w-3.5 h-3.5 text-emerald-400" />
@@ -987,7 +1249,57 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
               </div>
             </div>
 
-            <div className="grid grid-cols-2 gap-3 mt-1.5 pt-2 border-t border-neutral-800/60">
+            <div className="grid grid-cols-3 gap-2 pt-1.5 border-t border-neutral-800/60">
+              <div className="editor-param-card flex flex-col gap-2 bg-neutral-900/40 p-3 rounded-md border border-neutral-800/40">
+                <div className="flex items-center justify-between text-[11px] text-neutral-300">
+                  <span className="font-bold">Samples</span>
+                  <span className="text-emerald-400 font-mono text-[10px]">{renderSettings.samples}</span>
+                </div>
+                <input
+                  type="range"
+                  min="32"
+                  max="512"
+                  step="32"
+                  value={renderSettings.samples}
+                  onChange={(e) => setRenderSettings({ ...renderSettings, samples: parseInt(e.target.value) })}
+                  onMouseDown={(e) => e.stopPropagation()}
+                  className="w-full h-1 bg-neutral-800 rounded appearance-none cursor-pointer accent-emerald-500 nodrag"
+                />
+              </div>
+              <div className="editor-param-card flex flex-col gap-2 bg-neutral-900/40 p-3 rounded-md border border-neutral-800/40">
+                <div className="flex items-center justify-between text-[11px] text-neutral-300">
+                  <span className="font-bold">Bounces</span>
+                  <span className="text-blue-400 font-mono text-[10px]">{renderSettings.bounces}</span>
+                </div>
+                <input
+                  type="range"
+                  min="2"
+                  max="16"
+                  step="1"
+                  value={renderSettings.bounces}
+                  onChange={(e) => setRenderSettings({ ...renderSettings, bounces: parseInt(e.target.value) })}
+                  onMouseDown={(e) => e.stopPropagation()}
+                  className="w-full h-1 bg-neutral-800 rounded appearance-none cursor-pointer accent-blue-500 nodrag"
+                />
+              </div>
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setRenderSettings({ ...renderSettings, denoise: !renderSettings.denoise });
+                }}
+                className={`editor-param-card rounded-md border p-3 text-left transition-all ${
+                  renderSettings.denoise
+                    ? "border-purple-700/60 bg-purple-950/30 text-purple-200"
+                    : "border-neutral-800 bg-neutral-900/40 text-neutral-500"
+                }`}
+              >
+                <span className="block text-[11px] font-bold">Denoise</span>
+                <span className="block text-[9px] mt-1 font-mono">{renderSettings.denoise ? "OIDN/OptiX Ready" : "OFF"}</span>
+              </button>
+            </div>
+
+            <div className="grid grid-cols-2 gap-2 mt-1 pt-1.5 border-t border-neutral-800/60">
               <Button
                 type="button"
                 onClick={(e) => {

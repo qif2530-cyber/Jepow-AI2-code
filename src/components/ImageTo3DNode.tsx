@@ -4,6 +4,7 @@ import { Image as ImageIcon, Trash2, Box, Sparkles, RefreshCw, Loader2, Plus, Se
 import { Button } from "@/src/components/ui/button";
 import { toast } from "sonner";
 import api from "../lib/api";
+import { resolveImageReference } from "../lib/native-3d-pipeline";
 
 interface ImageTo3DNodeProps {
   id: string;
@@ -37,20 +38,8 @@ export function ImageTo3DNode({ id, data, selected }: ImageTo3DNodeProps) {
   
   const incomingEdge = edges.find((e) => e.target === id && e.targetHandle === "image");
   const sourceNode = incomingEdge ? nodes.find((n) => n.id === incomingEdge.source) : null;
-  
-  let connectedImageUrl = "";
-  if (sourceNode) {
-    const nodeData = sourceNode.data as any;
-    if (sourceNode.type === "imageNode" || sourceNode.type === "mediaNode") {
-      connectedImageUrl = nodeData.url as string;
-    } else if (sourceNode.type === "imageShotNode") {
-      connectedImageUrl = nodeData.shot?.imageUrl as string;
-    } else if (sourceNode.type === "threeDRenderNode") {
-      connectedImageUrl = nodeData.url as string;
-    }
-  }
-
-  const activeImageUrl = connectedImageUrl || data.imageUrl || "";
+  const activeImageUrl =
+    resolveImageReference(sourceNode) || data.imageUrl || "";
 
   useEffect(() => {
     if (activeImageUrl && !data.glbUrl && !isGenerating) {

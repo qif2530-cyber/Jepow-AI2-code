@@ -13,18 +13,26 @@
 ## 准备 Blender / Cycles 源码
 
 ```bash
-# 示例：在 third_party/ 下放置与官方文档一致的 blender 树
-git submodule add https://projects.blender.org/blender/blender.git third_party/blender
-cd third_party/blender && git checkout <pinned-tag>
+# 仓库根目录
+npm run native:cycles:download
+
+# 可指定固定版本，便于 GPL 源码归档复现
+BLENDER_REF=v4.3.2 npm run native:cycles:download
 ```
 
 将 **实际使用的 commit** 记入 `third_party/VERSION`（构建后由 `package-gpl-source.sh` 收集）。
 
-## 构建（占位）
+## 构建
 
 ```bash
 # 仓库根目录
 npm run native:cycles:build
+
+# 检查 Blender Cycles standalone 配置是否具备依赖
+npm run native:cycles:probe
+
+# 构建 Cycles standalone 核心库目标
+npm run native:cycles:build:libcycles
 ```
 
 成功产物（平台相关）：
@@ -42,6 +50,39 @@ npm run native:cycles:build
 
 正式集成由 `electron/jepow-cycles-bridge.cjs` 启动，**不**调用 `blender.exe`。
 
+## 集成状态
+
+`native:cycles:download` 只下载 Blender/Cycles 源码并记录版本；完整 `libcycles`
+链接需要本机安装 CMake、Ninja/Make、Python 以及 Blender 官方构建依赖。
+如果没有这些工具，Electron 会继续显示 `jepow-cycles` 未就绪，并回退到 MIT
+实时视口 `jepow-engine`。
+
+Apple Silicon 上还需要 `third_party/blender/lib/macos_arm64` 官方预编译依赖。
+可用本地 `git-lfs` 后只初始化该平台依赖，避免下载其它平台库。
+
+当前 `native:cycles:build:libcycles` 会先确认 Blender Cycles standalone 配置，
+再构建官方 `cycles` 目标。完成后还需要把 `jepow_cycles_bridge.cpp`
+链接到这些 Cycles 静态库/动态库，并实现 JSON 场景到 Cycles `Session`
+的转换。
+
 ## 合规
 
 分发本二进制时，必须同时满足 `SOURCE_CODE_OFFER.md` 与 `native/COMPLIANCE.md` 检查清单。
+
+## Cycles 原生数据链路
+
+离线渲染走 **Cycles Standalone XML**（非自定义着色器格式）：
+
+- 官方文档：[Cycles Standalone](https://developer.blender.org/docs/features/cycles/standalone/)
+- Principled 字段名与 `intern/cycles/scene/shader_nodes.cpp` 中 `PrincipledBsdfNode` 的 SOCKET 一致（`snake_case`）
+- 应用内契约：`src/lib/cycles-native-schema.ts`（`getCyclesNativeCompliance()`）
+- XML 生成：`electron/cycles-xml-export.cjs`；带网格导出：`native/blender/scripts/jepow_bridge.py`（`export_cycles_xml`）
+
+| 层级 | 实现 |
+|------|------|
+| 画布 Cycles 节点 | 封装 UI，不进入 AI `createNodeViaAi` |
+| 连线 / 解析 | `src/lib/native-3d-pipeline.ts`、`cycles-shader-graph.ts` |
+| 交互视口 | MIT `jepow-engine` PBR 预览（与 GPL Cycles 隔离） |
+| 离线成片 | GPL `jepow-cycles` / standalone `cycles` 子进程 |
+
+**Shader graph：** 画布节点导出为官方 XML 节点链（`image_texture` → `gamma` / `brightness_contrast` / `rgb_curves` / `rgb_ramp` / `mix_color` / `map_range` / `rgb_to_bw` → `principled_bsdf`，以及 `normal_map`、`displacement`）。IR 构建见 `src/lib/cycles-shader-graph-ir.ts`。

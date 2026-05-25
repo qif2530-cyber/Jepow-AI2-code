@@ -88,6 +88,8 @@ function mapEditorLighting(lighting?: ViewportLighting) {
     pitch: lighting?.pitch ?? 35,
     ambient: 0.38 + amb * 0.22,
     directional: 0.45 + dir * 0.28,
+    exposure: lighting?.exposure ?? 1.0,
+    environment: lighting?.environment ?? 1.0,
   };
 }
 

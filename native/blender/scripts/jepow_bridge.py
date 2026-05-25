@@ -12,6 +12,7 @@ import json
 import os
 import sys
 import traceback
+from html import escape as _xml_escape
 
 
 def _emit(obj: dict) -> None:
@@ -362,6 +363,231 @@ def cmd_render_scene(payload: dict) -> None:
         _emit({"ok": False, "error": str(e), "trace": traceback.format_exc()})
 
 
+def _clamp(value, min_value, max_value, fallback):
+    try:
+        n = float(value)
+    except Exception:
+        return fallback
+    return max(min_value, min(max_value, n))
+
+
+def _hex_rgb(value, fallback=(0.8, 0.8, 0.8)):
+    if not isinstance(value, str) or len(value) != 7 or not value.startswith("#"):
+        return fallback
+    try:
+        return (
+            int(value[1:3], 16) / 255.0,
+            int(value[3:5], 16) / 255.0,
+            int(value[5:7], 16) / 255.0,
+        )
+    except Exception:
+        return fallback
+
+
+def _vec3(values) -> str:
+    return " ".join(f"{float(v):.6f}" for v in values)
+
+
+def _principled_bsdf_xml_attrs(p: dict) -> str:
+    """Cycles standalone principled_bsdf — 与 shader_nodes.cpp PrincipledBsdfNode SOCKET 一致."""
+    base = _vec3(_hex_rgb(p.get("baseColor"), (0.8, 0.8, 0.8)))
+    emission = _vec3(_hex_rgb(p.get("emissionColor"), (1.0, 1.0, 1.0)))
+    coat_tint = _vec3(_hex_rgb(p.get("coatTint"), (1.0, 1.0, 1.0)))
+    sheen_tint = _vec3(_hex_rgb(p.get("sheenTint"), (1.0, 1.0, 1.0)))
+    spec_tint_level = _clamp(p.get("specularTint"), 0, 1, 0)
+    specular_tint = _vec3((spec_tint_level, spec_tint_level, spec_tint_level))
+    distribution = "ggx" if p.get("distribution") == "ggx" else "multi_ggx"
+    return " ".join(
+        [
+            f'distribution="{distribution}"',
+            f'base_color="{base}"',
+            f'metallic="{_clamp(p.get("metallic"), 0, 1, 0)}"',
+            f'roughness="{_clamp(p.get("roughness"), 0, 1, 0.5)}"',
+            f'ior="{_clamp(p.get("ior"), 1, 3, 1.5)}"',
+            f'alpha="{_clamp(p.get("alpha"), 0, 1, 1)}"',
+            f'specular_ior_level="{_clamp(p.get("specularIorLevel"), 0, 1, 0.5)}"',
+            f'specular_tint="{specular_tint}"',
+            f'anisotropic="{_clamp(p.get("anisotropic"), 0, 1, 0)}"',
+            f'anisotropic_rotation="{_clamp(p.get("anisotropicRotation"), 0, 1, 0)}"',
+            f'transmission_weight="{_clamp(p.get("transmissionWeight"), 0, 1, 0)}"',
+            f'sheen_weight="{_clamp(p.get("sheenWeight"), 0, 1, 0)}"',
+            f'sheen_roughness="{_clamp(p.get("sheenRoughness"), 0, 1, 0.5)}"',
+            f'sheen_tint="{sheen_tint}"',
+            f'coat_weight="{_clamp(p.get("coatWeight"), 0, 1, 0)}"',
+            f'coat_roughness="{_clamp(p.get("coatRoughness"), 0, 1, 0.03)}"',
+            f'coat_ior="{_clamp(p.get("coatIor"), 1, 3, 1.5)}"',
+            f'coat_tint="{coat_tint}"',
+            f'emission_color="{emission}"',
+            f'emission_strength="{_clamp(p.get("emissionStrength"), 0, 100, 0)}"',
+            f'thin_film_thickness="{_clamp(p.get("thinFilmThickness"), 0, 2000, 0)}"',
+            f'thin_film_ior="{_clamp(p.get("thinFilmIor"), 1, 3, 1.33)}"',
+        ]
+    )
+
+
+def _xml_escape_attr(value: str) -> str:
+    return _xml_escape(str(value), quote=True)
+
+
+def _shader_node_xml_line(node: dict) -> str:
+    name = node.get("name", "node")
+    ntype = node.get("type", "")
+    params = dict(node.get("params") or {})
+    if ntype == "principled_bsdf":
+        return f'    <principled_bsdf name="{_xml_escape_attr(name)}" {_principled_bsdf_xml_attrs(params)} />'
+    parts = [f'name="{_xml_escape_attr(name)}"']
+    for key, val in params.items():
+        if val is None or val == "":
+            continue
+        if key in ("type", "version", "engine", "shader", "schemaVersion"):
+            continue
+        parts.append(f'{key}="{_xml_escape_attr(val)}"')
+    return f"    <{ntype} {' '.join(parts)} />"
+
+
+def _shader_graph_shader_lines(shader_graph: dict | None, material: dict) -> list[str]:
+    if shader_graph and shader_graph.get("nodes"):
+        lines = ['  <shader name="jepow_material">']
+        for node in shader_graph["nodes"]:
+            lines.append(_shader_node_xml_line(node))
+        for link in shader_graph.get("links") or []:
+            fr = link.get("from") or []
+            to = link.get("to") or []
+            if len(fr) == 2 and len(to) == 2:
+                lines.append(
+                    f'    <connect from="{_xml_escape_attr(fr[0])} {_xml_escape_attr(fr[1])}" '
+                    f'to="{_xml_escape_attr(to[0])} {_xml_escape_attr(to[1])}" />'
+                )
+        lines.append("  </shader>")
+        return lines
+    attrs = _principled_bsdf_xml_attrs(material)
+    return [
+        '  <shader name="jepow_material">',
+        f'    <principled_bsdf name="principled" {attrs} />',
+        '    <connect from="principled BSDF" to="output surface" />',
+        "  </shader>",
+    ]
+
+
+def cmd_export_cycles_xml(payload: dict) -> None:
+    import bpy
+    import math
+    from mathutils import Vector
+
+    scene_path = payload.get("scenePath")
+    output_path = payload.get("outputPath")
+    if not scene_path:
+        _emit({"ok": False, "error": "scenePath required"})
+        return
+    if not output_path:
+        _emit({"ok": False, "error": "outputPath required"})
+        return
+
+    try:
+        _clear_scene()
+        _import_scene_file(scene_path)
+        depsgraph = bpy.context.evaluated_depsgraph_get()
+        mesh_objects = [o for o in bpy.context.scene.objects if o.type == "MESH"]
+        if not mesh_objects:
+            _emit({"ok": False, "error": "No mesh objects found"})
+            return
+
+        raw_meshes = []
+        all_points = []
+        triangle_count = 0
+        for obj in mesh_objects:
+            evaluated = obj.evaluated_get(depsgraph)
+            mesh = evaluated.to_mesh()
+            try:
+                mesh.calc_loop_triangles()
+                points = [obj.matrix_world @ v.co for v in mesh.vertices]
+                triangles = [
+                    tuple(int(i) for i in tri.vertices)
+                    for tri in mesh.loop_triangles
+                    if len(tri.vertices) == 3
+                ]
+                if points and triangles:
+                    raw_meshes.append((obj.name, points, triangles))
+                    all_points.extend(points)
+                    triangle_count += len(triangles)
+            finally:
+                evaluated.to_mesh_clear()
+
+        if not raw_meshes:
+            _emit({"ok": False, "error": "No triangle mesh data found"})
+            return
+
+        min_co = Vector((min(p.x for p in all_points), min(p.y for p in all_points), min(p.z for p in all_points)))
+        max_co = Vector((max(p.x for p in all_points), max(p.y for p in all_points), max(p.z for p in all_points)))
+        center = (min_co + max_co) * 0.5
+        max_extent = max((max_co - min_co).x, (max_co - min_co).y, (max_co - min_co).z, 0.001)
+        scale = 2.0 / max_extent
+
+        cycles_material = payload.get("cyclesMaterial") or payload.get("material") or {}
+        material = (cycles_material.get("principled") if isinstance(cycles_material, dict) else {}) or {}
+        shader_graph = cycles_material.get("shaderGraph") if isinstance(cycles_material, dict) else None
+        light = payload.get("cyclesLight") or {}
+        render_settings = payload.get("renderSettings") or {}
+
+        background = _vec3(_hex_rgb(light.get("backgroundColor"), (0.03, 0.035, 0.04)))
+        environment_strength = _clamp(light.get("environmentStrength"), 0, 4, 0.75)
+        key_strength = _clamp(light.get("keyStrength"), 0, 5000, 650)
+        key_size = _clamp(light.get("keySize"), 0.01, 20, 3)
+        yaw = math.radians(_clamp(light.get("yaw"), 0, 360, 45))
+        pitch = math.radians(_clamp(light.get("pitch"), -85, 85, 35))
+        lx = math.cos(pitch) * math.sin(yaw) * 3.2
+        ly = math.sin(pitch) * 3.2
+        lz = math.cos(pitch) * math.cos(yaw) * 3.2
+        bounces = int(_clamp(render_settings.get("bounces"), 1, 64, 8))
+        width = int(_clamp(payload.get("width") or render_settings.get("width"), 64, 8192, 768))
+        height = int(_clamp(payload.get("height") or render_settings.get("height"), 64, 8192, 512))
+
+        lines = [
+            '<?xml version="1.0"?>',
+            "<cycles>",
+            f'  <integrator max_bounce="{bounces}" diffuse_bounces="4" glossy_bounces="4" transparent_max_bounce="8" />',
+            f'  <camera width="{width}" height="{height}" type="perspective" fov="0.72" matrix="1 0 0 0  0 1 0 0  0 0 1 0  0 0 4.2 1" />',
+            f'  <background strength="{environment_strength}" color="{background}" />',
+            *_shader_graph_shader_lines(shader_graph, material),
+            f'  <transform translate="{lx:.4f} {ly:.4f} {lz:.4f}">',
+            f'    <light light_type="point" strength="{key_strength}" size="{key_size}" />',
+            "  </transform>",
+        ]
+
+        for name, points, triangles in raw_meshes:
+            coords = []
+            for p in points:
+                n = (p - center) * scale
+                coords.extend([n.x, n.z, -n.y])
+            p_attr = " ".join(f"{v:.6f}" for v in coords)
+            verts_attr = " ".join(" ".join(str(i) for i in tri) for tri in triangles)
+            nverts_attr = " ".join("3" for _ in triangles)
+            lines.extend(
+                [
+                    '  <state shader="jepow_material" interpolation="smooth">',
+                    f'    <mesh name="{_xml_escape(name, quote=True)}" P="{p_attr}" verts="{verts_attr}" nverts="{nverts_attr}" />',
+                    "  </state>",
+                ]
+            )
+
+        lines.append("</cycles>")
+        os.makedirs(os.path.dirname(os.path.abspath(output_path)), exist_ok=True)
+        with open(output_path, "w", encoding="utf-8") as f:
+            f.write("\n".join(lines) + "\n")
+
+        _emit(
+            {
+                "ok": True,
+                "xmlPath": output_path,
+                "meshCount": len(raw_meshes),
+                "triangleCount": triangle_count,
+                "renderer": "cycles-xml-export",
+            }
+        )
+    except Exception as e:
+        _emit({"ok": False, "error": str(e), "trace": traceback.format_exc()})
+
+
 def cmd_export_glb(payload: dict) -> None:
     import bpy
 
@@ -397,6 +623,7 @@ def main() -> None:
         "open_scene": cmd_open_scene,
         "render_frame": cmd_render_frame,
         "render_scene": cmd_render_scene,
+        "export_cycles_xml": cmd_export_cycles_xml,
         "export_glb": cmd_export_glb,
     }
     fn = handlers.get(cmd)

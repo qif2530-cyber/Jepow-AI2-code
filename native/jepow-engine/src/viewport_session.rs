@@ -329,10 +329,21 @@ impl ViewportSession {
     fn effective_light(&self) -> ViewLight {
         let mut light = self.light;
         if self.shading == ShadingMode::Render {
-            light.ambient *= 1.15;
-            light.diffuse *= 1.25;
+            light.ambient *= 0.82;
+            light.diffuse *= 1.35;
+            light.environment *= 1.15;
+        } else {
+            light.exposure = 1.0;
+            light.environment = 0.65;
         }
         light
+    }
+
+    fn effective_material(&self) -> ViewMaterial {
+        match self.shading {
+            ShadingMode::Clay => ViewMaterial::default(),
+            ShadingMode::Render => self.material,
+        }
     }
 
     fn ensure_frame_size(&mut self, width: u32, height: u32) {
@@ -356,7 +367,7 @@ impl ViewportSession {
 
         let view = camera_mvp(width, height, self.camera);
         let mvp = view * self.model_matrix();
-        let uniforms = build_uniforms(mvp, self.effective_light(), self.material);
+        let uniforms = build_uniforms(mvp, self.effective_light(), self.effective_material());
         self.queue.write_buffer(
             &self.uniform_buffer,
             0,

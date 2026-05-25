@@ -20,6 +20,10 @@ typedef struct JepowCyclesRenderRequest {
   int width;
   int height;
   int samples;
+  int max_bounces;
+  int use_denoise;
+  const char *material_json;
+  const char *render_settings_json;
   const char *output_path;
 } JepowCyclesRenderRequest;
 

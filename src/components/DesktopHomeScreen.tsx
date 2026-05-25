@@ -23,7 +23,6 @@ interface DesktopHomeScreenProps {
     credits?: number;
   };
   projects: CloudProject[];
-  siteLogo?: string;
   onNewProject: () => void;
   onOpenProject: (id: string) => void;
   onDeleteProject: (id: string) => void;
@@ -33,7 +32,6 @@ interface DesktopHomeScreenProps {
 export function DesktopHomeScreen({
   user,
   projects,
-  siteLogo,
   onNewProject,
   onOpenProject,
   onDeleteProject,
@@ -45,7 +43,7 @@ export function DesktopHomeScreen({
     <div className="h-screen w-screen flex flex-col bg-[#fafafa] text-neutral-900 overflow-hidden">
       <header className="shrink-0 flex items-center justify-between px-8 py-5 border-b border-black/[0.06] bg-white/80 backdrop-blur-md">
         <div className="flex items-center gap-3">
-          <Logo className="w-9 h-9" url={siteLogo} />
+          <Logo className="w-9 h-9" />
           <span className="text-lg font-black tracking-tight">Jepow AI</span>
           <span className="text-xs text-neutral-400 font-medium hidden sm:inline">
             无限画布

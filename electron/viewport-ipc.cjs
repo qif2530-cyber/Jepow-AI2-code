@@ -115,6 +115,14 @@ function registerViewportIpc(ipcMain) {
     return nativeEngine.renderPreview({ ...o, scenePath: p });
   });
 
+  ipcMain.handle('viewport:renderCyclesFrame', async (_e, opts) => {
+    const o = opts || {};
+    return cyclesBridge.renderFrame({
+      ...o,
+      scenePath: normalizeScenePath(o.scenePath),
+    });
+  });
+
   ipcMain.handle('viewport:readPreview', async (_e, previewUrl) => {
     if (!previewUrl || typeof previewUrl !== 'string') return null;
     const name = previewUrl.replace('viewport-cache://', '');

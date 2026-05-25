@@ -22,5 +22,12 @@
     },
     "allowImportingTsExtensions": true,
     "noEmit": true
-  }
+  },
+  "exclude": [
+    "node_modules",
+    "dist",
+    "build",
+    "release",
+    "native/jepow-cycles/third_party/blender"
+  ]
 }

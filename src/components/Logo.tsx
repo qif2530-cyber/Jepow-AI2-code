@@ -1,15 +1,14 @@
 import React, { useState } from "react";
 import { Sparkles } from "lucide-react";
 
+const JEPOW_LOGO_URL = "/jepow-logo.png?v=20260525-2354";
+
 export const Logo = ({
   className = "w-8 h-8",
-  url,
 }: {
   className?: string;
-  url?: string;
 }) => {
   const [imgError, setImgError] = useState(false);
-  const logoUrl = url || "/jepow-logo.png";
   if (!imgError) {
     return (
       <span
@@ -17,9 +16,9 @@ export const Logo = ({
         aria-label="Jepow Logo"
       >
         <img
-          src={logoUrl}
+          src={JEPOW_LOGO_URL}
           alt="Logo"
-          className="w-[78%] h-[78%] object-contain"
+          className="w-full h-full object-contain"
           referrerPolicy="no-referrer"
           onError={() => setImgError(true)}
         />

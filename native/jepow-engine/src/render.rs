@@ -9,6 +9,7 @@ pub struct Uniforms {
     pub light_dir_ambient: [f32; 4],
     pub diffuse_base: [f32; 4],
     pub material_params: [f32; 4],
+    pub render_params: [f32; 4],
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -17,6 +18,8 @@ pub struct ViewLight {
     pub pitch_deg: f32,
     pub ambient: f32,
     pub diffuse: f32,
+    pub exposure: f32,
+    pub environment: f32,
 }
 
 impl Default for ViewLight {
@@ -26,6 +29,8 @@ impl Default for ViewLight {
             pitch_deg: 35.0,
             ambient: 0.48,
             diffuse: 0.88,
+            exposure: 1.0,
+            environment: 1.0,
         }
     }
 }
@@ -35,6 +40,10 @@ pub struct ViewMaterial {
     pub base_color: [f32; 3],
     pub roughness: f32,
     pub metalness: f32,
+    pub specular: f32,
+    pub clearcoat: f32,
+    pub transmission: f32,
+    pub emission_strength: f32,
 }
 
 impl Default for ViewMaterial {
@@ -43,6 +52,10 @@ impl Default for ViewMaterial {
             base_color: [0.76, 0.79, 0.84],
             roughness: 0.55,
             metalness: 0.0,
+            specular: 0.5,
+            clearcoat: 0.0,
+            transmission: 0.0,
+            emission_strength: 0.0,
         }
     }
 }
@@ -72,8 +85,14 @@ pub fn build_uniforms(mvp: Mat4, light: ViewLight, material: ViewMaterial) -> Un
         material_params: [
             material.roughness.clamp(0.02, 1.0),
             material.metalness.clamp(0.0, 1.0),
-            0.0,
-            0.0,
+            material.specular.clamp(0.0, 1.0),
+            material.clearcoat.clamp(0.0, 1.0),
+        ],
+        render_params: [
+            light.exposure.clamp(0.05, 6.0),
+            light.environment.clamp(0.0, 4.0),
+            material.transmission.clamp(0.0, 1.0),
+            material.emission_strength.clamp(0.0, 8.0),
         ],
     }
 }
@@ -122,6 +141,7 @@ struct Uniforms {
   ambient: f32,
   diffuse_base: vec4<f32>,
   material_params: vec4<f32>,
+  render_params: vec4<f32>,
 }
 @group(0) @binding(0) var<uniform> uniforms: Uniforms;
 
@@ -152,13 +172,24 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
   let base = uniforms.diffuse_base.yzw;
   let roughness = uniforms.material_params.x;
   let metalness = uniforms.material_params.y;
-  let shade = clamp(uniforms.ambient + diffuse * ndotl, 0.12, 1.0);
+  let specular = uniforms.material_params.z;
+  let clearcoat = uniforms.material_params.w;
+  let exposure = uniforms.render_params.x;
+  let environment = uniforms.render_params.y;
+  let transmission = uniforms.render_params.z;
+  let emission = uniforms.render_params.w;
+  let env_fill = vec3<f32>(0.55, 0.62, 0.70) * environment * (0.12 + roughness * 0.18);
+  let shade = clamp(uniforms.ambient + diffuse * ndotl, 0.05, 1.35);
   let view_dir = normalize(vec3<f32>(0.0, 0.0, 1.0));
   let half_dir = normalize(l + view_dir);
-  let spec_power = mix(18.0, 96.0, 1.0 - roughness);
-  let spec = pow(max(dot(n, half_dir), 0.0), spec_power) * (0.08 + metalness * 0.45);
-  let rim = vec3<f32>(0.08, 0.10, 0.12) * (1.0 - ndotl);
-  return vec4<f32>(base * shade + rim + vec3<f32>(spec), 1.0);
+  let spec_power = mix(12.0, 180.0, 1.0 - roughness);
+  let spec = pow(max(dot(n, half_dir), 0.0), spec_power) * (0.08 + specular * 0.45 + metalness * 0.45);
+  let coat = pow(max(dot(n, half_dir), 0.0), 220.0) * clearcoat * 0.8;
+  let fresnel = pow(1.0 - max(dot(n, view_dir), 0.0), 5.0);
+  let rim = vec3<f32>(0.08, 0.10, 0.12) * fresnel * (1.0 + clearcoat);
+  let diffuse_color = mix(base, vec3<f32>(0.78, 0.86, 0.95), transmission * 0.38);
+  let lit = diffuse_color * shade + env_fill + rim + vec3<f32>(spec + coat) + base * emission;
+  return vec4<f32>(clamp(lit * exposure, vec3<f32>(0.0), vec3<f32>(1.0)), 1.0);
 }
 "#;
 
@@ -206,6 +237,21 @@ pub fn parse_material(payload: &serde_json::Value) -> ViewMaterial {
     if let Some(v) = payload.get("materialMetalness").and_then(|v| v.as_f64()) {
         material.metalness = v as f32;
     }
+    if let Some(v) = payload.get("materialSpecular").and_then(|v| v.as_f64()) {
+        material.specular = v as f32;
+    }
+    if let Some(v) = payload.get("materialClearcoat").and_then(|v| v.as_f64()) {
+        material.clearcoat = v as f32;
+    }
+    if let Some(v) = payload.get("materialTransmission").and_then(|v| v.as_f64()) {
+        material.transmission = v as f32;
+    }
+    if let Some(v) = payload
+        .get("materialEmissionStrength")
+        .and_then(|v| v.as_f64())
+    {
+        material.emission_strength = v as f32;
+    }
     material
 }
 
@@ -222,6 +268,12 @@ pub fn parse_light(payload: &serde_json::Value) -> ViewLight {
     }
     if let Some(v) = payload.get("lightDiffuse").and_then(|v| v.as_f64()) {
         light.diffuse = v as f32;
+    }
+    if let Some(v) = payload.get("lightExposure").and_then(|v| v.as_f64()) {
+        light.exposure = v as f32;
+    }
+    if let Some(v) = payload.get("environmentIntensity").and_then(|v| v.as_f64()) {
+        light.environment = v as f32;
     }
     light
 }
