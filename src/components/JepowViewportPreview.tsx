@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { RefreshCw, Cpu, Move, RotateCw } from "lucide-react";
 import { Button } from "./ui/button";
 import {
@@ -6,17 +6,42 @@ import {
   getViewportEngine,
   invalidateViewportCache,
 } from "../lib/viewport-engine";
-import type { ViewportCamera } from "../lib/viewport-engine/types";
+import { invalidateViewportPerformance } from "../lib/viewport-performance";
+import type {
+  ViewportCamera,
+  ViewportLighting,
+  ViewportMaterialPreview,
+  ViewportObjectTransform,
+} from "../lib/viewport-engine/types";
 
 export type ViewportPreviewMode = "turntable" | "orbit";
 
 interface JepowViewportPreviewProps {
   scenePath: string;
+  /** 固定高度；与 fill 二选一 */
   height?: number;
+  /** 铺满父容器（3D 编辑器节点） */
+  fill?: boolean;
   mode?: ViewportPreviewMode;
+  lighting?: ViewportLighting;
+  liveRender?: boolean;
+  shading?: "clay" | "render";
+  transform?: ViewportObjectTransform;
+  material?: ViewportMaterialPreview | null;
+  /** 父组件递增以复位相机视角 */
+  resetViewToken?: number;
+  /** 高性能：大场景也开转台/动态 2K */
+  highPerformanceMode?: boolean;
+  /** 仅拖拽旋转，禁用平移/滚轮缩放（素材节点） */
+  orbitOnly?: boolean;
+  /** 初始相机；未指定时用 DEFAULT_CAM */
+  defaultCamera?: ViewportCamera;
+  /** 锁定首次测量分辨率，避免无限画布缩放触发反复重渲 */
+  lockRenderSize?: boolean;
   onSceneInfo?: (info: {
     meshCount?: number;
     nodeCount?: number;
+    triangleCount?: number;
     extension?: string;
   }) => void;
 }
@@ -29,24 +54,121 @@ const DEFAULT_CAM: ViewportCamera = {
   panY: 0,
 };
 
+/** 素材节点默认 45° 展示（弧度） */
+export const PREVIEW_CAM_45: ViewportCamera = {
+  yaw: Math.PI / 4,
+  pitch: 0.38,
+  distance: 2.45,
+  panX: 0,
+  panY: 0,
+};
+
+/** 离屏渲染长边 2K，避免小图放大发糊 */
+const RENDER_MAX_W = 2048;
+const RENDER_MAX_H = 1536;
+
+function computeRenderSize(viewportW: number, viewportH: number) {
+  const vw = Math.max(1, viewportW);
+  const vh = Math.max(1, viewportH);
+  const aspect = vh / vw;
+  let w = Math.max(vw, RENDER_MAX_W);
+  let h = Math.round(w * aspect);
+  if (h > RENDER_MAX_H) {
+    h = RENDER_MAX_H;
+    w = Math.round(h / aspect);
+  }
+  return { w, h };
+}
+
+function mapEditorLighting(lighting?: ViewportLighting) {
+  const amb = lighting?.ambient ?? 1.0;
+  const dir = lighting?.directional ?? 2.0;
+  return {
+    yaw: lighting?.yaw ?? 45,
+    pitch: lighting?.pitch ?? 35,
+    ambient: 0.38 + amb * 0.22,
+    directional: 0.45 + dir * 0.28,
+  };
+}
+
+/** 屏幕空间平移（与当前 orbit yaw 对齐） */
+function panCameraScreen(
+  base: ViewportCamera,
+  dx: number,
+  dy: number,
+  sens = 0.004,
+): ViewportCamera {
+  const yaw = base.yaw ?? 0;
+  const cos = Math.cos(yaw);
+  const sin = Math.sin(yaw);
+  return {
+    ...base,
+    panX: (base.panX ?? 0) + (-dx * cos + dy * sin * 0.25) * sens,
+    panY: (base.panY ?? 0) + dy * sens,
+  };
+}
+
 export function JepowViewportPreview({
   scenePath,
   height = 220,
+  fill = false,
   mode = "turntable",
+  lighting,
+  liveRender = false,
+  shading = "clay",
+  transform,
+  material,
+  resetViewToken = 0,
+  highPerformanceMode = false,
+  orbitOnly = false,
+  defaultCamera,
+  lockRenderSize = false,
   onSceneInfo,
 }: JepowViewportPreviewProps) {
+  const initialCam = useMemo(
+    () => ({ ...(defaultCamera ?? DEFAULT_CAM) }),
+    [
+      defaultCamera?.yaw,
+      defaultCamera?.pitch,
+      defaultCamera?.distance,
+      defaultCamera?.panX,
+      defaultCamera?.panY,
+    ],
+  );
+  const containerRef = useRef<HTMLDivElement>(null);
+  const staticPreviewSize = useRef({ w: 480, h: Math.max(200, height) });
+  const [viewportSize, setViewportSize] = useState(() =>
+    liveRender
+      ? { w: 640, h: fill ? 360 : height }
+      : staticPreviewSize.current,
+  );
+  const staticRendered = useRef(false);
+  const [isDragging, setIsDragging] = useState(false);
   const [previewSrc, setPreviewSrc] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [sceneLabel, setSceneLabel] = useState<string | null>(null);
   const [engineReady, setEngineReady] = useState<boolean | null>(null);
   const [engineError, setEngineError] = useState<string | null>(null);
   const [capsLine, setCapsLine] = useState<string | null>(null);
-  const [camera, setCamera] = useState<ViewportCamera>({ ...DEFAULT_CAM });
+  const [camera, setCamera] = useState<ViewportCamera>({ ...initialCam });
+  const cameraRef = useRef(camera);
+  const transformRef = useRef(transform);
+  const lightingRef = useRef(lighting);
+  const materialRef = useRef(material);
+  cameraRef.current = camera;
+  transformRef.current = transform;
+  lightingRef.current = lighting;
+  materialRef.current = material;
 
   const turntableYaw = useRef(0);
   const animRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const renderGen = useRef(0);
   const renderInFlight = useRef(false);
+  const queuedRender = useRef<{
+    cam: ViewportCamera;
+    silent: boolean;
+    quality: "draft" | "final";
+  } | null>(null);
   const dragging = useRef<{
     kind: "orbit" | "pan";
     x: number;
@@ -54,14 +176,75 @@ export function JepowViewportPreview({
     cam: ViewportCamera;
   } | null>(null);
   const sceneOpened = useRef(false);
+  const [heavyScene, setHeavyScene] = useState(false);
+  const [sceneMetaReady, setSceneMetaReady] = useState(false);
+  const lockedRenderSize = useRef<{ w: number; h: number } | null>(null);
+  const dragRenderRaf = useRef(0);
+
+  useEffect(() => {
+    if (!liveRender) {
+      staticPreviewSize.current = { w: 480, h: Math.max(200, height) };
+      setViewportSize(staticPreviewSize.current);
+      return;
+    }
+    if (!fill) {
+      const w = 640;
+      const h = height;
+      if (lockRenderSize) {
+        if (!lockedRenderSize.current) lockedRenderSize.current = { w, h };
+        setViewportSize(lockedRenderSize.current);
+      } else {
+        setViewportSize({ w, h });
+      }
+      return;
+    }
+    const el = containerRef.current;
+    if (!el) return;
+    let debounce: ReturnType<typeof setTimeout> | null = null;
+    const applySize = (w: number, h: number) => {
+      if (lockRenderSize) {
+        if (!lockedRenderSize.current) {
+          lockedRenderSize.current = { w, h };
+          setViewportSize({ w, h });
+        }
+        return;
+      }
+      setViewportSize({ w, h });
+    };
+    const measure = () => {
+      const r = el.getBoundingClientRect();
+      const w = Math.max(280, Math.round(r.width));
+      const h = Math.max(200, Math.round(r.height));
+      if (lockRenderSize) {
+        applySize(w, h);
+        return;
+      }
+      if (debounce) clearTimeout(debounce);
+      debounce = setTimeout(() => applySize(w, h), 320);
+    };
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => {
+      ro.disconnect();
+      if (debounce) clearTimeout(debounce);
+    };
+  }, [fill, height, liveRender, lockRenderSize]);
 
   const renderWithCamera = useCallback(
-    async (cam: ViewportCamera, silent = false) => {
+    async (
+      cam: ViewportCamera,
+      silent = false,
+      quality: "draft" | "final" = "final",
+    ) => {
       if (!scenePath) return;
       if (renderInFlight.current) {
-        if (silent) return;
+        queuedRender.current = { cam: { ...cam }, silent: true, quality };
+        if (!silent) setLoading(true);
+        return;
       }
       renderInFlight.current = true;
+      queuedRender.current = null;
       const gen = renderGen.current;
       if (!silent) setLoading(true);
       try {
@@ -69,8 +252,11 @@ export function JepowViewportPreview({
         if (!sceneOpened.current) {
           const info = await eng.openScene(scenePath);
           if (info.ok) {
+            const tris = info.triangleCount ?? 0;
+            const heavy = tris > 80_000;
+            setHeavyScene(heavy);
             setSceneLabel(
-              `${info.extension?.toUpperCase() || "3D"} · ${info.meshCount ?? 0} 网格 · ${info.nodeCount ?? 0} 节点`,
+              `${info.extension?.toUpperCase() || "3D"} · ${info.meshCount ?? 0} 网格 · ${info.nodeCount ?? 0} 节点${heavy && !liveRender ? " · 静态预览" : liveRender ? " · 2K 实时" : ""}`,
             );
             onSceneInfo?.(info);
           } else if (!silent) {
@@ -78,11 +264,24 @@ export function JepowViewportPreview({
           }
           sceneOpened.current = true;
         }
+        const { w: previewW, h: previewH } = computeRenderSize(
+          viewportSize.w,
+          viewportSize.h,
+        );
+        const lit = mapEditorLighting(lightingRef.current);
+        const tr = transformRef.current;
+        const mat = materialRef.current;
         const result = await eng.renderPreview({
           scenePath,
-          width: 720,
-          height: Math.max(360, Math.round((720 * height) / 290)),
+          width: previewW,
+          height: previewH,
           camera: cam,
+          lighting: lit,
+          transform: tr,
+          material: mat,
+          shading,
+          liveRender,
+          previewQuality: "final",
         });
         if (gen !== renderGen.current) return;
         if (!result.ok || !result.previewUrl) {
@@ -91,11 +290,22 @@ export function JepowViewportPreview({
           setPreviewSrc(null);
           return;
         }
-        const dataUrl = await eng.readPreviewDataUrl(result.previewUrl);
+        const dataUrl = await eng.readPreviewDataUrl(
+          `${result.previewUrl}?t=${Date.now()}`,
+        );
         if (gen !== renderGen.current) return;
         if (dataUrl) {
-          setPreviewSrc(dataUrl);
-          setEngineError(null);
+          const img = new Image();
+          img.onload = () => {
+            if (gen !== renderGen.current) return;
+            setPreviewSrc(dataUrl);
+            setEngineError(null);
+          };
+          img.onerror = () => {
+            if (gen !== renderGen.current) return;
+            setEngineError("无法解码预览图");
+          };
+          img.src = dataUrl;
         } else {
           setEngineError("无法读取渲染缓存图");
         }
@@ -105,19 +315,75 @@ export function JepowViewportPreview({
       } finally {
         renderInFlight.current = false;
         if (gen === renderGen.current && !silent) setLoading(false);
+        const queued = queuedRender.current;
+        if (queued && gen === renderGen.current) {
+          queuedRender.current = null;
+          void renderWithCamera(queued.cam, queued.silent, queued.quality);
+        } else if (liveRender && dragging.current && gen === renderGen.current) {
+          void renderWithCamera(cameraRef.current, true, "draft");
+        }
       }
     },
-    [scenePath, height, onSceneInfo],
+    [
+      scenePath,
+      height,
+      heavyScene,
+      onSceneInfo,
+      viewportSize,
+      lighting,
+      shading,
+      liveRender,
+    ],
   );
+  const renderWithCameraRef = useRef(renderWithCamera);
+  renderWithCameraRef.current = renderWithCamera;
+
+  const lightingKey = JSON.stringify(lighting ?? {});
+  const transformKey = JSON.stringify(transform ?? {});
+  const materialKey = JSON.stringify(material ?? {});
+
+  useEffect(() => {
+    if (engineReady !== true || !sceneMetaReady) return;
+    const delay = liveRender ? 120 : 0;
+    const t = setTimeout(() => {
+      staticRendered.current = false;
+      void renderWithCamera(cameraRef.current, liveRender, "final");
+    }, delay);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lightingKey, transformKey, materialKey, shading, engineReady, sceneMetaReady, liveRender]);
+
+  const lastResetToken = useRef(0);
+  useEffect(() => {
+    if (
+      resetViewToken <= 0 ||
+      resetViewToken === lastResetToken.current ||
+      engineReady !== true
+    ) {
+      return;
+    }
+    lastResetToken.current = resetViewToken;
+    const cam = { ...initialCam };
+    cameraRef.current = cam;
+    setCamera(cam);
+    staticRendered.current = false;
+    void renderWithCamera(cam, liveRender, "final");
+  }, [resetViewToken, engineReady, renderWithCamera, initialCam, liveRender]);
 
   useEffect(() => {
     sceneOpened.current = false;
+    staticRendered.current = false;
+    setHeavyScene(false);
+    setSceneMetaReady(false);
     renderGen.current += 1;
     renderInFlight.current = false;
     invalidateViewportCache();
+    invalidateViewportPerformance();
     setEngineReady(null);
     setEngineError(null);
-    setCamera({ ...DEFAULT_CAM });
+    lockedRenderSize.current = null;
+    setCamera({ ...initialCam });
+    cameraRef.current = { ...initialCam };
     turntableYaw.current = 0;
 
     getViewportCapabilities(true)
@@ -127,7 +393,7 @@ export function JepowViewportPreview({
         if (!caps.nativeAvailable) {
           setEngineError(
             caps.message ||
-              "jepow-engine.exe 未找到。请用 desktop.bat 启动。",
+              "未检测到 Blender 或 jepow-engine。FBX 请安装 Blender 到应用程序文件夹。",
           );
         }
       })
@@ -139,48 +405,149 @@ export function JepowViewportPreview({
     return () => {
       if (animRef.current) clearInterval(animRef.current);
     };
-  }, [scenePath]);
+  }, [scenePath, initialCam]);
 
   useEffect(() => {
-    if (engineReady !== true) return;
+    if (engineReady !== true || !scenePath) return;
+    let cancelled = false;
+    setSceneMetaReady(false);
+    getViewportEngine()
+      .openScene(scenePath)
+      .then((info) => {
+        if (cancelled) return;
+        if (info.ok) {
+          const tris = info.triangleCount ?? 0;
+          setHeavyScene(tris > 80_000);
+          setSceneLabel(
+            `${info.extension?.toUpperCase() || "3D"} · ${info.meshCount ?? 0} 网格 · ${info.nodeCount ?? 0} 节点${
+              orbitOnly
+                ? " · 45° 预览"
+                : mode === "turntable" && liveRender
+                  ? " · 居中慢转"
+                  : liveRender
+                    ? " · 2K 实时"
+                    : " · 静态预览"
+            }`,
+          );
+          onSceneInfo?.(info);
+        }
+        setSceneMetaReady(true);
+      })
+      .catch(() => {
+        if (!cancelled) setSceneMetaReady(true);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [engineReady, scenePath, onSceneInfo]);
+
+  useEffect(() => {
+    if (engineReady !== true || !sceneMetaReady) return;
+
+    if (!liveRender) {
+      if (staticRendered.current) return;
+      staticRendered.current = true;
+      void renderWithCamera({ ...initialCam }, false, "final");
+      return undefined;
+    }
+
+    if (orbitOnly) {
+      cameraRef.current = { ...initialCam };
+      setCamera({ ...initialCam });
+      void renderWithCamera({ ...initialCam }, true, "final");
+      return undefined;
+    }
 
     if (mode === "turntable") {
+      void renderWithCamera({ ...initialCam }, false, "final");
+      const allowSpin =
+        liveRender && (!heavyScene || highPerformanceMode);
+      if (!allowSpin) {
+        return undefined;
+      }
       const tick = async () => {
         if (renderInFlight.current) return;
-        turntableYaw.current += 0.045;
-        const cam: ViewportCamera = {
-          ...DEFAULT_CAM,
-          yaw: turntableYaw.current,
-        };
-        await renderWithCamera(cam, true);
+        turntableYaw.current += 0.014;
+        await renderWithCamera(
+          { ...initialCam, yaw: turntableYaw.current },
+          true,
+          "final",
+        );
       };
-      void renderWithCamera({ ...DEFAULT_CAM }, false);
-      animRef.current = setInterval(() => void tick(), 450);
+      const spinMs = highPerformanceMode ? 2600 : 1800;
+      animRef.current = setInterval(() => void tick(), spinMs);
       return () => {
         if (animRef.current) clearInterval(animRef.current);
       };
     }
 
-    void renderWithCamera({ ...DEFAULT_CAM }, false);
+    void renderWithCameraRef.current({ ...initialCam }, liveRender, "final");
     return undefined;
-  }, [engineReady, mode, scenePath, renderWithCamera]);
+    // Keep this as an initial scene/mode draw only. Lighting and transform changes
+    // render through their own effect without resetting the camera.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    engineReady,
+    sceneMetaReady,
+    heavyScene,
+    mode,
+    scenePath,
+    liveRender,
+    highPerformanceMode,
+    orbitOnly,
+    initialCam,
+  ]);
 
-  const orbitCamKey = useRef("");
   useEffect(() => {
-    if (engineReady !== true || mode !== "orbit") return;
-    const key = JSON.stringify(camera);
-    if (key === orbitCamKey.current) return;
-    orbitCamKey.current = key;
-    const t = setTimeout(() => void renderWithCamera(camera, dragging.current ? true : false), 60);
-    return () => clearTimeout(t);
-  }, [camera, engineReady, mode, renderWithCamera]);
+    if (
+      !liveRender ||
+      engineReady !== true ||
+      !sceneMetaReady ||
+      mode !== "orbit" ||
+      !isDragging
+    ) {
+      return undefined;
+    }
+    let raf = 0;
+    let last = 0;
+    const loop = (now: number) => {
+      const interval = heavyScene ? 52 : 36;
+      if (now - last >= interval && !renderInFlight.current) {
+        last = now;
+        void renderWithCamera(cameraRef.current, true, "draft");
+      }
+      raf = requestAnimationFrame(loop);
+    };
+    raf = requestAnimationFrame(loop);
+    return () => cancelAnimationFrame(raf);
+  }, [
+    liveRender,
+    engineReady,
+    sceneMetaReady,
+    mode,
+    heavyScene,
+    isDragging,
+    renderWithCamera,
+  ]);
+
+  const scheduleDragRender = () => {
+    if (dragRenderRaf.current) return;
+    dragRenderRaf.current = requestAnimationFrame(() => {
+      dragRenderRaf.current = 0;
+      if (!dragging.current) return;
+      void renderWithCamera(cameraRef.current, true, "draft");
+    });
+  };
 
   const onPointerDown = (e: React.PointerEvent) => {
     if (mode !== "orbit") return;
+    if (!liveRender) return;
     e.stopPropagation();
     e.currentTarget.setPointerCapture(e.pointerId);
+    setIsDragging(true);
     dragging.current = {
-      kind: e.button === 2 || e.shiftKey ? "pan" : "orbit",
+      kind:
+        orbitOnly || !(e.button === 2 || e.shiftKey) ? "orbit" : "pan",
       x: e.clientX,
       y: e.clientY,
       cam: { ...camera },
@@ -193,73 +560,94 @@ export function JepowViewportPreview({
     const dx = e.clientX - dragging.current.x;
     const dy = e.clientY - dragging.current.y;
     const base = dragging.current.cam;
-    if (dragging.current.kind === "orbit") {
-      setCamera({
-        ...base,
-        yaw: (base.yaw ?? 0) + dx * 0.008,
-        pitch: Math.max(-1.1, Math.min(1.1, (base.pitch ?? 0) - dy * 0.006)),
-      });
-    } else {
-      setCamera({
-        ...base,
-        panX: (base.panX ?? 0) + dx * 0.004,
-        panY: (base.panY ?? 0) - dy * 0.004,
-      });
-    }
+    const next =
+      dragging.current.kind === "orbit"
+        ? {
+            ...base,
+            yaw: (base.yaw ?? 0) - dx * 0.008,
+            pitch: Math.max(
+              -1.1,
+              Math.min(1.1, (base.pitch ?? 0) + dy * 0.006),
+            ),
+          }
+        : panCameraScreen(base, dx, dy);
+    cameraRef.current = next;
+    setCamera(next);
+    if (liveRender) scheduleDragRender();
   };
 
   const onPointerUp = (e: React.PointerEvent) => {
     if (!dragging.current) return;
     e.stopPropagation();
     dragging.current = null;
+    setIsDragging(false);
     try {
       e.currentTarget.releasePointerCapture(e.pointerId);
     } catch {
       /* ignore */
     }
+    if (liveRender && mode === "orbit") {
+      void renderWithCamera(cameraRef.current, true, "final");
+    }
   };
 
   const onWheel = (e: React.WheelEvent) => {
-    if (mode !== "orbit") return;
+    if (orbitOnly || !liveRender || mode !== "orbit") return;
     e.stopPropagation();
     e.preventDefault();
-    setCamera((c) => ({
-      ...c,
+    const next = {
+      ...cameraRef.current,
       distance: Math.max(
         0.4,
-        Math.min(10, (c.distance ?? 2.45) + e.deltaY * 0.004),
+        Math.min(10, (cameraRef.current.distance ?? 2.45) + e.deltaY * 0.004),
       ),
-    }));
+    };
+    cameraRef.current = next;
+    setCamera(next);
+    void renderWithCamera(next, true, "draft");
   };
 
-  const modeHint =
-    mode === "turntable"
-      ? "白膜 · 居中自动旋转"
-      : "白膜 · 左拖旋转 / 滚轮缩放 / 右键平移";
+  const modeHint = orbitOnly
+    ? "白膜 · 45° · 拖拽旋转"
+    : !liveRender
+      ? "预览缩略图"
+      : mode === "turntable"
+        ? "白膜 · 居中慢速旋转"
+        : shading === "render"
+          ? "渲染视口 · 常驻 GPU"
+          : "白膜视口 · 左拖旋转 / 滚轮缩放 / 右键平移";
 
   if (engineReady !== true) {
     return (
       <div
-        className="flex flex-col items-center justify-center gap-2 bg-amber-950/40 border-2 border-amber-500/60 rounded-md text-center p-4"
-        style={{ height }}
+        className={`flex flex-col items-center justify-center gap-2 bg-amber-950/40 border-2 border-amber-500/60 text-center p-4 ${
+          fill ? "absolute inset-0" : "rounded-md"
+        }`}
+        style={fill ? undefined : { height }}
       >
         <Cpu className="w-9 h-9 text-amber-400" />
         <span className="text-[11px] font-bold text-amber-300">
           {engineReady === null ? "正在检测自研渲染器…" : "自研渲染器未编译"}
         </span>
         <p className="text-[10px] text-amber-100/90 leading-relaxed max-w-[270px]">
-          {engineError || "需要 jepow-engine.exe"}
+          {engineError || "需要 Blender 或 jepow-engine"}
         </p>
       </div>
     );
   }
 
+  const shellClass = fill
+    ? "absolute inset-0 w-full h-full"
+    : "relative w-full rounded-md overflow-hidden";
+  const shellStyle = fill ? undefined : { height };
+
   return (
     <div
-      className={`relative bg-neutral-950 rounded-md overflow-hidden border ${
-        mode === "orbit" ? "border-purple-500/50" : "border-emerald-500/40"
-      } ${mode === "orbit" ? "cursor-grab active:cursor-grabbing" : ""}`}
-      style={{ height }}
+      ref={containerRef}
+      className={`${shellClass} bg-neutral-950 border ${
+        fill ? "border-0" : mode === "orbit" ? "border-purple-500/50" : "border-emerald-500/40"
+      } ${(liveRender || orbitOnly) && mode === "orbit" ? "cursor-grab active:cursor-grabbing" : ""}`}
+      style={shellStyle}
       onPointerDown={onPointerDown}
       onPointerMove={onPointerMove}
       onPointerUp={onPointerUp}
@@ -271,7 +659,8 @@ export function JepowViewportPreview({
         <img
           src={previewSrc}
           alt="Jepow native viewport"
-          className="w-full h-full object-contain bg-[#1a1b1e] pointer-events-none select-none"
+          className="w-full h-full bg-[#1a1b1e] pointer-events-none select-none object-contain"
+          style={{ imageRendering: "auto" }}
           draggable={false}
         />
       ) : (
@@ -305,12 +694,26 @@ export function JepowViewportPreview({
         )}
       </div>
 
-      {mode === "orbit" && (
+      {loading && mode === "orbit" && !liveRender && (
+        <div className="absolute top-14 right-2 pointer-events-none">
+          <span className="text-[8px] bg-black/70 text-violet-300 px-1.5 py-0.5 rounded border border-violet-900/40">
+            渲染中…
+          </span>
+        </div>
+      )}
+
+      {mode === "orbit" && !orbitOnly && (
         <div className="absolute bottom-2 left-2 flex gap-1 pointer-events-none text-[7px] text-neutral-500">
           <RotateCw className="w-3 h-3" />
           <span>旋转</span>
           <Move className="w-3 h-3 ml-1" />
           <span>平移</span>
+        </div>
+      )}
+      {mode === "orbit" && orbitOnly && (
+        <div className="absolute bottom-2 left-2 flex gap-1 pointer-events-none text-[7px] text-neutral-500">
+          <RotateCw className="w-3 h-3" />
+          <span>拖拽旋转</span>
         </div>
       )}
 
@@ -324,9 +727,11 @@ export function JepowViewportPreview({
           onClick={(e) => {
             e.stopPropagation();
             renderGen.current += 1;
-            setCamera({ ...DEFAULT_CAM });
+            const cam = { ...initialCam };
+            setCamera(cam);
+            cameraRef.current = cam;
             if (mode === "turntable") turntableYaw.current = 0;
-            void renderWithCamera({ ...DEFAULT_CAM }, false);
+            void renderWithCamera(cam, liveRender || orbitOnly);
           }}
         >
           <RefreshCw className={`w-3.5 h-3.5 ${loading ? "animate-spin" : ""}`} />

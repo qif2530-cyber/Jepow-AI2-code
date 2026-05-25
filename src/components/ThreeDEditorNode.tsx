@@ -1,4 +1,4 @@
-import React, { useState, useEffect, Suspense, useMemo } from "react";
+import React, { useState, useEffect, Suspense, useMemo, useRef } from "react";
 import { Handle, Position, useReactFlow, useStore } from "@xyflow/react";
 import { Canvas } from "@react-three/fiber";
 import { OrbitControls } from "@react-three/drei";
@@ -370,7 +370,7 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
   const [loadError, setLoadError] = useState<string | null>(null);
   const [canvasMounted, setCanvasMounted] = useState(false);
 
-  const renderActive = data.renderActive !== false;
+  const renderActive = data.renderActive === true;
   const toggleRenderActive = () => {
     updateNodeData(id, { renderActive: !renderActive });
   };
@@ -458,8 +458,44 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
     projectId: getCurrentProjectId(),
   });
 
-  const useDesktopNativeRenderer =
-    isDesktopApp() && !!resolvedScenePath && renderActive;
+  const hasNativeScene = isDesktopApp() && !!resolvedScenePath;
+  const [viewportResetToken, setViewportResetToken] = useState(0);
+  const [perfProfile, setPerfProfile] = useState<"unknown" | "high" | "low">(
+    "unknown",
+  );
+  const editorAutoStarted = useRef(false);
+
+  useEffect(() => {
+    if (!resolvedScenePath) {
+      setPerfProfile("unknown");
+      return;
+    }
+    let cancelled = false;
+    import("../lib/viewport-performance").then(({ detectViewportPerformance }) =>
+      detectViewportPerformance(resolvedScenePath).then((p) => {
+        if (!cancelled) setPerfProfile(p);
+      }),
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [resolvedScenePath]);
+
+  useEffect(() => {
+    if (!modelNode) {
+      editorAutoStarted.current = false;
+      return;
+    }
+    if (!hasNativeScene || editorAutoStarted.current) return;
+    editorAutoStarted.current = true;
+    if (data.renderActive !== true) {
+      updateNodeData(id, { renderActive: true });
+    }
+  }, [hasNativeScene, modelNode, id, data.renderActive, updateNodeData]);
+
+  const highPerfDynamic = perfProfile === "high";
+  const showLiveViewport = hasNativeScene && renderActive;
+  const showPausedOverlay = hasNativeScene && !renderActive;
 
   // Position, Rotation, Scale configurations
   const [transform, setTransform] = useState({
@@ -482,6 +518,13 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
     yaw: 45,
     pitch: 35
   });
+
+  const nativeLighting = {
+    yaw: lights.yaw,
+    pitch: lights.pitch,
+    ambient: lights.ambient,
+    directional: lights.directional,
+  };
 
   const updateLightAngle = (newYaw: number, newPitch: number) => {
     const radius = 8.6;
@@ -520,8 +563,13 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
       rx: 0,
       ry: 0,
       rz: 0,
-      scale: 2.0
+      scale: 2.0,
     });
+    setViewportResetToken((t) => t + 1);
+  };
+
+  const handleResetLights = () => {
+    updateLightAngle(45, 35);
     setLights({
       ambient: 1.0,
       directional: 2.0,
@@ -529,7 +577,7 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
       dirY: 5,
       dirZ: 5,
       yaw: 45,
-      pitch: 35
+      pitch: 35,
     });
   };
 
@@ -602,7 +650,11 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
                 toggleRenderActive();
               }}
               className="h-7 w-7 bg-black/60 hover:bg-black/85 border border-neutral-800/80 text-neutral-400 hover:text-white backdrop-blur-sm rounded animate-in fade-in transition-all"
-              title={renderActive ? "关闭/暂停 3D 渲染以保障系统运行" : "启动 3D 实时渲染"}
+              title={
+                renderActive
+                  ? "暂停渲染器（保留静态预览）"
+                  : "启动渲染器（实时视角与光照）"
+              }
             >
               {renderActive ? <Pause className="w-3.5 h-3.5 text-purple-400" /> : <Play className="w-3.5 h-3.5 text-zinc-500 animate-pulse" />}
             </Button>
@@ -629,14 +681,57 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
                 "请在左侧模型节点用「从磁盘选择大场景」重新导入 FBX/GLB。"}
             </p>
           </div>
-        ) : useDesktopNativeRenderer ? (
-          <div className="w-full h-full min-h-[480px]">
+        ) : showLiveViewport ? (
+          <JepowViewportPreview
+            scenePath={resolvedScenePath}
+            fill
+            mode="orbit"
+            liveRender
+            lockRenderSize
+            highPerformanceMode={highPerfDynamic}
+            shading={highPerfDynamic ? "render" : "clay"}
+            transform={{
+              x: transform.x,
+              y: transform.y,
+              z: transform.z,
+              rx: transform.rx,
+              ry: transform.ry,
+              rz: transform.rz,
+              scale: transform.scale,
+            }}
+            lighting={nativeLighting}
+            material={
+              activeMaterial
+                ? {
+                    tint: activeMaterial.tint,
+                    roughness: activeMaterial.roughness,
+                    metalness: activeMaterial.metalness,
+                  }
+                : null
+            }
+            resetViewToken={viewportResetToken}
+          />
+        ) : showPausedOverlay ? (
+          <>
             <JepowViewportPreview
               scenePath={resolvedScenePath}
-              height={480}
-              mode="orbit"
+              fill
+              mode="turntable"
+              liveRender={false}
+              shading="clay"
+              lighting={nativeLighting}
+              resetViewToken={viewportResetToken}
             />
-          </div>
+            <div className="absolute inset-0 z-10 flex flex-col items-center justify-center bg-black/55 pointer-events-none">
+              <Pause className="w-8 h-8 text-purple-400/90 mb-2" />
+              <span className="text-[11px] font-bold text-neutral-200">
+                预览模式 · 渲染器已暂停
+              </span>
+              <span className="text-[9px] text-neutral-400 mt-1">
+                点击右上角 ▶ 启动实时渲染与交互
+              </span>
+            </div>
+          </>
         ) : canvasMounted && renderActive && glbToRender ? (
           <Canvas
             dpr={1.5}
@@ -779,9 +874,19 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
           }}
         >
           <div className="nodrag w-[480px] bg-[#161616]/95 border border-neutral-800 rounded-lg p-4 shadow-2xl flex flex-col gap-3.5 backdrop-blur-md">
-            <div className="flex items-center gap-2 border-b border-neutral-800/80 pb-2">
-              <Sun className="w-4 h-4 text-purple-400" />
-              <span className="text-xs font-bold text-neutral-200">3D 光源调节控制台</span>
+            <div className="flex flex-col gap-1 border-b border-neutral-800/80 pb-2">
+              <div className="flex items-center gap-2">
+                <Sun className="w-4 h-4 text-purple-400" />
+                <span className="text-xs font-bold text-neutral-200">3D 光源调节控制台</span>
+              </div>
+              {hasNativeScene && (
+                <p className="text-[9px] text-amber-300/90 leading-snug">
+                  接入模型后直接进入三维视口（GPU 常驻）。
+                  {highPerfDynamic
+                    ? " 本机性能良好：2K 动态预览。"
+                    : " 本机性能一般：可点 ⏸ 暂停以省资源。"}
+                </p>
+              )}
             </div>
 
             <div className="grid grid-cols-2 gap-3.5">
@@ -884,32 +989,23 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
 
             <div className="grid grid-cols-2 gap-3 mt-1.5 pt-2 border-t border-neutral-800/60">
               <Button
-                onClick={() => {
-                  setTransform({
-                    x: 0,
-                    y: -0.5,
-                    z: 0,
-                    rx: 0,
-                    ry: 0,
-                    rz: 0,
-                    scale: 2.0
-                  });
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  handleResetTransforms();
                 }}
-                className="text-[10px] h-7 bg-neutral-900 border border-neutral-800 hover:bg-neutral-800 text-neutral-400 hover:text-white rounded font-bold animate-pulse"
+                className="text-[10px] h-7 bg-neutral-900 border border-neutral-800 hover:bg-neutral-800 text-neutral-400 hover:text-white rounded font-bold"
               >
                 <RefreshCw className="w-3 h-3 mr-1" />
                 复位三维视角
               </Button>
               <Button
-                onClick={() => {
-                  updateLightAngle(45, 35);
-                  setLights((prev) => ({
-                    ...prev,
-                    ambient: 1.0,
-                    directional: 2.0
-                  }));
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  handleResetLights();
                 }}
-                className="text-[10px] h-7 bg-neutral-900 border border-neutral-800 hover:bg-neutral-800 text-neutral-400 hover:text-white rounded font-bold animate-pulse"
+                className="text-[10px] h-7 bg-neutral-900 border border-neutral-800 hover:bg-neutral-800 text-neutral-400 hover:text-white rounded font-bold"
               >
                 <RefreshCw className="w-3 h-3 mr-1" />
                 重置系统光源

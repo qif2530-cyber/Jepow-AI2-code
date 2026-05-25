@@ -28,29 +28,40 @@ export const jepowNativeViewportEngine: ViewportEngine = {
     return {
       backend: available ? 'jepow-native' : 'web',
       nativeAvailable: available,
-      engineVersion: status.version as string | undefined,
+      engineVersion: (status.version as string) || undefined,
       engineExecutable: status.executable as string | null | undefined,
       cpuJobs: status.cpuJobs as number | undefined,
-      gpuAdapter: (status.gpu as { adapter_name?: string })?.adapter_name,
+      gpuAdapter:
+        (status.gpu as { adapter_name?: string })?.adapter_name ||
+        (status.gpuAdapter as string | undefined),
       supportsBlendImport: false,
       supportsLargeScenes: available,
-      renderEngines: available ? ['jepow-realtime', 'jepow-path'] : [],
-      message: available
-        ? `Jepow 原生引擎 ${status.version || ''} · CPU×${status.cpuJobs || '?'} · GPU ${(status.gpu as { adapter_name?: string })?.adapter_name || 'detecting'}`
-        : '请执行 npm run native:build 编译自研 3D 内核',
+      renderEngines: Array.isArray(status.renderEngines)
+        ? (status.renderEngines as string[])
+        : available
+          ? ['jepow-viewport']
+          : [],
+      message:
+        (status.message as string) ||
+        (available
+          ? 'Jepow 原生引擎（FBX 规则对齐 Blender）'
+          : '请执行 npm run native:build'),
     };
   },
 
   async openScene(scenePath: string): Promise<BlenderSceneInfo> {
     const api = vp();
     if (!api?.openScene) return { ok: false, error: 'viewport API 不可用' };
-    return api.openScene(scenePath) as Promise<BlenderSceneInfo>;
+    return api.openScene(scenePath) as unknown as Promise<BlenderSceneInfo>;
   },
 
   async renderPreview(opts: RenderPreviewOptions): Promise<RenderPreviewResult> {
     const api = vp();
     if (!api) return { ok: false, error: 'viewport API 不可用' };
     const cam = opts.camera;
+    const lit = opts.lighting;
+    const tr = opts.transform;
+    const mat = opts.material;
     return api.renderPreview({
       scenePath: opts.scenePath,
       width: opts.width,
@@ -60,7 +71,24 @@ export const jepowNativeViewportEngine: ViewportEngine = {
       cameraDistance: cam?.distance,
       panX: cam?.panX,
       panY: cam?.panY,
-    }) as Promise<RenderPreviewResult>;
+      lightYaw: lit?.yaw,
+      lightPitch: lit?.pitch,
+      lightAmbient: lit?.ambient,
+      lightDiffuse: lit?.directional,
+      x: tr?.x,
+      y: tr?.y,
+      z: tr?.z,
+      rx: tr?.rx,
+      ry: tr?.ry,
+      rz: tr?.rz,
+      scale: tr?.scale,
+      materialTint: mat?.tint,
+      materialRoughness: mat?.roughness,
+      materialMetalness: mat?.metalness,
+      shading: opts.shading,
+      liveRender: opts.liveRender,
+      previewQuality: opts.previewQuality,
+    }) as unknown as Promise<RenderPreviewResult>;
   },
 
   async readPreviewDataUrl(previewUrl: string) {

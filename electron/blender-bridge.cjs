@@ -205,38 +205,78 @@ async function getStatus() {
   };
 }
 
+function normalizeScenePath(scenePath) {
+  if (!scenePath || typeof scenePath !== 'string') return scenePath;
+  let raw = scenePath.trim();
+  if (raw.startsWith('jepow-local://')) {
+    raw = raw.slice('jepow-local://'.length);
+  }
+  return path.normalize(raw);
+}
+
 async function openBlend(blendPath) {
-  return runBlenderCommand('open_blend', { blendPath: blendPath });
+  return runBlenderCommand('open_blend', { blendPath: normalizeScenePath(blendPath) });
 }
 
-async function sceneInfo(blendPath) {
-  return runBlenderCommand('scene_info', { blendPath: blendPath });
+async function openScene(scenePath) {
+  const p = normalizeScenePath(scenePath);
+  const ext = path.extname(p).toLowerCase();
+  if (ext === '.blend') {
+    return openBlend(p);
+  }
+  return runBlenderCommand('open_scene', { scenePath: p }, PREVIEW_TIMEOUT_MS);
 }
 
-async function renderPreview({
-  blendPath,
-  engine = 'eevee',
-  width = 640,
-  height = 480,
-  frame,
-  samples,
-}) {
+async function sceneInfo(scenePath) {
+  return openScene(scenePath);
+}
+
+async function renderPreview(opts = {}) {
+  const {
+    blendPath,
+    scenePath,
+    engine = 'eevee',
+    width = 640,
+    height = 480,
+    frame,
+    samples,
+    cameraYaw,
+    cameraPitch,
+    cameraDistance,
+    panX,
+    panY,
+  } = opts;
+
   const id = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   const outputPath = path.join(getViewportCacheDir(), `preview-${id}.png`);
-  const result = await runBlenderCommand(
-    'render_frame',
-    {
-      blendPath,
-      outputPath,
-      engine,
-      width,
-      height,
-      frame,
-      samples,
-      useGpu: true,
-    },
-    PREVIEW_TIMEOUT_MS,
-  );
+  const resolved = normalizeScenePath(scenePath || blendPath);
+  const ext = resolved ? path.extname(resolved).toLowerCase() : '';
+
+  const payload = {
+    outputPath,
+    engine,
+    width,
+    height,
+    frame,
+    samples,
+    useGpu: true,
+    cameraYaw,
+    cameraPitch,
+    cameraDistance,
+    panX,
+    panY,
+  };
+
+  const command =
+    resolved && ext !== '.blend' ? 'render_scene' : 'render_frame';
+
+  if (command === 'render_scene') {
+    payload.scenePath = resolved;
+  } else {
+    payload.blendPath = resolved;
+  }
+
+  const result = await runBlenderCommand(command, payload, PREVIEW_TIMEOUT_MS);
   if (!result.ok) return result;
   return {
     ...result,
@@ -270,6 +310,7 @@ module.exports = {
   runBlenderCommand,
   getStatus,
   openBlend,
+  openScene,
   sceneInfo,
   renderPreview,
   exportGlb,

@@ -11,3 +11,8 @@ coverage/
 db.json
 uploads/
 
+# GPL Cycles component
+native/jepow-cycles/build/
+native/jepow-cycles/third_party/blender/
+dist/compliance/
+

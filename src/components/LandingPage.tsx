@@ -38,6 +38,8 @@ import api from "../lib/api";
 import { isDesktopApp } from "../lib/runtime";
 import { checkIsVideoUrl } from "../lib/video";
 import { LandingDownloadSection } from "./LandingDownloadSection";
+import { OpenSourceLicensesModal } from "./OpenSourceLicensesModal";
+import { Logo } from "./Logo";
 
 interface LandingPageProps {
   onNewProject: () => void;
@@ -401,6 +403,7 @@ export function LandingPage({
   const [activities, setActivities] = useState<any[]>([]);
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
   const [isHelpDropdownOpen, setIsHelpDropdownOpen] = useState(false);
+  const [showOssLicenses, setShowOssLicenses] = useState(false);
   const [editingProjectId, setEditingProjectId] = useState<string | null>(null);
   const [editingName, setEditingName] = useState("");
   const dropdownRef = useRef<HTMLDivElement>(null);
@@ -619,6 +622,18 @@ export function LandingPage({
                         服务条款
                       </a>
                     </li>
+                    <li>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIsHelpDropdownOpen(false);
+                          setShowOssLicenses(true);
+                        }}
+                        className="hover:text-black hover:translate-x-1 transition-all block py-0.5 text-left w-full"
+                      >
+                        开源许可
+                      </button>
+                    </li>
                   </ul>
                 </div>
               </motion.div>
@@ -633,13 +648,7 @@ export function LandingPage({
           className="flex flex-1 items-center justify-start gap-2 cursor-pointer pointer-events-auto"
           onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })}
         >
-          {siteConfig?.logo && (
-            <img
-              src={siteConfig.logo}
-              alt="Logo"
-              className="w-8 h-8 rounded-md object-contain"
-            />
-          )}
+          <Logo url={siteConfig?.logo} className="w-8 h-8 rounded-md" />
         </div>
 
         <div className="flex flex-1 items-center justify-end pointer-events-auto">
@@ -1158,6 +1167,15 @@ export function LandingPage({
                 {siteConfig.icp}
               </a>
             )}
+            {isDesktopApp() && (
+              <button
+                type="button"
+                onClick={() => setShowOssLicenses(true)}
+                className="text-neutral-900/30 hover:text-neutral-900 transition-colors"
+              >
+                开源许可
+              </button>
+            )}
           </div>
         </div>
       </footer>
@@ -1195,6 +1213,11 @@ export function LandingPage({
           </div>
         )}
       </AnimatePresence>
+
+      <OpenSourceLicensesModal
+        open={showOssLicenses}
+        onClose={() => setShowOssLicenses(false)}
+      />
     </div>
   );
 }

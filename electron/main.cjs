@@ -297,6 +297,12 @@ async function bootstrap() {
 }
 
 function shutdownChildren() {
+  try {
+    const nativeBridge = require('./native-engine-bridge.cjs');
+    if (nativeBridge.killDaemon) nativeBridge.killDaemon();
+  } catch {
+    /* ignore */
+  }
   if (frontendProcess && !frontendProcess.killed) {
     frontendProcess.kill();
     frontendProcess = null;

@@ -1,0 +1,5 @@
+/Users/liang/Desktop/jepow/Jepow-AI2-code/native/jepow-engine/target/debug/deps/gltf_derive-ec61cfb5fc09233b.d: /Users/liang/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/gltf-derive-1.4.1/src/lib.rs
+
+/Users/liang/Desktop/jepow/Jepow-AI2-code/native/jepow-engine/target/debug/deps/libgltf_derive-ec61cfb5fc09233b.dylib: /Users/liang/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/gltf-derive-1.4.1/src/lib.rs
+
+/Users/liang/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/gltf-derive-1.4.1/src/lib.rs:

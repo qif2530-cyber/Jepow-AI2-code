@@ -1,25 +1,59 @@
 use anyhow::{Context, Result};
-use std::path::Path;
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex, OnceLock};
 
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct Vertex {
     pub pos: [f32; 3],
-    pub color: [f32; 3],
+    /// World/object normal for clay shading (normalized where possible).
+    pub normal: [f32; 3],
 }
 
+#[derive(Clone)]
 pub struct MeshData {
     pub vertices: Vec<Vertex>,
     pub indices: Vec<u32>,
 }
 
-/// 白膜灰度（法线明暗）
-fn clay_vertex_color(ny: f32) -> [f32; 3] {
-    let shade = (ny * 0.5 + 0.5).clamp(0.22, 1.0);
-    [shade, shade, shade]
+static MESH_CACHE: OnceLock<Mutex<HashMap<String, Arc<MeshData>>>> = OnceLock::new();
+
+fn mesh_cache_key(path: &str) -> String {
+    let base = std::fs::canonicalize(path)
+        .unwrap_or_else(|_| PathBuf::from(path))
+        .to_string_lossy()
+        .into_owned();
+    format!("v2-normals:{base}")
+}
+
+/// Cached mesh load (parse FBX once per path per process).
+pub fn load_meshes_cached(path: &str) -> Result<Arc<MeshData>> {
+    let key = mesh_cache_key(path);
+    let cache = MESH_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+    let mut guard = cache.lock().expect("mesh cache");
+    if let Some(hit) = guard.get(&key) {
+        return Ok(Arc::clone(hit));
+    }
+    let mesh = Arc::new(load_meshes_uncached(path)?);
+    guard.insert(key, Arc::clone(&mesh));
+    Ok(mesh)
+}
+
+fn normalize_vec3(v: [f32; 3]) -> [f32; 3] {
+    let len = (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt();
+    if len > 1e-8 {
+        [v[0] / len, v[1] / len, v[2] / len]
+    } else {
+        [0.0, 1.0, 0.0]
+    }
 }
 
 pub fn load_meshes(path: &str) -> Result<MeshData> {
+    Ok((*load_meshes_cached(path)?).clone())
+}
+
+fn load_meshes_uncached(path: &str) -> Result<MeshData> {
     let p = Path::new(path);
     if !p.exists() {
         anyhow::bail!("scene file not found: {}", path);
@@ -74,7 +108,7 @@ fn load_gltf_mesh(path: &str) -> Result<MeshData> {
                 let n = normals.get(i).copied().unwrap_or([0.0, 1.0, 0.0]);
                 vertices.push(Vertex {
                     pos: *p,
-                    color: clay_vertex_color(n[1]),
+                    normal: normalize_vec3(n),
                 });
             }
 
@@ -112,21 +146,23 @@ fn append_fbx_mesh_triangles(
         None
     };
 
-    for face in &mesh.faces {
+    for (face_ix, face) in mesh.faces.iter().enumerate() {
         if face.num_indices < 3 {
+            continue;
+        }
+        if mesh
+            .face_hole
+            .get(face_ix)
+            .map(|h| *h)
+            .unwrap_or(false)
+        {
             continue;
         }
         let mut tri_corners = Vec::new();
         let num_tris = ufbx::triangulate_face_vec(&mut tri_corners, mesh, *face);
+        // Do not fan-triangulate concave ngons — causes shredded faces on C4D FBX.
         if num_tris == 0 {
-            for t in 0..(face.num_indices.saturating_sub(2)) {
-                tri_corners.push(0);
-                tri_corners.push(t + 1);
-                tri_corners.push(t + 2);
-            }
-            for c in &mut tri_corners {
-                *c = face.index_begin + *c;
-            }
+            continue;
         }
 
         for tri in tri_corners.chunks(3) {
@@ -134,26 +170,19 @@ fn append_fbx_mesh_triangles(
                 continue;
             }
             let mut tri_idx = Vec::with_capacity(3);
-            for &mesh_ix in tri {
-                let corner = mesh_ix as usize;
+            for &corner_ix in tri {
+                let corner = corner_ix as usize;
                 if corner >= pos_el.indices.len() {
                     continue;
                 }
-                let vi = pos_el.indices[corner] as usize;
-                if vi >= pos_el.values.len() {
-                    continue;
-                }
-                let p = ufbx::transform_position(world, pos_el[vi]);
+                // ufbx Index: mesh corner index → values[indices[corner]]
+                let p = ufbx::transform_position(world, pos_el[corner]);
                 let n_local = normal_el
                     .and_then(|el| {
                         if corner >= el.indices.len() {
                             return None;
                         }
-                        let ni = el.indices[corner] as usize;
-                        if ni >= el.values.len() {
-                            return None;
-                        }
-                        Some(el[ni])
+                        Some(el[corner])
                     })
                     .unwrap_or(ufbx::Vec3 {
                         x: 0.0,
@@ -164,7 +193,7 @@ fn append_fbx_mesh_triangles(
                 tri_idx.push(vertices.len() as u32);
                 vertices.push(Vertex {
                     pos: vec3_f32(p),
-                    color: clay_vertex_color(n.y as f32),
+                    normal: normalize_vec3(vec3_f32(n)),
                 });
             }
             if tri_idx.len() == 3 {
@@ -174,24 +203,40 @@ fn append_fbx_mesh_triangles(
     }
 }
 
-fn load_fbx_mesh(path: &str) -> Result<MeshData> {
-    let opts = ufbx::LoadOpts {
+/// FBX load options aligned with Blender `io_scene_fbx` defaults:
+/// - Y-up right-handed (`axis_up=Y`, `axis_forward=-Z`)
+/// - apply object + geometry transforms to vertices (not spawning Blender)
+fn fbx_load_opts_blender_style() -> ufbx::LoadOpts<'static> {
+    ufbx::LoadOpts {
+        target_axes: ufbx::CoordinateAxes::right_handed_y_up(),
+        target_unit_meters: 1.0,
+        space_conversion: ufbx::SpaceConversion::ModifyGeometry,
         geometry_transform_handling: ufbx::GeometryTransformHandling::ModifyGeometry,
+        generate_missing_normals: true,
         ..Default::default()
-    };
-    let scene = ufbx::load_file(path, opts)
+    }
+}
+
+fn load_fbx_mesh(path: &str) -> Result<MeshData> {
+    let scene = ufbx::load_file(path, fbx_load_opts_blender_style())
         .map_err(|e| anyhow::anyhow!("fbx load: {:?}", e))?;
     let mut vertices = Vec::new();
     let mut indices = Vec::new();
+    let mut seen_instances = HashMap::<(u32, u32), ()>::new();
 
-    // FBX meshes live on scene nodes; must apply each node's world matrix.
+    // Blender: one evaluated mesh per object node (world matrix = geometry_to_world).
     for node in &scene.nodes {
-        if node.is_geometry_transform_helper || !node.visible {
+        if node.is_geometry_transform_helper || node.is_scale_helper {
             continue;
         }
         let Some(mesh) = node.mesh.as_ref() else {
             continue;
         };
+        let key = (mesh.element.element_id, node.element.element_id);
+        if seen_instances.contains_key(&key) {
+            continue;
+        }
+        seen_instances.insert(key, ());
         append_fbx_mesh_triangles(&mut vertices, &mut indices, mesh, &node.geometry_to_world);
     }
 
@@ -210,14 +255,12 @@ fn load_obj_mesh(path: &str) -> Result<MeshData> {
             let px = mesh.positions[i * 3];
             let py = mesh.positions[i * 3 + 1];
             let pz = mesh.positions[i * 3 + 2];
-            let ny = if mesh.normals.len() >= i * 3 + 2 {
-                mesh.normals[i * 3 + 1]
-            } else {
-                1.0
-            };
+            let nx = mesh.normals.get(i * 3).copied().unwrap_or(0.0);
+            let ny = mesh.normals.get(i * 3 + 1).copied().unwrap_or(1.0);
+            let nz = mesh.normals.get(i * 3 + 2).copied().unwrap_or(0.0);
             vertices.push(Vertex {
                 pos: [px, py, pz],
-                color: clay_vertex_color(ny),
+                normal: normalize_vec3([nx, ny, nz]),
             });
         }
         for idx in &mesh.indices {

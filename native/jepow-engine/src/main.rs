@@ -1,8 +1,10 @@
+mod daemon;
 mod gpu;
 mod jobs;
 mod mesh_loader;
 mod render;
 mod scene;
+mod viewport_session;
 
 use std::env;
 
@@ -22,6 +24,10 @@ fn emit_err(message: impl ToString) {
 
 fn main() {
     let args: Vec<String> = env::args().collect();
+    if args.get(1).map(|s| s.as_str()) == Some("daemon") {
+        daemon::run_daemon_loop();
+        return;
+    }
     let cmd = args.get(1).map(|s| s.as_str()).unwrap_or("ping");
     let payload: serde_json::Value = args
         .get(2)
@@ -33,6 +39,7 @@ fn main() {
         "gpu_info" => cmd_gpu_info(),
         "open_scene" | "scene_info" => cmd_open_scene(&payload),
         "render_frame" => cmd_render_frame(&payload),
+        "mesh_stats" => cmd_mesh_stats(&payload),
         _ => emit_err(format!("unknown command: {}", cmd)),
     }
 }
@@ -74,24 +81,31 @@ fn cmd_open_scene(payload: &serde_json::Value) {
     }
 }
 
-fn parse_camera(payload: &serde_json::Value) -> render::ViewCamera {
-    let mut cam = render::ViewCamera::default();
-    if let Some(v) = payload.get("cameraYaw").and_then(|v| v.as_f64()) {
-        cam.yaw = v as f32;
+fn cmd_mesh_stats(payload: &serde_json::Value) {
+    let scene_path = match payload.get("scenePath").and_then(|v| v.as_str()) {
+        Some(p) => p,
+        None => return emit_err("scenePath required"),
+    };
+    match mesh_loader::load_meshes(scene_path) {
+        Ok(mesh) => {
+            let mut min = [f32::MAX; 3];
+            let mut max = [f32::MIN; 3];
+            for v in &mesh.vertices {
+                for i in 0..3 {
+                    min[i] = min[i].min(v.pos[i]);
+                    max[i] = max[i].max(v.pos[i]);
+                }
+            }
+            emit(serde_json::json!({
+                "vertexCount": mesh.vertices.len(),
+                "indexCount": mesh.indices.len(),
+                "triangleCount": mesh.indices.len() / 3,
+                "boundsMin": min,
+                "boundsMax": max,
+            }));
+        }
+        Err(e) => emit_err(e.to_string()),
     }
-    if let Some(v) = payload.get("cameraPitch").and_then(|v| v.as_f64()) {
-        cam.pitch = v as f32;
-    }
-    if let Some(v) = payload.get("cameraDistance").and_then(|v| v.as_f64()) {
-        cam.distance = v as f32;
-    }
-    if let Some(v) = payload.get("panX").and_then(|v| v.as_f64()) {
-        cam.pan_x = v as f32;
-    }
-    if let Some(v) = payload.get("panY").and_then(|v| v.as_f64()) {
-        cam.pan_y = v as f32;
-    }
-    cam
 }
 
 fn cmd_render_frame(payload: &serde_json::Value) {
@@ -104,8 +118,18 @@ fn cmd_render_frame(payload: &serde_json::Value) {
 
     let scene_path = payload.get("scenePath").and_then(|v| v.as_str());
 
-    let camera = parse_camera(payload);
-    match render::render_viewport_frame(output_path, width, height, scene_path, camera) {
+    let camera = render::parse_camera(payload);
+    let light = render::parse_light(payload);
+    let material = render::parse_material(payload);
+    match render::render_viewport_frame(
+        output_path,
+        width,
+        height,
+        scene_path,
+        camera,
+        light,
+        material,
+    ) {
         Ok(()) => emit(serde_json::json!({
             "imagePath": output_path,
             "width": width,
@@ -115,3 +139,4 @@ fn cmd_render_frame(payload: &serde_json::Value) {
         Err(e) => emit_err(e),
     }
 }
+

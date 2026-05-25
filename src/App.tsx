@@ -73,7 +73,6 @@ import {
   UserPlus,
   UserMinus,
   Key,
-  Home,
   ChevronDown,
   ChevronLeft,
   ChevronRight,
@@ -7286,15 +7285,10 @@ export default function App() {
                         }}
                         title={canvasOnly ? "返回工程首页" : "返回首页"}
                       >
-                        {siteConfig?.logo ? (
-                          <img
-                            src={siteConfig.logo}
-                            alt="Logo"
-                            className="w-10 h-10 object-contain drop-shadow-md"
-                          />
-                        ) : (
-                          <Home className="w-8 h-8 text-neutral-700 hover:text-black transition-colors" />
-                        )}
+                        <Logo
+                          url={siteConfig?.logo}
+                          className="w-10 h-10 drop-shadow-md"
+                        />
                       </button>
 
                       <div className="absolute top-full left-0 mt-2 flex flex-col gap-1 bg-neutral-900/95 backdrop-blur-xl p-2 rounded-2xl shadow-2xl border border-neutral-800 opacity-0 -translate-y-4 scale-95 pointer-events-none group-hover:opacity-100 group-hover:translate-y-0 group-hover:scale-100 group-hover:pointer-events-auto transition-all duration-300 origin-top">
@@ -7394,63 +7388,91 @@ export default function App() {
 
                   <Panel
                     position="top-right"
-                    className={`fixed top-0 bottom-0 right-0 w-[380px] bg-[#111113] backdrop-blur-md rounded-none shadow-2xl border-l border-neutral-800 flex flex-col transition-all duration-300 ease-in-out z-[95] pointer-events-auto ${
-                      showAiChat ? "translate-x-0" : "translate-x-full"
+                    className={`fixed top-0 bottom-0 right-0 flex flex-col transition-[width,background,box-shadow,border-color] duration-300 ease-in-out z-[95] pointer-events-none ${
+                      showAiChat
+                        ? "bg-[#0d0d10]/98 backdrop-blur-xl shadow-[0_0_60px_rgba(0,0,0,0.45)] border-l border-white/10"
+                        : "bg-transparent border-l-0 shadow-none"
                     }`}
-                    style={{ height: "100vh", width: "380px" }}
+                    style={{
+                      height: "100vh",
+                      width: showAiChat ? "380px" : "0px",
+                    }}
                   >
-                    {/* Synchronized sliding mechanical tab button */}
+                    {/* Synchronized sliding tab button */}
                     <button
                       onClick={() => setShowAiChat(!showAiChat)}
-                      className={`absolute -left-7 top-1/2 -translate-y-1/2 w-7 flex flex-col items-center justify-center cursor-pointer shadow-2xl transition-all duration-300 pointer-events-auto border-y border-l border-neutral-800 bg-[#111113] hover:bg-neutral-900 text-neutral-300 hover:text-white ${
+                      className={`absolute top-1/2 -translate-y-1/2 flex items-center justify-center cursor-pointer transition-all duration-300 pointer-events-auto ${
                         showAiChat
-                          ? "h-16 rounded-l-lg"
-                          : "h-14 rounded-l-lg scale-105"
+                          ? "-left-9 h-16 w-9 rounded-l-2xl border-y border-l border-white/10 bg-[#0d0d10]/95 shadow-2xl text-neutral-300 hover:text-white hover:bg-neutral-900"
+                          : "-left-3 h-10 w-3 border-0 bg-transparent shadow-none text-transparent hover:-left-4 hover:w-4"
                       }`}
                       title={showAiChat ? "收起 AI 助手" : "打开 AI 助手"}
                       type="button"
                     >
                       {showAiChat ? (
-                        <ChevronRight className="w-4 h-4 text-neutral-400 group-hover:translate-x-0.5 transition-transform" />
+                        <ChevronRight className="w-4 h-4 transition-transform" />
                       ) : (
-                        <div className="flex flex-col items-center justify-center gap-1 py-1">
-                          <ChevronLeft className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
-                          <Sparkles className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
-                        </div>
+                        <span className="block w-0 h-0 border-y-[7px] border-y-transparent border-r-[10px] border-r-neutral-950 drop-shadow-[0_0_6px_rgba(0,0,0,0.35)]" />
                       )}
                     </button>
 
+                    {showAiChat && (
                     <div
                       ref={aiPanelRef}
                       className="h-full w-full flex flex-col overflow-hidden pointer-events-auto relative rounded-none"
                       onClick={(e) => e.stopPropagation()}
                     >
                       {/* Sidebar Header */}
-                      <div className="flex items-center justify-between px-4 py-3.5 border-b border-neutral-800 bg-[#0c0c0e] shrink-0 select-none">
+                      <div className="relative flex items-center justify-between px-4 py-4 border-b border-white/10 bg-[radial-gradient(circle_at_top_left,rgba(16,185,129,0.16),transparent_38%),linear-gradient(180deg,#111116,#09090b)] shrink-0 select-none overflow-hidden">
+                        <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-emerald-400/40 to-transparent" />
                         <div className="flex items-center gap-2.5">
-                          <div className="w-8 h-8 rounded-lg bg-emerald-500/15 border border-emerald-500/30 flex items-center justify-center">
-                            <Sparkles className="w-4 h-4 text-emerald-400" />
+                          <div className="w-9 h-9 rounded-2xl bg-emerald-400/10 border border-emerald-400/25 flex items-center justify-center shadow-[0_0_22px_rgba(16,185,129,0.12)]">
+                            <Sparkles className="w-4 h-4 text-emerald-300" />
                           </div>
-                          <span className="text-sm font-bold text-neutral-100">AI 创作助手</span>
+                          <div className="flex flex-col">
+                            <span className="text-sm font-bold text-neutral-100 leading-tight">
+                              AI 创作助手
+                            </span>
+                            <span className="text-[10px] text-emerald-300/70 font-mono tracking-wide">
+                              Canvas Agent
+                            </span>
+                          </div>
                         </div>
                         <button
                           type="button"
                           onClick={() => setShowAiChat(false)}
-                          className="p-1.5 rounded-full hover:bg-neutral-800 text-neutral-400 hover:text-white transition-all cursor-pointer"
+                          className="p-1.5 rounded-full bg-white/5 hover:bg-white/10 text-neutral-400 hover:text-white transition-all cursor-pointer border border-white/5"
                         >
                           <X className="w-4 h-4" />
                         </button>
                       </div>
 
-                      <div className="flex-1 overflow-y-auto px-4 py-4 space-y-4 scrollbar-hide">
+                      <div className="flex-1 overflow-y-auto px-4 py-4 space-y-4 scrollbar-hide bg-[linear-gradient(180deg,rgba(255,255,255,0.02),transparent_22%)]">
                         {aiMessages.length === 0 ? (
-                          <div className="h-full min-h-[220px] flex flex-col items-center justify-center text-center px-4 text-neutral-500 gap-3 select-none">
-                            <div className="w-12 h-12 rounded-2xl bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center">
-                              <Sparkles className="w-6 h-6 text-emerald-400/80" />
+                          <div className="h-full min-h-[260px] flex flex-col items-center justify-center text-center px-5 text-neutral-500 gap-4 select-none">
+                            <div className="relative w-16 h-16 rounded-3xl bg-emerald-400/10 border border-emerald-400/20 flex items-center justify-center shadow-[0_0_40px_rgba(16,185,129,0.12)]">
+                              <div className="absolute inset-2 rounded-2xl border border-white/5" />
+                              <Sparkles className="w-7 h-7 text-emerald-300/90" />
                             </div>
-                            <p className="text-xs max-w-[260px] leading-relaxed text-neutral-400">
-                              输入指令或添加参考图，即可生成图像、视频或脚本内容。
-                            </p>
+                            <div>
+                              <p className="text-sm font-semibold text-neutral-200 mb-1">
+                                今天想创作什么？
+                              </p>
+                              <p className="text-xs max-w-[260px] leading-relaxed text-neutral-500">
+                                输入指令、添加参考图，或让助手读取画布节点并继续生成。
+                              </p>
+                            </div>
+                            <div className="flex flex-wrap justify-center gap-2 text-[10px] text-neutral-500">
+                              <span className="px-2 py-1 rounded-full bg-white/[0.04] border border-white/[0.06]">
+                                图片
+                              </span>
+                              <span className="px-2 py-1 rounded-full bg-white/[0.04] border border-white/[0.06]">
+                                视频
+                              </span>
+                              <span className="px-2 py-1 rounded-full bg-white/[0.04] border border-white/[0.06]">
+                                脚本
+                              </span>
+                            </div>
                           </div>
                         ) : (
                           aiMessages.map((msg, i) => (
@@ -7542,7 +7564,7 @@ export default function App() {
                         <div ref={aiChatEndRef} />
                       </div>
 
-                      <div className="shrink-0 border-t border-neutral-800 bg-[#0a0a0c] p-4">
+                      <div className="shrink-0 border-t border-white/10 bg-[linear-gradient(180deg,#0b0b0e,#08080a)] p-4 shadow-[0_-18px_40px_rgba(0,0,0,0.2)]">
                         <form
                           onSubmit={handleAiSubmit}
                           className="flex flex-col gap-3"
@@ -7908,7 +7930,7 @@ export default function App() {
                                     );
                                   }
                                 }}
-                                className={`p-3 rounded-xl flex items-center justify-center transition-all shrink-0 ${isSelectingAiReference || showAiReferenceMenu ? "bg-emerald-600 text-white shadow-lg shadow-emerald-600/25" : "bg-neutral-900 text-neutral-400 border border-neutral-800 hover:border-neutral-700 hover:text-white"}`}
+                                className={`p-3 rounded-2xl flex items-center justify-center transition-all shrink-0 ${isSelectingAiReference || showAiReferenceMenu ? "bg-emerald-500 text-neutral-950 shadow-lg shadow-emerald-500/20" : "bg-white/[0.04] text-neutral-400 border border-white/[0.08] hover:border-emerald-400/30 hover:text-white"}`}
                                 title="添加垫图"
                               >
                                 {isSelectingAiReference ? (
@@ -7920,10 +7942,10 @@ export default function App() {
 
                               {showAiReferenceMenu &&
                                 !isSelectingAiReference && (
-                                  <div className="absolute bottom-full left-0 mb-3 w-40 bg-neutral-900 border border-neutral-800 rounded-lg shadow-2xl overflow-hidden animate-in fade-in slide-in-from-bottom-3 z-[60]">
+                                  <div className="absolute bottom-full left-0 mb-3 w-44 bg-neutral-950/95 border border-white/10 rounded-2xl shadow-2xl overflow-hidden animate-in fade-in slide-in-from-bottom-3 z-[60] backdrop-blur-xl">
                                     <button
                                       type="button"
-                                      className="w-full text-left px-5 py-3 text-xs text-neutral-300 hover:text-white hover:bg-neutral-800 transition-colors flex items-center gap-3 group"
+                                      className="w-full text-left px-5 py-3 text-xs text-neutral-300 hover:text-white hover:bg-white/[0.06] transition-colors flex items-center gap-3 group"
                                       onClick={() => {
                                         setShowAiReferenceMenu(false);
                                         setIsSelectingAiReference(true);
@@ -7935,10 +7957,10 @@ export default function App() {
                                       <MousePointer2 className="w-4 h-4 text-neutral-400 group-hover:text-blue-400 transition-colors" />
                                       从画布选择
                                     </button>
-                                    <div className="h-px w-full bg-neutral-800" />
+                                    <div className="h-px w-full bg-white/10" />
                                     <button
                                       type="button"
-                                      className="w-full text-left px-5 py-3 text-xs text-neutral-300 hover:text-white hover:bg-neutral-800 transition-colors flex items-center gap-3 group"
+                                      className="w-full text-left px-5 py-3 text-xs text-neutral-300 hover:text-white hover:bg-white/[0.06] transition-colors flex items-center gap-3 group"
                                       onClick={() => {
                                         setShowAiReferenceMenu(false);
                                         const input =
@@ -8075,7 +8097,7 @@ export default function App() {
                                   ? "正在选择垫图... 请点击画布上的图片"
                                   : "输入合成命令..."
                               }
-                              className="flex-1 bg-neutral-900 border border-neutral-800 rounded-xl px-4 py-3 text-sm text-neutral-100 focus:outline-none focus:border-emerald-500/50 transition-colors placeholder:text-neutral-500 disabled:opacity-50"
+                              className="flex-1 bg-white/[0.04] border border-white/[0.08] rounded-2xl px-4 py-3 text-sm text-neutral-100 focus:outline-none focus:border-emerald-400/50 focus:bg-white/[0.06] transition-colors placeholder:text-neutral-500 disabled:opacity-50"
                               disabled={isAiLoading || isSelectingAiReference}
                             />
                             <button
@@ -8085,7 +8107,7 @@ export default function App() {
                                 isAiLoading ||
                                 isSelectingAiReference
                               }
-                              className="px-5 h-[46px] rounded-xl bg-emerald-600 text-white flex items-center justify-center hover:bg-emerald-500 disabled:opacity-40 disabled:hover:bg-emerald-600 transition-all text-sm font-bold shrink-0 relative group"
+                              className="px-5 h-[46px] rounded-2xl bg-emerald-500 text-neutral-950 flex items-center justify-center hover:bg-emerald-400 disabled:opacity-40 disabled:hover:bg-emerald-500 transition-all text-sm font-bold shrink-0 relative group shadow-[0_0_24px_rgba(16,185,129,0.18)]"
                             >
                               <span className="truncate mr-2">传输</span>
                               <Send className="w-4 h-4 group-hover:translate-x-1 group-hover:-translate-y-1 transition-transform" />
@@ -8100,6 +8122,7 @@ export default function App() {
                         </form>
                       </div>
                     </div>
+                    )}
                   </Panel>
 
                   {user && (

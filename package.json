@@ -17,8 +17,11 @@
     "desktop:remote": "cross-env ELECTRON_RUN_AS_NODE= JEPOW_WEB_URL=https://jepow.com electron electron/main.cjs",
     "desktop:prod": "cross-env ELECTRON_RUN_AS_NODE= JEPOW_DESKTOP_PROD=1 electron electron/main.cjs",
     "desktop:build": "npm run build && electron-builder",
-    "native:build": "cross-env CARGO_TARGET_DIR= cargo build --release --manifest-path native/jepow-engine/Cargo.toml",
-    "native:build:debug": "cross-env CARGO_TARGET_DIR= cargo build --manifest-path native/jepow-engine/Cargo.toml",
+    "native:build": "cargo build --release --manifest-path native/jepow-engine/Cargo.toml --target-dir native/jepow-engine/target",
+    "native:build:debug": "cargo build --manifest-path native/jepow-engine/Cargo.toml --target-dir native/jepow-engine/target",
+    "native:cycles:build": "cmake -S native/jepow-cycles -B native/jepow-cycles/build -DCMAKE_BUILD_TYPE=Release && cmake --build native/jepow-cycles/build",
+    "compliance:verify": "bash scripts/compliance/verify-notices.sh",
+    "compliance:package-gpl-source": "bash scripts/compliance/package-gpl-source.sh",
     "push:github": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/push-github.ps1",
     "seed-ai-works": "tsx scripts/seed_ai_works.ts",
     "seed": "tsx seed.ts",
@@ -101,6 +104,11 @@
       "server.ts",
       "package.json",
       "node_modules/**/*"
+    ],
+    "extraResources": [
+      { "from": "COPYING.GPL", "to": "legal/COPYING.GPL" },
+      { "from": "THIRD_PARTY_NOTICES.md", "to": "legal/THIRD_PARTY_NOTICES.md" },
+      { "from": "SOURCE_CODE_OFFER.md", "to": "legal/SOURCE_CODE_OFFER.md" }
     ],
     "asarUnpack": [
       "node_modules/tsx/**/*",

@@ -2,7 +2,7 @@
 name = "jepow-engine"
 version = "0.1.0"
 edition = "2021"
-description = "Jepow native 3D viewport core (CPU job system + GPU via wgpu)"
+description = "Jepow native 3D viewport core (CPU job system + GPU via wgpu). Must NOT link Cycles; see native/COMPLIANCE.md"
 license = "MIT"
 
 [[bin]]
@@ -21,3 +21,4 @@ tobj = "4.0"
 image = "0.25"
 anyhow = "1"
 bytemuck = { version = "1", features = ["derive"] }
+glam = { version = "0.29", features = ["bytemuck"] }

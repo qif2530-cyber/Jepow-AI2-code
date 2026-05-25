@@ -14,7 +14,7 @@ import {
 } from "../lib/local-assets";
 import { isDesktopApp, shouldUseLocalCanvasAssets } from "../lib/runtime";
 import { loadModelGroup } from "../lib/model-asset-loader";
-import { JepowViewportPreview } from "./JepowViewportPreview";
+import { JepowViewportPreview, PREVIEW_CAM_45 } from "./JepowViewportPreview";
 import { getViewportEngine } from "../lib/viewport-engine";
 import { useDesktopScenePath } from "../hooks/useDesktopScenePath";
 import { scenePathToNodePatch } from "../lib/desktop-scene-path";
@@ -238,10 +238,10 @@ export function ModelAssetNode({ id, data, selected }: ModelAssetNodeProps) {
     updateNodeData,
   ]);
 
-  /** 桌面端：只用 Jepow 自研 wgpu 渲染器，不用 WebGL/Three.js */
+  /** 桌面端：自研 jepow-engine（FBX 导入规则对齐 Blender，非调用 Blender） */
   const useDesktopNativeRenderer = desktop3d && !!scenePathForNative;
-  
-  const renderActive = data.renderActive !== false;
+
+  const renderActive = data.renderActive === true;
   const toggleRenderActive = () => {
     updateNodeData(id, { renderActive: !renderActive });
   };
@@ -419,7 +419,13 @@ export function ModelAssetNode({ id, data, selected }: ModelAssetNodeProps) {
             toggleRenderActive();
           }}
           className="absolute top-2 right-2 h-7 w-7 bg-black/75 hover:bg-black border border-neutral-800 text-neutral-400 hover:text-white pointer-events-auto backdrop-blur-sm rounded z-20 transition-all cursor-pointer shadow-md"
-          title={renderActive ? "关闭/暂停 3D 渲染以保障系统运行" : "启动 3D 实时渲染"}
+          title={
+            useDesktopNativeRenderer
+              ? "素材节点为静态预览；连线到 3D 编辑器后点 ▶ 启动渲染器"
+              : renderActive
+                ? "暂停 WebGL 预览"
+                : "启动 WebGL 预览"
+          }
         >
           {renderActive ? <Pause className="w-3.5 h-3.5 text-emerald-400" /> : <Play className="w-3.5 h-3.5 text-neutral-400 animate-pulse" />}
         </Button>
@@ -440,7 +446,17 @@ export function ModelAssetNode({ id, data, selected }: ModelAssetNodeProps) {
             <JepowViewportPreview
               scenePath={scenePathForNative}
               height={220}
-              mode="turntable"
+              mode="orbit"
+              orbitOnly
+              liveRender
+              lockRenderSize
+              defaultCamera={PREVIEW_CAM_45}
+              lighting={{
+                yaw: 45,
+                pitch: 35,
+                ambient: 1.0,
+                directional: 2.0,
+              }}
             />
           ) : (
           <>
@@ -560,7 +576,8 @@ export function ModelAssetNode({ id, data, selected }: ModelAssetNodeProps) {
         (fileExtension === ".fbx" || fileExtension === ".obj") && (
           <div className="mt-2 bg-emerald-500/10 border border-emerald-500/25 rounded p-2 text-[10px] text-emerald-200/90 select-none leading-relaxed text-left">
             <span>
-              桌面端模型保存在本机，由 <strong>Jepow 原生 wgpu 渲染器</strong> 直接绘制（非网页 WebGL）。
+              桌面端模型保存在本机，由 <strong>Jepow 自研 wgpu 内核</strong> 绘制白膜（FBX
+              导入规则参照 Blender <code>io_scene_fbx</code>，不启动 Blender 程序）。
             </span>
           </div>
         )}

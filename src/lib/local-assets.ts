@@ -47,7 +47,13 @@ export async function saveLocalModelBuffer(
   userId: string,
   fileName: string,
   buffer: ArrayBuffer,
-): Promise<{ ok: boolean; localPath?: string; fileName?: string; error?: string }> {
+): Promise<{
+  ok: boolean;
+  localPath?: string;
+  fileName?: string;
+  assetRef?: string;
+  error?: string;
+}> {
   const api = assetsApi();
   if (!api) return { ok: false, error: 'local assets API unavailable' };
   const projectId = getCurrentProjectId();

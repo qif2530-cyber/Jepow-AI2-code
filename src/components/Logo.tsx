@@ -9,20 +9,27 @@ export const Logo = ({
   url?: string;
 }) => {
   const [imgError, setImgError] = useState(false);
-  if (url && !imgError) {
+  const logoUrl = url || "/jepow-logo.png";
+  if (!imgError) {
     return (
-      <img
-        src={url}
-        alt="Logo"
-        className={`${className} grayscale brightness-125 contrast-125 object-contain`}
-        referrerPolicy="no-referrer"
-        onError={() => setImgError(true)}
-      />
+      <span
+        className={`${className} inline-flex items-center justify-center bg-white rounded-[20%] overflow-hidden border border-black/10`}
+        aria-label="Jepow Logo"
+      >
+        <img
+          src={logoUrl}
+          alt="Logo"
+          className="w-[78%] h-[78%] object-contain"
+          referrerPolicy="no-referrer"
+          onError={() => setImgError(true)}
+        />
+      </span>
     );
   }
   return (
     <div
-      className={`${className} flex items-center justify-center bg-white text-neutral-900 rounded-[20%] overflow-hidden`}
+      className={`${className} flex items-center justify-center bg-white text-neutral-900 rounded-[20%] overflow-hidden border border-black/10`}
+      aria-label="Jepow Logo"
     >
       <Sparkles className="w-1/2 h-1/2" />
     </div>
