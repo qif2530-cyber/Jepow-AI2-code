@@ -2,19 +2,31 @@ import React, { useState, useEffect, Suspense, useMemo, useRef } from "react";
 import { Handle, Position, useReactFlow, useStore } from "@xyflow/react";
 import { Canvas, useFrame } from "@react-three/fiber";
 import * as THREE from "three";
-import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
-import { OBJLoader } from "three/examples/jsm/loaders/OBJLoader.js";
-import { FBXLoader } from "three/examples/jsm/loaders/FBXLoader.js";
-import { Box, RefreshCw, Layers, FileCode, Check, Upload, GripHorizontal, Plus, Pause, Play } from "lucide-react";
+import { Box, RefreshCw, Layers, Upload, GripHorizontal, Plus, Pause, Play } from "lucide-react";
 import { Button } from "./ui/button";
 import { toast } from "sonner";
 import api from "../lib/api";
+import {
+  saveLocalModelBuffer,
+  shouldUseLocalAssets,
+  toLocalAssetRef,
+  importLocalModelFile,
+} from "../lib/local-assets";
+import { isDesktopApp, shouldUseLocalCanvasAssets } from "../lib/runtime";
+import { loadModelGroup } from "../lib/model-asset-loader";
+import { JepowViewportPreview } from "./JepowViewportPreview";
+import { getViewportEngine } from "../lib/viewport-engine";
 
 interface ModelAssetNodeProps {
   id: string;
   data: {
     glbUrl?: string;
+    /** 上传时生成的本地 blob，优先用于预览（避免远程 FBX 加载失败） */
+    localPreviewUrl?: string;
+    localAssetPath?: string;
     modelName?: string;
+    nativeScenePath?: string;
+    viewportBackend?: "web" | "jepow-native";
     renderActive?: boolean;
   };
   selected?: boolean;
@@ -98,152 +110,63 @@ function ModelFallback({ modelName }: { modelName?: string }) {
   );
 }
 
-// Helper to determine accurate file format from encoded media URLs or file names
-function getExtensionFromUrlOrName(url: string, modelName?: string): string {
-  if (modelName) {
-    const ext = modelName.substring(modelName.lastIndexOf(".")).toLowerCase();
-    if (ext) return ext;
-  }
-  if (url.includes("/api/media/")) {
-    try {
-      const parts = url.split("/api/media/");
-      const encoded = parts[parts.length - 1];
-      if (encoded) {
-        let base64 = encoded.replace(/-/g, "+").replace(/_/g, "/");
-        while (base64.length % 4) {
-          base64 += "=";
-        }
-        const decoded = atob(base64);
-        const ext = decoded.substring(decoded.lastIndexOf(".")).toLowerCase();
-        if (ext) return ext;
-      }
-    } catch (e) {
-      console.error(e);
-    }
-  }
-  const cleanUrl = url.split("?")[0].split("#")[0];
-  const lastDot = cleanUrl.lastIndexOf(".");
-  if (lastDot !== -1) {
-    return cleanUrl.substring(lastDot).toLowerCase();
-  }
-  return "";
-}
-
-// Manual format loader to support and parse .glb, .gltf, .fbx, and .obj formats flawlessly
-function ModelRenderer({ glbUrl, modelName }: { glbUrl: string; modelName?: string }) {
+function ModelRenderer({
+  glbUrl,
+  modelName,
+  onLoadError,
+}: {
+  glbUrl: string;
+  modelName?: string;
+  onLoadError?: (msg: string | null) => void;
+}) {
   const [scene, setScene] = useState<THREE.Group | null>(null);
-  const [errorText, setErrorText] = useState<string | null>(null);
   const groupRef = useRef<THREE.Group>(null);
 
   useEffect(() => {
     let active = true;
-    const ext = getExtensionFromUrlOrName(glbUrl, modelName);
+    setScene(null);
+    onLoadError?.(null);
 
-    const onModelLoaded = (loadedScene: any) => {
-      if (!active) return;
-      const mainScene = loadedScene.scene || loadedScene;
-      setScene(mainScene);
-    };
-
-    const onError = (err: any) => {
-      console.error("Format renderer load error:", err);
-      if (active) setErrorText(String(err));
-    };
-
-    if (ext === ".fbx") {
-      const fbxLoader = new FBXLoader();
-      fbxLoader.load(glbUrl, onModelLoaded, undefined, onError);
-    } else if (ext === ".obj") {
-      const objLoader = new OBJLoader();
-      objLoader.load(glbUrl, onModelLoaded, undefined, onError);
-    } else {
-      const loader = new GLTFLoader();
-
-      if (glbUrl.startsWith("blob:")) {
-        // Fetch binary content directly to bypass file extension check inside GLTFLoader
-        fetch(glbUrl)
-          .then((res) => {
-            if (!res.ok) throw new Error("Local blob load failed");
-            return res.arrayBuffer();
-          })
-          .then((buffer) => {
-            if (!active) return;
-            loader.parse(
-              buffer,
-              "",
-              (gltf) => {
-                if (active) setScene(gltf.scene);
-              },
-              onError
-            );
-          })
-          .catch(onError);
-      } else {
-        // Standard HTTP network load
-        loader.load(
-          glbUrl,
-          (gltf) => {
-            if (active) setScene(gltf.scene);
-          },
-          undefined,
-          onError
-        );
-      }
-    }
+    loadModelGroup(glbUrl, modelName)
+      .then((group) => {
+        if (!active) {
+          deepDispose(group);
+          return;
+        }
+        setScene(group);
+        onLoadError?.(null);
+      })
+      .catch((err: unknown) => {
+        const msg =
+          err instanceof Error ? err.message : "模型加载失败";
+        console.error("Model load error:", err);
+        if (active) onLoadError?.(msg);
+      });
 
     return () => {
       active = false;
     };
-  }, [glbUrl, modelName]);
+  }, [glbUrl, modelName, onLoadError]);
 
-  // Clean up loaded scene WebGL resources when state scene changes or unmounts
   useEffect(() => {
     return () => {
-      if (scene) {
-        deepDispose(scene);
-      }
+      if (scene) deepDispose(scene);
     };
   }, [scene]);
 
-  // Auto-center and normalize scale
-  const computedModel = useMemo(() => {
-    if (!scene) return null;
-    const cloned = scene.clone();
-    
-    const box = new THREE.Box3().setFromObject(cloned);
-    const size = box.getSize(new THREE.Vector3());
-    const center = box.getCenter(new THREE.Vector3());
-
-    cloned.position.x += -center.x;
-    cloned.position.y += -center.y;
-    cloned.position.z += -center.z;
-
-    const maxDim = Math.max(size.x, size.y, size.z);
-    if (maxDim > 0) {
-      const scale = 1.25 / maxDim;
-      cloned.scale.set(scale, scale, scale);
-    }
-
-    return cloned;
-  }, [scene]);
-
-  // Rotates around Yaw on a rigid 45-degree isometric tilt
   useFrame((state) => {
     if (groupRef.current) {
       groupRef.current.rotation.y = state.clock.getElapsedTime() * 0.4;
     }
   });
 
-  if (errorText || !computedModel) {
-    return <ModelFallback modelName="Loading..." />;
+  if (!scene) {
+    return <ModelFallback modelName={modelName || "Loading…"} />;
   }
 
   return (
-    <group 
-      ref={groupRef} 
-      rotation={[Math.PI / 6, Math.PI / 4, 0]}
-    >
-      <primitive object={computedModel} />
+    <group ref={groupRef} rotation={[Math.PI / 6, Math.PI / 4, 0]}>
+      <primitive object={scene} />
     </group>
   );
 }
@@ -263,9 +186,29 @@ export function ModelAssetNode({ id, data, selected }: ModelAssetNodeProps) {
       ).length === 1,
   );
 
-  const glbUrl = data.glbUrl || "";
-  const modelName = data.modelName || "unnamed_asset.glb";
+  const nativeScenePath =
+    data.nativeScenePath || data.localAssetPath || "";
+  const glbUrl =
+    (data.localAssetPath
+      ? toLocalAssetRef(data.localAssetPath)
+      : nativeScenePath
+        ? toLocalAssetRef(nativeScenePath)
+        : null) ||
+    data.localPreviewUrl ||
+    data.glbUrl ||
+    "";
+  const modelName =
+    data.modelName ||
+    (nativeScenePath
+      ? nativeScenePath.split(/[/\\]/).pop() || "scene.glb"
+      : "unnamed_asset.glb");
   const fileExtension = modelName.substring(modelName.lastIndexOf(".")).toLowerCase();
+  const desktop3d = isDesktopApp();
+  const scenePathForNative =
+    nativeScenePath ||
+    (glbUrl.startsWith("jepow-local://") ? glbUrl.replace("jepow-local://", "") : "");
+  /** 桌面端：只用 Jepow 自研 wgpu 渲染器，不用 WebGL/Three.js */
+  const useDesktopNativeRenderer = desktop3d && !!scenePathForNative;
   
   const renderActive = data.renderActive !== false;
   const toggleRenderActive = () => {
@@ -285,6 +228,53 @@ export function ModelAssetNode({ id, data, selected }: ModelAssetNodeProps) {
     return () => clearTimeout(timer);
   }, []);
 
+  const getLocalUserId = () => {
+    try {
+      const raw = localStorage.getItem("ais-user");
+      if (!raw) return "default";
+      return String(JSON.parse(raw).id || "default");
+    } catch {
+      return "default";
+    }
+  };
+
+  const applyLocalScene = async (filePath: string, fileName: string) => {
+    let localPath = filePath;
+    if (shouldUseLocalAssets()) {
+      const copied = await importLocalModelFile(getLocalUserId(), filePath);
+      if (copied.ok && copied.localPath) {
+        localPath = copied.localPath;
+        fileName = copied.fileName || fileName;
+      }
+    }
+    const ref = toLocalAssetRef(localPath);
+    updateNodeData(id, {
+      nativeScenePath: localPath,
+      localAssetPath: localPath,
+      glbUrl: ref,
+      modelName: fileName,
+      viewportBackend: "jepow-native",
+      localPreviewUrl: "",
+    });
+    setLoadError(null);
+    toast.success("已导入本地场景，由 Jepow 原生渲染器加载");
+  };
+
+  const handleImportNativeScene = async () => {
+    if (shouldUseLocalAssets()) {
+      const picked = await window.jepowDesktop!.assets!.pickModelFile();
+      if (picked.canceled || !picked.filePath) return;
+      const name = picked.filePath.split(/[/\\]/).pop() || "scene.glb";
+      await applyLocalScene(picked.filePath, name);
+      return;
+    }
+    const eng = getViewportEngine();
+    const picked = await eng.pickSceneFile();
+    if (picked.canceled || !picked.filePath) return;
+    const name = picked.filePath.split(/[/\\]/).pop() || "scene.glb";
+    await applyLocalScene(picked.filePath, name);
+  };
+
   // Handlers for file upload overrides
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -301,29 +291,66 @@ export function ModelAssetNode({ id, data, selected }: ModelAssetNodeProps) {
     if (ext === ".gltf") {
       toast.warning("提示：您选择上传了 .gltf 格式。.gltf 为文本格式，需配套上传 .bin 和贴图才能完整显示。单文件上传下刷新必定报错丢模，强烈建议您换用 .glb 格式！", { duration: 10000 });
     } else if (ext === ".fbx" || ext === ".obj") {
-      toast.warning(`提示：您选择上传了 ${ext.toUpperCase()} 格式。由于后台及网页 Three.js 引擎主要通过 GLTFLoader 驱动，该格式可能在重载刷新后失败。强烈建议导出为 .glb 上传！`, { duration: 10000 });
+      if (!isDesktopApp()) {
+        toast.warning(
+          `提示：您选择上传了 ${ext.toUpperCase()} 格式。网页端更推荐 .glb；桌面端已原生支持 FBX/OBJ 预览。`,
+          { duration: 8000 },
+        );
+      }
     }
 
     setIsUploading(true);
     try {
+      if (shouldUseLocalCanvasAssets() && shouldUseLocalAssets()) {
+        const buf = await file.arrayBuffer();
+        const saved = await saveLocalModelBuffer(
+          getLocalUserId(),
+          file.name,
+          buf,
+        );
+        if (!saved.ok || !saved.localPath) {
+          throw new Error(saved.error || "本地保存失败");
+        }
+        const ref = toLocalAssetRef(saved.localPath);
+        updateNodeData(id, {
+          glbUrl: ref,
+          localAssetPath: saved.localPath,
+          nativeScenePath: saved.localPath,
+          modelName: file.name,
+          viewportBackend: "jepow-native",
+          localPreviewUrl: "",
+        });
+        setLoadError(null);
+        toast.success(
+          `已保存到本地 (${(file.size / 1024 / 1024).toFixed(1)} MB)`,
+        );
+        return;
+      }
+
       const formData = new FormData();
       formData.append("file", file);
-      
       const res = await api.post("/upload", formData, {
         headers: { "Content-Type": "multipart/form-data" },
         showToast: false,
       } as any);
 
-      if (res.data && res.data.url) {
+      if (res.data?.url) {
+        const localPreviewUrl = URL.createObjectURL(file);
         updateNodeData(id, {
           glbUrl: res.data.url,
-          modelName: file.name
+          localPreviewUrl,
+          modelName: file.name,
+          nativeScenePath: "",
+          viewportBackend: "web",
         });
+        setLoadError(null);
         toast.success("素材三维文件上传成功！");
       }
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error(err);
-      toast.error("上传 model 失败，请稍后重试");
+      toast.error(
+        err instanceof Error ? err.message : "导入模型失败，请稍后重试",
+      );
     } finally {
       setIsUploading(false);
     }
@@ -370,6 +397,10 @@ export function ModelAssetNode({ id, data, selected }: ModelAssetNodeProps) {
         </Button>
 
         <div id={`model-canvas-container-${id}`} className="absolute inset-0 z-0 nodrag nopan nowheel" onMouseDown={(e) => e.stopPropagation()} onTouchStart={(e) => e.stopPropagation()}>
+          {useDesktopNativeRenderer ? (
+            <JepowViewportPreview scenePath={scenePathForNative} height={220} />
+          ) : (
+          <>
           <style dangerouslySetInnerHTML={{ __html: `
             #model-canvas-container-${id} canvas {
               width: 100% !important;
@@ -395,8 +426,12 @@ export function ModelAssetNode({ id, data, selected }: ModelAssetNodeProps) {
                   }}
                   fallback={<ModelFallback modelName={modelName} />}
                 >
-                  {glbUrl && !loadError ? (
-                    <ModelRenderer glbUrl={glbUrl} modelName={modelName} />
+                  {glbUrl ? (
+                    <ModelRenderer
+                      glbUrl={glbUrl}
+                      modelName={modelName}
+                      onLoadError={setLoadError}
+                    />
                   ) : (
                     <ModelFallback modelName={modelName} />
                   )}
@@ -430,8 +465,20 @@ export function ModelAssetNode({ id, data, selected }: ModelAssetNodeProps) {
               </div>
             )
           )}
+          </>
+          )}
         </div>
 
+        {loadError && glbUrl && !useDesktopNativeRenderer && (
+          <div className="absolute inset-0 z-30 flex flex-col items-center justify-center p-3 bg-black/90 text-center pointer-events-auto">
+            <span className="text-[10px] font-bold text-red-400 mb-1">
+              模型未能显示
+            </span>
+            <p className="text-[9px] text-zinc-400 leading-relaxed max-w-[220px]">
+              {loadError}
+            </p>
+          </div>
+        )}
         {/* Display tag mimicking MaterialGenNode's indicators */}
         <div className="absolute bottom-2.5 left-2.5 z-10 flex gap-1 pointer-events-none select-none select-none">
           <span className="bg-black/85 text-emerald-400 text-[8px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded border border-emerald-950/50">
@@ -443,31 +490,39 @@ export function ModelAssetNode({ id, data, selected }: ModelAssetNodeProps) {
         </div>
       </div>
 
-      {fileExtension && fileExtension !== ".glb" && (
+      {fileExtension === ".gltf" && (
         <div className="mt-2 bg-amber-500/10 border border-amber-500/30 rounded p-2 text-[10px] text-amber-300 select-none leading-relaxed text-left">
           <p className="font-bold flex items-center gap-1 mb-1 text-[11px] text-amber-400">
-            ⚠️ 格式警告: {fileExtension.toUpperCase()} 依赖可能会丢失
+            ⚠️ .GLTF 需外部依赖
           </p>
-          {fileExtension === '.gltf' ? (
-            <span>
-              您当前加载的是 <strong>.gltf 文件</strong>。此格式仅包含纯文本 JSON 结构，并通常依赖同文件夹下的外部 <strong>.bin 几何文件</strong> 或 <strong>图片贴图</strong>。
-              <br />
-              由于网页多文件上传限制且后台未持有附加资源文件，在页面刷新/退出重新登入后会导致白模、加载失败或卡死报错。
-              <br />
-              <strong className="text-white mt-1 block">💡 解决方案：请在 Blender/C4D 或 3ds Max 中，导出为格式自包含、将贴图与数据全部打包在一起的单体 .glb (Binary GLTF) 格式模型后再上传！</strong>
-            </span>
-          ) : (
-            <span>
-              网页端标准 3D 渲染器仅原生高性能支持 <strong>.glb / .gltf</strong> 标准物理网格。
-              直接上传 {fileExtension.toUpperCase()} 格式的素材可能无法通过 WebGL 渲染，
-              <strong className="text-white mt-1 block">💡 强力推荐：将其导入 Blender 或 Unity 并直接导出打包为自包含的 .glb 格式上传，实现完美跨端显示。</strong>
-            </span>
-          )}
+          <span>
+            .gltf 常依赖同级 .bin 与贴图，单文件上传后刷新可能丢模。建议导出为自包含的 <strong>.glb</strong>。
+          </span>
         </div>
       )}
+      {!desktop3d &&
+        fileExtension &&
+        (fileExtension === ".fbx" || fileExtension === ".obj") && (
+          <div className="mt-2 bg-amber-500/10 border border-amber-500/30 rounded p-2 text-[10px] text-amber-300 select-none leading-relaxed text-left">
+            <p className="font-bold text-[11px] text-amber-400 mb-1">
+              网页端提示
+            </p>
+            <span>
+              浏览器环境对 {fileExtension.toUpperCase()} 支持有限，建议转为 <strong>.glb</strong> 上传。
+            </span>
+          </div>
+        )}
+      {desktop3d &&
+        fileExtension &&
+        (fileExtension === ".fbx" || fileExtension === ".obj") && (
+          <div className="mt-2 bg-emerald-500/10 border border-emerald-500/25 rounded p-2 text-[10px] text-emerald-200/90 select-none leading-relaxed text-left">
+            <span>
+              桌面端模型保存在本机，由 <strong>Jepow 原生 wgpu 渲染器</strong> 直接绘制（非网页 WebGL）。
+            </span>
+          </div>
+        )}
 
-      {/* Upload button panel mapping precisely to MaterialGenNode structure */}
-      <div className="mt-2 text-center">
+      <div className="mt-2 flex flex-col gap-1.5">
         <input
           id={fileInputId}
           type="file"
@@ -489,10 +544,27 @@ export function ModelAssetNode({ id, data, selected }: ModelAssetNodeProps) {
           ) : (
             <>
               <Upload className="w-3.5 h-3.5 text-emerald-400" />
-              <span>上传/替换 .glb 三维参考模型</span>
+              <span>
+                {shouldUseLocalCanvasAssets()
+                  ? "本地导入 3D 模型"
+                  : "上传/替换 3D 模型"}
+              </span>
             </>
           )}
         </Button>
+        {desktop3d && (
+          <Button
+            size="sm"
+            className="w-full text-[11px] h-8 bg-emerald-950/50 border border-emerald-800/80 hover:bg-emerald-900/60 text-emerald-300 font-bold rounded shadow-sm flex items-center justify-center gap-1.5"
+            onClick={(e) => {
+              e.stopPropagation();
+              handleImportNativeScene();
+            }}
+          >
+            <Layers className="w-3.5 h-3.5" />
+            <span>从磁盘选择大场景</span>
+          </Button>
+        )}
       </div>
 
       {/* Simplified Indicator Tooltip Console */}

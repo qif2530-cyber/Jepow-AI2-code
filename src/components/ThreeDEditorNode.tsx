@@ -2,12 +2,13 @@ import React, { useState, useEffect, Suspense, useMemo } from "react";
 import { Handle, Position, useReactFlow, useStore } from "@xyflow/react";
 import { Canvas } from "@react-three/fiber";
 import { OrbitControls } from "@react-three/drei";
-import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
-import { OBJLoader } from "three/examples/jsm/loaders/OBJLoader.js";
-import { FBXLoader } from "three/examples/jsm/loaders/FBXLoader.js";
 import * as THREE from "three";
 import { Box, Settings, Compass, Sun, Sliders, RefreshCw, ZoomIn, Eye, Plus, GripHorizontal, Pause, Play } from "lucide-react";
 import { Button } from "@/src/components/ui/button";
+import { isDesktopApp } from "../lib/runtime";
+import { parseLocalAssetRef, toLocalAssetRef } from "../lib/local-assets";
+import { loadModelGroup } from "../lib/model-asset-loader";
+import { JepowViewportPreview } from "./JepowViewportPreview";
 
 interface ThreeDEditorNodeProps {
   id: string;
@@ -30,80 +31,42 @@ interface ThreeDEditorNodeProps {
   selected?: boolean;
 }
 
-// Helper to determine accurate file format from encoded media URLs or file names
-function getExtensionFromUrlOrName(url: string, modelName?: string): string {
-  if (modelName) {
-    const ext = modelName.substring(modelName.lastIndexOf(".")).toLowerCase();
-    if (ext) return ext;
-  }
-  if (url.includes("/api/media/")) {
-    try {
-      const parts = url.split("/api/media/");
-      const encoded = parts[parts.length - 1];
-      if (encoded) {
-        let base64 = encoded.replace(/-/g, "+").replace(/_/g, "/");
-        while (base64.length % 4) {
-          base64 += "=";
-        }
-        const decoded = atob(base64);
-        const ext = decoded.substring(decoded.lastIndexOf(".")).toLowerCase();
-        if (ext) return ext;
-      }
-    } catch (e) {
-      console.error(e);
-    }
-  }
-  const cleanUrl = url.split("?")[0].split("#")[0];
-  const lastDot = cleanUrl.lastIndexOf(".");
-  if (lastDot !== -1) {
-    return cleanUrl.substring(lastDot).toLowerCase();
-  }
-  return "";
-}
-
-// Subcomponent to load GLB, GLTF, FBX, or OBJ dynamically and compile custom PBR standard materials
 function ModelRenderer({
   glbUrl,
   material,
   transform,
-  modelName
+  modelName,
+  onLoadError,
 }: {
   glbUrl: string;
   material: any;
   transform: any;
   modelName?: string;
+  onLoadError?: (msg: string | null) => void;
 }) {
   const [scene, setScene] = useState<THREE.Group | null>(null);
 
   useEffect(() => {
     let active = true;
-    const ext = getExtensionFromUrlOrName(glbUrl, modelName);
+    setScene(null);
+    onLoadError?.(null);
 
-    const onModelLoaded = (loadedScene: any) => {
-      if (!active) return;
-      const mainScene = loadedScene.scene || loadedScene;
-      setScene(mainScene);
-    };
-
-    const onError = (err: any) => {
-      console.error("Format renderer load error in editor:", err);
-    };
-
-    if (ext === ".fbx") {
-      const fbxLoader = new FBXLoader();
-      fbxLoader.load(glbUrl, onModelLoaded, undefined, onError);
-    } else if (ext === ".obj") {
-      const objLoader = new OBJLoader();
-      objLoader.load(glbUrl, onModelLoaded, undefined, onError);
-    } else {
-      const loader = new GLTFLoader();
-      loader.load(glbUrl, onModelLoaded, undefined, onError);
-    }
+    loadModelGroup(glbUrl, modelName)
+      .then((group) => {
+        if (!active) return;
+        setScene(group);
+        onLoadError?.(null);
+      })
+      .catch((err: unknown) => {
+        const msg = err instanceof Error ? err.message : "模型加载失败";
+        console.error("Format renderer load error in editor:", err);
+        if (active) onLoadError?.(msg);
+      });
 
     return () => {
       active = false;
     };
-  }, [glbUrl, modelName]);
+  }, [glbUrl, modelName, onLoadError]);
 
   // Clone scene so multiple render instances don't share identical memory instances
   const clonedScene = useMemo(() => {
@@ -444,8 +407,13 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
       }
     } else if (modelNode.type === "imageTo3DNode" && nodeData.glbUrl) {
       activeGlb = nodeData.glbUrl;
-    } else if (modelNode.type === "modelAssetNode" && nodeData.glbUrl) {
-      activeGlb = nodeData.glbUrl;
+    } else if (
+      modelNode.type === "modelAssetNode" &&
+      (nodeData.localAssetPath || nodeData.glbUrl || nodeData.localPreviewUrl)
+    ) {
+      activeGlb = nodeData.localAssetPath
+        ? toLocalAssetRef(nodeData.localAssetPath)
+        : nodeData.localPreviewUrl || nodeData.glbUrl;
     } else if (modelNode.type === "threeDEditorNode") {
       // Direct pass-through
       activeGlb = nodeData.texturedModel?.glbUrl || "";
@@ -467,6 +435,9 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
 
   // Fallback to offline procedural preview if no active connection (completely bypassing raw.githubusercontent.com)
   const glbToRender = activeGlb || "";
+  const nativeScenePath = parseLocalAssetRef(glbToRender) || "";
+  const useDesktopNativeRenderer =
+    isDesktopApp() && !!nativeScenePath && renderActive;
 
   // Position, Rotation, Scale configurations
   const [transform, setTransform] = useState({
@@ -625,7 +596,11 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
           </div>
         </div>
 
-        {canvasMounted && renderActive && glbToRender ? (
+        {useDesktopNativeRenderer ? (
+          <div className="w-full h-full min-h-[480px]">
+            <JepowViewportPreview scenePath={nativeScenePath} height={480} />
+          </div>
+        ) : canvasMounted && renderActive && glbToRender ? (
           <Canvas
             dpr={1.5}
             gl={{
@@ -654,6 +629,7 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
                   material={activeMaterial}
                   transform={transform}
                   modelName={activeModelName}
+                  onLoadError={setLoadError}
                 />
               </CanvasErrorBoundary>
             </Suspense>
@@ -729,10 +705,10 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
             {!(activeModelName.toLowerCase().endsWith(".gltf") || glbToRender.toLowerCase().includes(".gltf")) && 
              (activeModelName.toLowerCase().endsWith(".fbx") || activeModelName.toLowerCase().endsWith(".obj") || glbToRender.toLowerCase().includes(".fbx") || glbToRender.toLowerCase().includes(".obj")) && (
               <div className="bg-amber-950/40 border border-amber-900/40 rounded p-2 text-left text-[8px] text-amber-300 max-w-[280px] leading-relaxed mb-3">
-                <strong className="block text-amber-400 font-bold mb-0.5">💡 排错提示 (标准物理格式推荐) :</strong>
-                您上传的素材是 .fbx 或 .obj 格式。WebGL 三维核心原生推荐使用自包含的 .glb 行业标准物理模型包。
-                <br />
-                <strong>💡 建议：您可以直接通过 C4D、Maya 或 Blender 导出选项，将素材制成独立的 .glb 二进制文件并上传，以获得光洁亮丽的物理实时重映射预览效果。</strong>
+                <strong className="block text-amber-400 font-bold mb-0.5">💡 排错提示 :</strong>
+                {isDesktopApp()
+                  ? "桌面端支持 FBX/OBJ/GLB。若仍无法加载，请检查网络或素材是否含外部贴图路径。"
+                  : "网页端更推荐自包含的 .glb。可将 FBX/OBJ 在 Blender 中导出为 .glb 后重试。"}
               </div>
             )}
 

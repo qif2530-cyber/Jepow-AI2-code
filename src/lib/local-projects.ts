@@ -229,6 +229,29 @@ export async function renameLocalProject(
   return idbRename(userId, id, name);
 }
 
+export async function pickProjectSavePath(
+  userId: string,
+  defaultName: string,
+): Promise<string | null> {
+  const fsApi = desktopProjects();
+  if (!fsApi?.pickSavePath) return null;
+  const res = await fsApi.pickSavePath(userId, defaultName);
+  if (res.canceled || !res.filePath) return null;
+  return res.filePath;
+}
+
+export async function createLocalProjectAtPath(
+  userId: string,
+  name: string,
+  filePath: string,
+): Promise<{ meta: CloudProject; record: LocalProjectRecord } | null> {
+  const fsApi = desktopProjects();
+  if (!fsApi?.createAtPath) return null;
+  const res = await fsApi.createAtPath(userId, name, filePath);
+  if (res.error) throw new Error(res.error);
+  return { meta: res.meta, record: res.record };
+}
+
 /** Export .aiswork file payload */
 export function serializeProjectFile(record: LocalProjectRecord): string {
   return compress(

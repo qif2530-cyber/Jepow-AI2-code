@@ -1,5 +1,7 @@
 const { app, BrowserWindow, shell, dialog, ipcMain } = require('electron');
 const { registerProjectIpc } = require('./projects-ipc.cjs');
+const { registerViewportIpc } = require('./viewport-ipc.cjs');
+const { registerAssetsIpc } = require('./assets-ipc.cjs');
 const path = require('path');
 const http = require('http');
 const fs = require('fs');
@@ -230,6 +232,8 @@ async function bootstrap() {
   }
 
   registerProjectIpc(ipcMain);
+  registerViewportIpc(ipcMain);
+  registerAssetsIpc(ipcMain);
 
   ipcMain.handle('open-web', (_event, url) => {
     const target =
@@ -248,7 +252,27 @@ async function bootstrap() {
     }
   });
 
-  await app.whenReady();
+    await app.whenReady();
+
+  try {
+    const nativeBridge = require('./native-engine-bridge.cjs');
+    const st = nativeBridge.getEngineExecutable();
+    if (!st) {
+      console.warn('[Desktop] jepow-engine.exe missing — run scripts\\native-build.bat after installing VS C++ workload');
+      dialog.showMessageBox({
+        type: 'warning',
+        title: 'Jepow 自研 3D 渲染器未就绪',
+        message: 'jepow-engine.exe 尚未编译成功',
+        detail:
+          '您已安装 Visual Studio 生成工具，但通常还需要勾选「使用 C++ 的桌面开发」才能编译。\n\n请：\n1. Visual Studio Installer → 修改 → 勾选 C++ 桌面开发\n2. 关闭本程序，运行 desktop.bat\n3. 看到编译完成后再导入 FBX 模型\n\n注意：不是「模型编译失败」，是「渲染器程序」还没生成。',
+      });
+    } else {
+      console.log('[Desktop] jepow-engine:', st);
+    }
+  } catch (e) {
+    console.warn('[Desktop] native engine check failed', e);
+  }
+
   startApiServer();
 
   try {

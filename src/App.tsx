@@ -95,9 +95,12 @@ import {
   saveLocalProject,
   deleteLocalProject,
   renameLocalProject,
+  createLocalProjectAtPath,
 } from "./lib/local-projects";
 import { DesktopLoginGate } from "./components/DesktopLoginGate";
 import { DesktopDownloadPrompt } from "./components/DesktopDownloadPrompt";
+import { DesktopHomeScreen } from "./components/DesktopHomeScreen";
+import { NewProjectSaveDialog } from "./components/NewProjectSaveDialog";
 
 import { HistoryItem, Shot, UserData, CloudProject } from "./types";
 import { Logo } from "./components/Logo";
@@ -245,6 +248,9 @@ export default function App() {
   const [view, setView] = useState<"landing" | "canvas">(
     canvasOnly ? "canvas" : "landing",
   );
+  const [desktopScreen, setDesktopScreen] = useState<"home" | "canvas">("home");
+  const [showNewProjectSaveDialog, setShowNewProjectSaveDialog] =
+    useState(false);
   const [script, setScript] = useState("");
   const [currentProjectId, setCurrentProjectId] = useState<string | null>(null);
   const [projectName, setProjectName] = useState("未命名原型");
@@ -984,7 +990,10 @@ export default function App() {
       localStorage.setItem("ais-user", JSON.stringify(userData));
       setDesktopAuthPending(false);
       setShowAuthModal(false);
-      if (canvasOnly) setView("canvas");
+      if (canvasOnly) {
+        setDesktopScreen("home");
+        setView("canvas");
+      }
       toast.success(`欢迎回来，${userData.username}`);
     },
     [canvasOnly],
@@ -1009,6 +1018,12 @@ export default function App() {
       localStorage.removeItem("ais-token");
     }
   }, [token]);
+
+  useEffect(() => {
+    if (canvasOnly && desktopScreen === "home" && token) {
+      fetchProfile();
+    }
+  }, [canvasOnly, desktopScreen, token]);
 
   const fetchProjects = useCallback(async () => {
     if (!user?.id) return;
@@ -1334,6 +1349,7 @@ export default function App() {
         currentProjectRef.current = project.id;
         setProjectName(project.name);
         setShowProjectList(false);
+        setDesktopScreen("canvas");
         setView("canvas");
 
         toast.success(
@@ -1403,6 +1419,7 @@ export default function App() {
         localStorage.removeItem(`ais-edges-${user?.id || "guest"}`);
         localStorage.removeItem(`ais-project-id-${user?.id || "guest"}`);
         localStorage.removeItem(`ais-project-name-${user?.id || "guest"}`);
+        if (canvasOnly) setDesktopScreen("home");
       }
       toast.success("清理序列完成。云端数据已移除。");
       setProjectToDelete(null);
@@ -1533,6 +1550,52 @@ export default function App() {
     [reactFlowInstance],
   );
 
+  const handleConfirmNewProjectSave = useCallback(
+    async ({
+      name,
+      filePath,
+    }: {
+      name: string;
+      filePath: string;
+    }) => {
+      if (!user?.id) return;
+      try {
+        const result = await createLocalProjectAtPath(user.id, name, filePath);
+        if (!result) {
+          toast.error("请在桌面客户端中选择保存位置");
+          return;
+        }
+        setNodes([]);
+        setEdges([]);
+        setCanvasColor("#ffffff");
+        setCurrentProjectId(result.record.id);
+        currentProjectRef.current = result.record.id;
+        setProjectName(result.record.name);
+        setShowNewProjectSaveDialog(false);
+        setDesktopScreen("canvas");
+        setView("canvas");
+        await fetchProjects();
+        toast.success(`已创建: ${result.record.name}`);
+        if (reactFlowInstance) {
+          setTimeout(
+            () =>
+              reactFlowInstance.fitView({
+                padding: 0.5,
+                duration: 800,
+                minZoom: 0.01,
+                maxZoom: 1,
+              }),
+            100,
+          );
+        }
+      } catch (e) {
+        console.error(e);
+        toast.error("创建工程失败");
+      }
+    },
+    [user?.id, fetchProjects, reactFlowInstance],
+  );
+
   const handleNewProject = useCallback(() => {
     if (!canUseInfiniteCanvas()) {
       setShowDesktopDownloadPrompt(true);
@@ -1542,6 +1605,12 @@ export default function App() {
     if (!user) {
       if (canvasOnly) setDesktopAuthPending(true);
       else setShowAuthModal(true);
+      setShowNewProjectConfirm(false);
+      return;
+    }
+
+    if (canvasOnly && projectsLocal) {
+      setShowNewProjectSaveDialog(true);
       setShowNewProjectConfirm(false);
       return;
     }
@@ -6907,6 +6976,57 @@ export default function App() {
     );
   }
 
+  if (canvasOnly && user && desktopScreen === "home") {
+    return (
+      <>
+        <DesktopHomeScreen
+          user={user}
+          projects={cloudProjects}
+          siteLogo={siteConfig?.logo}
+          onNewProject={() => setShowNewProjectSaveDialog(true)}
+          onOpenProject={handleLoadCloudProject}
+          onDeleteProject={handleDeleteCloudProject}
+          onLogout={() => {
+            setToken(null);
+            setUser(null);
+            setNodes([]);
+            setEdges([]);
+            setCurrentProjectId(null);
+            setDesktopScreen("home");
+            localStorage.removeItem("ais-user");
+            localStorage.removeItem("ais-token");
+            toast.info("已退出登录");
+          }}
+        />
+        <NewProjectSaveDialog
+          userId={String(user.id)}
+          open={showNewProjectSaveDialog}
+          onClose={() => setShowNewProjectSaveDialog(false)}
+          onCreated={handleConfirmNewProjectSave}
+        />
+        {projectToDelete && (
+          <div className="fixed inset-0 z-[40000] flex items-center justify-center bg-black/40 p-4">
+            <div className="bg-white rounded-2xl p-6 max-w-sm w-full shadow-xl">
+              <p className="font-semibold text-neutral-900 mb-4">确认删除该工程？</p>
+              <div className="flex gap-2 justify-end">
+                <Button variant="ghost" onClick={() => setProjectToDelete(null)}>
+                  取消
+                </Button>
+                <Button
+                  variant="destructive"
+                  onClick={confirmDeleteProject}
+                  disabled={isDeleting}
+                >
+                  删除
+                </Button>
+              </div>
+            </div>
+          </div>
+        )}
+      </>
+    );
+  }
+
   return (
     <div
       className={`w-full text-neutral-900 font-sans transition-colors duration-300 ${view === "landing" ? "min-h-screen overflow-y-auto overflow-x-hidden" : "h-screen overflow-hidden"}`}
@@ -7107,12 +7227,18 @@ export default function App() {
                     <div className="relative group pointer-events-auto flex flex-col items-center">
                       <button
                         className="w-12 h-12 rounded-2xl flex items-center justify-center cursor-pointer hover:scale-105 transition-all bg-transparent"
-                        onClick={() =>
-                          canvasOnly
-                            ? openJepowWeb("/")
-                            : setView("landing")
-                        }
-                        title={canvasOnly ? "打开 jepow.com" : "返回首页"}
+                        onClick={async () => {
+                          if (canvasOnly) {
+                            if (currentProjectId) {
+                              await handleCloudSave(false);
+                            }
+                            setDesktopScreen("home");
+                            fetchProjects();
+                          } else {
+                            setView("landing");
+                          }
+                        }}
+                        title={canvasOnly ? "返回工程首页" : "返回首页"}
                       >
                         {siteConfig?.logo ? (
                           <img
@@ -7222,15 +7348,15 @@ export default function App() {
 
                   <Panel
                     position="top-right"
-                    className={`fixed top-0 bottom-0 right-0 w-[400px] bg-[#121214]/95 backdrop-blur-md rounded-none shadow-2xl border-l border-neutral-800/80 flex flex-col transition-all duration-300 ease-in-out z-[95] pointer-events-auto ${
+                    className={`fixed top-0 bottom-0 right-0 w-[380px] bg-[#111113] backdrop-blur-md rounded-none shadow-2xl border-l border-neutral-800 flex flex-col transition-all duration-300 ease-in-out z-[95] pointer-events-auto ${
                       showAiChat ? "translate-x-0" : "translate-x-full"
                     }`}
-                    style={{ height: "100vh", width: "400px" }}
+                    style={{ height: "100vh", width: "380px" }}
                   >
                     {/* Synchronized sliding mechanical tab button */}
                     <button
                       onClick={() => setShowAiChat(!showAiChat)}
-                      className={`absolute -left-7 top-1/2 -translate-y-1/2 w-7 flex flex-col items-center justify-center cursor-pointer shadow-2xl transition-all duration-300 pointer-events-auto border-y border-l border-neutral-800/80 bg-[#121214]/95 hover:bg-neutral-800 text-neutral-300 hover:text-white ${
+                      className={`absolute -left-7 top-1/2 -translate-y-1/2 w-7 flex flex-col items-center justify-center cursor-pointer shadow-2xl transition-all duration-300 pointer-events-auto border-y border-l border-neutral-800 bg-[#111113] hover:bg-neutral-900 text-neutral-300 hover:text-white ${
                         showAiChat
                           ? "h-16 rounded-l-lg"
                           : "h-14 rounded-l-lg scale-105"
@@ -7242,8 +7368,8 @@ export default function App() {
                         <ChevronRight className="w-4 h-4 text-neutral-400 group-hover:translate-x-0.5 transition-transform" />
                       ) : (
                         <div className="flex flex-col items-center justify-center gap-1 py-1">
-                          <ChevronLeft className="w-3.5 h-3.5 text-emerald-400 animate-pulse shrink-0" />
-                          <Sparkles className="w-3.5 h-3.5 text-emerald-400 animate-pulse shrink-0" />
+                          <ChevronLeft className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                          <Sparkles className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
                         </div>
                       )}
                     </button>
@@ -7254,10 +7380,12 @@ export default function App() {
                       onClick={(e) => e.stopPropagation()}
                     >
                       {/* Sidebar Header */}
-                      <div className="flex items-center justify-between px-5 py-4 border-b border-neutral-800 bg-[#0e0e10]/60 shrink-0 select-none">
-                        <div className="flex items-center gap-2">
-                          <Sparkles className="w-5 h-5 text-emerald-400 animate-pulse" />
-                          <span className="text-sm font-bold text-neutral-100 tracking-wider">AI 创作助手</span>
+                      <div className="flex items-center justify-between px-4 py-3.5 border-b border-neutral-800 bg-[#0c0c0e] shrink-0 select-none">
+                        <div className="flex items-center gap-2.5">
+                          <div className="w-8 h-8 rounded-lg bg-emerald-500/15 border border-emerald-500/30 flex items-center justify-center">
+                            <Sparkles className="w-4 h-4 text-emerald-400" />
+                          </div>
+                          <span className="text-sm font-bold text-neutral-100">AI 创作助手</span>
                         </div>
                         <button
                           type="button"
@@ -7268,12 +7396,14 @@ export default function App() {
                         </button>
                       </div>
 
-                      <div className="flex-1 overflow-y-auto p-5 space-y-5 scrollbar-hide">
+                      <div className="flex-1 overflow-y-auto px-4 py-4 space-y-4 scrollbar-hide">
                         {aiMessages.length === 0 ? (
-                          <div className="h-full min-h-[250px] flex flex-col items-center justify-center text-center p-6 text-neutral-500 gap-3 select-none">
-                            <Sparkles className="w-10 h-10 opacity-20 text-emerald-400 animate-pulse" />
-                            <p className="text-xs max-w-[240px] leading-relaxed font-sans">
-                              我是您的 AI 创作助手。在下方输入词条或传入参考图像，即可一键唤起生成渲染。
+                          <div className="h-full min-h-[220px] flex flex-col items-center justify-center text-center px-4 text-neutral-500 gap-3 select-none">
+                            <div className="w-12 h-12 rounded-2xl bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center">
+                              <Sparkles className="w-6 h-6 text-emerald-400/80" />
+                            </div>
+                            <p className="text-xs max-w-[260px] leading-relaxed text-neutral-400">
+                              输入指令或添加参考图，即可生成图像、视频或脚本内容。
                             </p>
                           </div>
                         ) : (
@@ -7283,8 +7413,8 @@ export default function App() {
                               className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"} animate-in fade-in slide-in-from-bottom-2`}
                             >
                               {msg.role !== "user" && (
-                                <div className="w-8 h-8 rounded-full bg-gradient-to-tr from-blue-500/20 to-purple-500/20 border border-black/10 flex items-center justify-center mr-3 mt-1 shrink-0">
-                                  <Sparkles className="w-3.5 h-3.5 text-blue-400" />
+                                <div className="w-7 h-7 rounded-lg bg-emerald-500/15 border border-emerald-500/25 flex items-center justify-center mr-2.5 mt-1 shrink-0">
+                                  <Sparkles className="w-3.5 h-3.5 text-emerald-400" />
                                 </div>
                               )}
                               <div
@@ -7301,11 +7431,11 @@ export default function App() {
                                       ]);
                                   }
                                 }}
-                                className={`relative max-w-[85%] p-4 rounded-xl text-sm leading-relaxed ${
+                                className={`relative max-w-[88%] px-3.5 py-3 rounded-2xl text-sm leading-relaxed ${
                                   msg.role === "user"
-                                    ? `bg-neutral-850 border border-neutral-700/60 text-white shadow-xl ${isAiLoading ? "opacity-80" : "cursor-pointer hover:bg-neutral-700 transition-all"}`
-                                    : "bg-black/40 border border-neutral-800 text-neutral-300 shadow-lg"
-                                } ${msg.role === "user" ? "rounded-tr-sm" : "rounded-tl-sm"}`}
+                                    ? `bg-neutral-800 border border-neutral-700 text-neutral-100 ${isAiLoading ? "opacity-80" : "cursor-pointer hover:bg-neutral-700 transition-all"}`
+                                    : "bg-neutral-900/80 border border-neutral-800 text-neutral-300"
+                                } ${msg.role === "user" ? "rounded-br-md" : "rounded-bl-md"}`}
                                 title={
                                   msg.role === "user"
                                     ? "点击复用此消息"
@@ -7339,10 +7469,10 @@ export default function App() {
                         )}
                         {isAiLoading && (
                           <div className="flex justify-start animate-in fade-in">
-                            <div className="w-8 h-8 rounded-full bg-gradient-to-tr from-blue-500/20 to-purple-500/20 border border-black/10 flex items-center justify-center mr-3 shrink-0">
-                              <Loader2 className="w-3.5 h-3.5 text-blue-400 animate-spin" />
+                            <div className="w-7 h-7 rounded-lg bg-emerald-500/15 border border-emerald-500/25 flex items-center justify-center mr-2.5 shrink-0">
+                              <Loader2 className="w-3.5 h-3.5 text-emerald-400 animate-spin" />
                             </div>
-                            <div className="bg-black/40 border border-neutral-800 px-5 py-3.5 rounded-xl rounded-tl-sm flex items-center gap-3">
+                            <div className="bg-neutral-900/80 border border-neutral-800 px-4 py-3 rounded-2xl rounded-bl-md flex items-center gap-3">
                               <div className="flex gap-1">
                                 <div
                                   className="w-1.5 h-1.5 rounded-full bg-neutral-600 animate-bounce"
@@ -7366,19 +7496,17 @@ export default function App() {
                         <div ref={aiChatEndRef} />
                       </div>
 
-                      <div
-                        className={`p-4 ${showAiChat && aiMessages.length > 0 ? "bg-black/20 border-t border-neutral-800" : ""} shrink-0 rounded-none`}
-                      >
+                      <div className="shrink-0 border-t border-neutral-800 bg-[#0a0a0c] p-4">
                         <form
                           onSubmit={handleAiSubmit}
                           className="flex flex-col gap-3"
                         >
                           {showAiChat && (
-                            <div className="flex flex-wrap items-center gap-2">
+                            <div className="grid grid-cols-2 gap-2">
                               <select
                                 value={aiMode}
                                 onChange={(e) => setAiMode(e.target.value)}
-                                className="bg-neutral-800 border border-neutral-700 rounded-full px-3 py-1.5 text-xs text-neutral-300 focus:outline-none focus:ring-2 focus:ring-blue-500/50 hover:bg-neutral-700 appearance-none transition-all cursor-pointer"
+                                className="h-9 w-full min-w-0 rounded-lg bg-neutral-900 border border-neutral-800 px-3 text-xs text-neutral-300 focus:outline-none focus:border-emerald-500/50 hover:border-neutral-700 appearance-none transition-colors cursor-pointer"
                               >
                                 <option
                                   value="自动识别"
@@ -7412,7 +7540,7 @@ export default function App() {
                                   onChange={(e) =>
                                     setAiModelSelect(e.target.value)
                                   }
-                                  className="bg-neutral-800 border border-neutral-700 rounded-full px-3 py-1.5 text-xs text-neutral-300 focus:outline-none focus:ring-2 focus:ring-blue-500/50 hover:bg-neutral-700 appearance-none transition-all cursor-pointer max-w-[120px] truncate"
+                                  className="h-9 w-full min-w-0 rounded-lg bg-neutral-900 border border-neutral-800 px-3 text-xs text-neutral-300 focus:outline-none focus:border-emerald-500/50 hover:border-neutral-700 appearance-none transition-colors cursor-pointer truncate"
                                 >
                                   <option
                                     value="自动分配"
@@ -7491,7 +7619,7 @@ export default function App() {
                                       onChange={(e) =>
                                         setAiRatio(e.target.value)
                                       }
-                                      className="bg-neutral-800 border border-neutral-700 rounded-full px-3 py-1.5 text-xs text-neutral-300 focus:outline-none focus:ring-2 focus:ring-blue-500/50 hover:bg-neutral-700 appearance-none transition-all cursor-pointer"
+                                      className="h-9 w-full min-w-0 rounded-lg bg-neutral-900 border border-neutral-800 px-3 text-xs text-neutral-300 focus:outline-none focus:border-emerald-500/50 hover:border-neutral-700 appearance-none transition-colors cursor-pointer"
                                     >
                                       {IMAGE_MODELS[aiModelSelect]?.ratios ? (
                                         IMAGE_MODELS[aiModelSelect].ratios.map(
@@ -7567,7 +7695,7 @@ export default function App() {
                                     <select
                                       value={aiRes}
                                       onChange={(e) => setAiRes(e.target.value)}
-                                      className="bg-neutral-800 border border-neutral-700 rounded-full px-3 py-1.5 text-xs text-neutral-300 focus:outline-none focus:ring-2 focus:ring-blue-500/50 hover:bg-neutral-700 appearance-none transition-all cursor-pointer"
+                                      className="h-9 w-full min-w-0 rounded-lg bg-neutral-900 border border-neutral-800 px-3 text-xs text-neutral-300 focus:outline-none focus:border-emerald-500/50 hover:border-neutral-700 appearance-none transition-colors cursor-pointer"
                                     >
                                       {IMAGE_MODELS[aiModelSelect]
                                         ?.resolutions ? (
@@ -7649,7 +7777,7 @@ export default function App() {
                                         onChange={(e) =>
                                           setAiDuration(e.target.value)
                                         }
-                                        className="bg-neutral-800 border border-neutral-700 rounded-full px-3 py-1.5 text-xs text-neutral-300 focus:outline-none focus:ring-2 focus:ring-blue-500/50 hover:bg-neutral-700 appearance-none transition-all cursor-pointer"
+                                        className="h-9 w-full min-w-0 rounded-lg bg-neutral-900 border border-neutral-800 px-3 text-xs text-neutral-300 focus:outline-none focus:border-emerald-500/50 hover:border-neutral-700 appearance-none transition-colors cursor-pointer"
                                       >
                                         {KLING_MODELS[
                                           aiModelSelect as KlingModelId
@@ -7689,7 +7817,7 @@ export default function App() {
                           )}
                           {/* Reference Images Preview */}
                           {aiReferenceImages.length > 0 && (
-                            <div className="flex gap-3 overflow-x-auto p-3 bg-neutral-900 border border-neutral-800 rounded-md mb-2 items-center custom-scrollbar">
+                            <div className="flex gap-3 overflow-x-auto p-2.5 bg-neutral-900/60 border border-neutral-800 rounded-xl mb-1 items-center custom-scrollbar">
                               <span className="text-xs text-neutral-400 shrink-0 font-medium tracking-wide">
                                 参考图
                               </span>
@@ -7734,7 +7862,7 @@ export default function App() {
                                     );
                                   }
                                 }}
-                                className={`p-3 rounded-md flex items-center justify-center transition-all shrink-0 ${isSelectingAiReference || showAiReferenceMenu ? "bg-gradient-to-tr from-blue-500 to-purple-500 text-white shadow-lg shadow-blue-500/20" : "bg-neutral-800 text-neutral-400 border border-neutral-700 hover:bg-neutral-700 hover:text-white"}`}
+                                className={`p-3 rounded-xl flex items-center justify-center transition-all shrink-0 ${isSelectingAiReference || showAiReferenceMenu ? "bg-emerald-600 text-white shadow-lg shadow-emerald-600/25" : "bg-neutral-900 text-neutral-400 border border-neutral-800 hover:border-neutral-700 hover:text-white"}`}
                                 title="添加垫图"
                               >
                                 {isSelectingAiReference ? (
@@ -7901,7 +8029,7 @@ export default function App() {
                                   ? "正在选择垫图... 请点击画布上的图片"
                                   : "输入合成命令..."
                               }
-                              className="flex-1 bg-neutral-800 border border-neutral-700 rounded-md px-5 py-3.5 text-sm text-white focus:ring-2 focus:ring-blue-500/50 focus:border-transparent outline-none transition-all placeholder:text-neutral-500 disabled:opacity-50"
+                              className="flex-1 bg-neutral-900 border border-neutral-800 rounded-xl px-4 py-3 text-sm text-neutral-100 focus:outline-none focus:border-emerald-500/50 transition-colors placeholder:text-neutral-500 disabled:opacity-50"
                               disabled={isAiLoading || isSelectingAiReference}
                             />
                             <button
@@ -7911,7 +8039,7 @@ export default function App() {
                                 isAiLoading ||
                                 isSelectingAiReference
                               }
-                              className="px-6 h-[46px] rounded-md bg-white text-black flex items-center justify-center hover:bg-neutral-200 disabled:opacity-50 disabled:hover:bg-white transition-all text-sm font-bold shrink-0 relative group shadow-xl"
+                              className="px-5 h-[46px] rounded-xl bg-emerald-600 text-white flex items-center justify-center hover:bg-emerald-500 disabled:opacity-40 disabled:hover:bg-emerald-600 transition-all text-sm font-bold shrink-0 relative group"
                             >
                               <span className="truncate mr-2">传输</span>
                               <Send className="w-4 h-4 group-hover:translate-x-1 group-hover:-translate-y-1 transition-transform" />

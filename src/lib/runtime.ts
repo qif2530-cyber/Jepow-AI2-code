@@ -19,9 +19,95 @@ declare global {
         write: (userId: string, record: LocalProjectRecord) => Promise<CloudProject>;
         remove: (userId: string, id: string) => Promise<void>;
         rename: (userId: string, id: string, name: string) => Promise<void>;
+        pickSavePath: (
+          userId: string,
+          defaultName?: string,
+        ) => Promise<{ canceled: boolean; filePath: string | null }>;
+        pickDirectory: () => Promise<string | null>;
+        createAtPath: (
+          userId: string,
+          name: string,
+          filePath: string,
+        ) => Promise<{
+          meta: CloudProject;
+          record: LocalProjectRecord;
+          error?: string;
+        }>;
+      };
+      viewport?: {
+        getStatus: () => Promise<Record<string, unknown>>;
+        pickSceneFile: () => Promise<{ canceled: boolean; filePath: string | null }>;
+        openScene: (scenePath: string) => Promise<Record<string, unknown>>;
+        sceneInfo: (scenePath: string) => Promise<Record<string, unknown>>;
+        renderPreview: (opts: Record<string, unknown>) => Promise<Record<string, unknown>>;
+        readPreview: (previewUrl: string) => Promise<string | null>;
+      };
+      assets?: {
+        pickModelFile: () => Promise<{ canceled: boolean; filePath: string | null }>;
+        importFile: (
+          userId: string,
+          sourcePath: string,
+        ) => Promise<{
+          ok: boolean;
+          localPath?: string;
+          fileName?: string;
+          error?: string;
+        }>;
+        saveBuffer: (
+          userId: string,
+          fileName: string,
+          base64: string,
+        ) => Promise<{
+          ok: boolean;
+          localPath?: string;
+          fileName?: string;
+          error?: string;
+        }>;
+        saveBufferRaw: (
+          userId: string,
+          fileName: string,
+          arrayBuffer: ArrayBuffer,
+        ) => Promise<{
+          ok: boolean;
+          localPath?: string;
+          fileName?: string;
+          error?: string;
+        }>;
+        readBuffer: (localPath: string) => Promise<{
+          ok: boolean;
+          base64?: string;
+          byteLength?: number;
+          error?: string;
+        }>;
       };
     };
   }
+}
+
+/** Desktop: 3D 工程、模型、视口数据均在本地；仅下列能力走云端 API */
+export function isRemoteCloudApiPath(apiPath: string): boolean {
+  const p = apiPath.replace(/^\/api\/?/, '/');
+  const remotePrefixes = [
+    '/user/',
+    '/auth/',
+    '/site-config',
+    '/admin/config',
+    '/ai/',
+    '/gemini/',
+    '/kling/',
+    '/recharge',
+    '/credits',
+    '/messages',
+    '/community',
+  ];
+  if (remotePrefixes.some((prefix) => p.startsWith(prefix))) return true;
+  if (p.startsWith('/upload') && !shouldUseLocalCanvasAssets()) return true;
+  return false;
+}
+
+/** 桌面画布：模型/场景文件存 userData，不上传服务器 */
+export function shouldUseLocalCanvasAssets(): boolean {
+  return isCanvasOnlyMode();
 }
 
 export const JEPOW_WEB_ORIGIN =
@@ -100,6 +186,20 @@ export function getAppOrigin(): string {
 
 export function getApiBaseUrl(): string {
   return `${getAppOrigin()}/api`;
+}
+
+/** Turn site-relative media paths (/api/media/…) into absolute URLs (required in Electron shell) */
+export function resolveMediaUrl(url?: string | null): string | null {
+  if (!url || !String(url).trim()) return null;
+  const u = String(url).trim();
+  if (/^(https?:|data:|blob:)/i.test(u)) return u;
+  const base = getAppOrigin().replace(/\/$/, '');
+  if (u.startsWith('/')) return `${base}${u}`;
+  return `${base}/${u}`;
+}
+
+export function dicebearAvatarUrl(seed: string): string {
+  return `https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(seed)}`;
 }
 
 export async function openJepowWeb(path = '/'): Promise<void> {
