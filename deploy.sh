@@ -83,9 +83,19 @@ if [ ! -x node_modules/.bin/vite ] || [ ! -x node_modules/.bin/tsx ]; then
   exit 1
 fi
 
-# 6. 构建前端
+# 6. 构建前端（先删旧 dist，避免线上仍引用旧 JS）
 echo -e "${GREEN}>>> 正在打包前端 UI...${NC}"
+rm -rf dist
 npm run build
+
+if grep -rq "后台管理。含 3D 在内的无限画布" dist/assets 2>/dev/null; then
+  echo -e "${RED}错误: dist 里仍是旧版首页 JS，请确认 src/components/LandingDownloadSection.tsx 已更新后重试${NC}"
+  exit 1
+fi
+if ! grep -rq "充值与后台。含 3D" dist/assets 2>/dev/null; then
+  echo -e "${RED}警告: dist 中未检测到新版首页文案，打包可能异常${NC}"
+fi
+echo -e "${GREEN}>>> 前端打包校验通过（新版首页）${NC}"
 
 # 7. 重启服务
 echo -e "${GREEN}>>> 正在清理遗留进程及重启后台服务...${NC}"
@@ -101,7 +111,9 @@ killall -9 node 2>/dev/null || true
 
 # 必须设置 NODE_ENV=production，使得服务端认准 ~/.jepow-data 里的数据
 export NODE_ENV=production
-pm2 start ./node_modules/.bin/tsx --name jepow-ai -- server.ts
+pm2 start ./node_modules/.bin/tsx --name jepow-ai --cwd "$(pwd)" -- server.ts
+pm2 save 2>/dev/null || true
+echo -e "${GREEN}>>> PM2 工作目录: $(pm2 describe jepow-ai 2>/dev/null | grep 'exec cwd' || pwd)${NC}"
 
 echo -e "${GREEN}==========================================${NC}"
 echo -e "${GREEN}部署完成！[数据安全分离版]${NC}"

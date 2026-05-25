@@ -10,4 +10,5 @@ coverage/
 # db.json
 db.json
 uploads/
+backups/
 
