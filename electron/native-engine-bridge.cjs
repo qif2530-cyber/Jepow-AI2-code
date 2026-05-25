@@ -156,7 +156,17 @@ async function openScene(scenePath) {
   });
 }
 
-async function renderPreview({ scenePath, width = 640, height = 480 }) {
+async function renderPreview(opts = {}) {
+  const {
+    scenePath,
+    width = 640,
+    height = 480,
+    cameraYaw,
+    cameraPitch,
+    cameraDistance,
+    panX,
+    panY,
+  } = opts;
   const id = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   const outputPath = path.join(getViewportCacheDir(), `jepow-${id}.png`);
   const result = await runEngineCommand('render_frame', {
@@ -164,11 +174,11 @@ async function renderPreview({ scenePath, width = 640, height = 480 }) {
     outputPath,
     width,
     height,
-    cameraYaw: opts.cameraYaw,
-    cameraPitch: opts.cameraPitch,
-    cameraDistance: opts.cameraDistance,
-    panX: opts.panX,
-    panY: opts.panY,
+    cameraYaw,
+    cameraPitch,
+    cameraDistance,
+    panX,
+    panY,
   });
   if (!result.ok) return result;
   return {
