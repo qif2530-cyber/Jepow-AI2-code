@@ -93,79 +93,106 @@ fn load_gltf_mesh(path: &str) -> Result<MeshData> {
     Ok(MeshData { vertices, indices })
 }
 
+fn vec3_f32(v: ufbx::Vec3) -> [f32; 3] {
+    [v.x as f32, v.y as f32, v.z as f32]
+}
+
+/// Merge one FBX mesh instance with node world transform (position + normal).
+fn append_fbx_mesh_triangles(
+    vertices: &mut Vec<Vertex>,
+    indices: &mut Vec<u32>,
+    mesh: &ufbx::Mesh,
+    world: &ufbx::Matrix,
+) {
+    let normal_world = ufbx::matrix_for_normals(world);
+    let pos_el = &mesh.vertex_position;
+    let normal_el = if mesh.vertex_normal.exists {
+        Some(&mesh.vertex_normal)
+    } else {
+        None
+    };
+
+    for face in &mesh.faces {
+        if face.num_indices < 3 {
+            continue;
+        }
+        let mut tri_corners = Vec::new();
+        let num_tris = ufbx::triangulate_face_vec(&mut tri_corners, mesh, *face);
+        if num_tris == 0 {
+            for t in 0..(face.num_indices.saturating_sub(2)) {
+                tri_corners.push(0);
+                tri_corners.push(t + 1);
+                tri_corners.push(t + 2);
+            }
+            for c in &mut tri_corners {
+                *c = face.index_begin + *c;
+            }
+        }
+
+        for tri in tri_corners.chunks(3) {
+            if tri.len() < 3 {
+                continue;
+            }
+            let mut tri_idx = Vec::with_capacity(3);
+            for &mesh_ix in tri {
+                let corner = mesh_ix as usize;
+                if corner >= pos_el.indices.len() {
+                    continue;
+                }
+                let vi = pos_el.indices[corner] as usize;
+                if vi >= pos_el.values.len() {
+                    continue;
+                }
+                let p = ufbx::transform_position(world, pos_el[vi]);
+                let n_local = normal_el
+                    .and_then(|el| {
+                        if corner >= el.indices.len() {
+                            return None;
+                        }
+                        let ni = el.indices[corner] as usize;
+                        if ni >= el.values.len() {
+                            return None;
+                        }
+                        Some(el[ni])
+                    })
+                    .unwrap_or(ufbx::Vec3 {
+                        x: 0.0,
+                        y: 1.0,
+                        z: 0.0,
+                    });
+                let n = ufbx::transform_direction(&normal_world, n_local);
+                tri_idx.push(vertices.len() as u32);
+                vertices.push(Vertex {
+                    pos: vec3_f32(p),
+                    color: clay_vertex_color(n.y as f32),
+                });
+            }
+            if tri_idx.len() == 3 {
+                indices.extend(tri_idx);
+            }
+        }
+    }
+}
+
 fn load_fbx_mesh(path: &str) -> Result<MeshData> {
-    let scene = ufbx::load_file(path, ufbx::LoadOpts::default())
+    let opts = ufbx::LoadOpts {
+        geometry_transform_handling: ufbx::GeometryTransformHandling::ModifyGeometry,
+        ..Default::default()
+    };
+    let scene = ufbx::load_file(path, opts)
         .map_err(|e| anyhow::anyhow!("fbx load: {:?}", e))?;
     let mut vertices = Vec::new();
     let mut indices = Vec::new();
 
-    for mesh in &scene.meshes {
-        let pos_el = &mesh.vertex_position;
-        let normal_el = if mesh.vertex_normal.exists {
-            Some(&mesh.vertex_normal)
-        } else {
-            None
-        };
-
-        for face in &mesh.faces {
-            if face.num_indices < 3 {
-                continue;
-            }
-            let mut tri_corners = Vec::new();
-            let num_tris = ufbx::triangulate_face_vec(&mut tri_corners, mesh, *face);
-            if num_tris == 0 {
-                for t in 0..(face.num_indices.saturating_sub(2)) {
-                    tri_corners.push(0);
-                    tri_corners.push(t + 1);
-                    tri_corners.push(t + 2);
-                }
-                for c in &mut tri_corners {
-                    *c = face.index_begin + *c;
-                }
-            }
-
-            for tri in tri_corners.chunks(3) {
-                if tri.len() < 3 {
-                    continue;
-                }
-                let mut tri_idx = Vec::with_capacity(3);
-                for &mesh_ix in tri {
-                    let corner = mesh_ix as usize;
-                    if corner >= pos_el.indices.len() {
-                        continue;
-                    }
-                    let vi = pos_el.indices[corner] as usize;
-                    if vi >= pos_el.values.len() {
-                        continue;
-                    }
-                    let p = pos_el[vi];
-                    let n = normal_el
-                        .and_then(|el| {
-                            if corner >= el.indices.len() {
-                                return None;
-                            }
-                            let ni = el.indices[corner] as usize;
-                            if ni >= el.values.len() {
-                                return None;
-                            }
-                            Some(el[ni])
-                        })
-                        .unwrap_or(ufbx::Vec3 {
-                            x: 0.0,
-                            y: 1.0,
-                            z: 0.0,
-                        });
-                    tri_idx.push(vertices.len() as u32);
-                    vertices.push(Vertex {
-                        pos: [p.x as f32, p.y as f32, p.z as f32],
-                        color: clay_vertex_color(n.y as f32),
-                    });
-                }
-                if tri_idx.len() == 3 {
-                    indices.extend(tri_idx);
-                }
-            }
+    // FBX meshes live on scene nodes; must apply each node's world matrix.
+    for node in &scene.nodes {
+        if node.is_geometry_transform_helper || !node.visible {
+            continue;
         }
+        let Some(mesh) = node.mesh.as_ref() else {
+            continue;
+        };
+        append_fbx_mesh_triangles(&mut vertices, &mut indices, mesh, &node.geometry_to_world);
     }
 
     Ok(MeshData { vertices, indices })

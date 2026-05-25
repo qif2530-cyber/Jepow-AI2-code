@@ -46,6 +46,7 @@ export function JepowViewportPreview({
   const turntableYaw = useRef(0);
   const animRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const renderGen = useRef(0);
+  const renderInFlight = useRef(false);
   const dragging = useRef<{
     kind: "orbit" | "pan";
     x: number;
@@ -57,7 +58,11 @@ export function JepowViewportPreview({
   const renderWithCamera = useCallback(
     async (cam: ViewportCamera, silent = false) => {
       if (!scenePath) return;
-      const gen = ++renderGen.current;
+      if (renderInFlight.current) {
+        if (silent) return;
+      }
+      renderInFlight.current = true;
+      const gen = renderGen.current;
       if (!silent) setLoading(true);
       try {
         const eng = getViewportEngine();
@@ -68,6 +73,8 @@ export function JepowViewportPreview({
               `${info.extension?.toUpperCase() || "3D"} · ${info.meshCount ?? 0} 网格 · ${info.nodeCount ?? 0} 节点`,
             );
             onSceneInfo?.(info);
+          } else if (!silent) {
+            setEngineError(info.error || "无法打开场景");
           }
           sceneOpened.current = true;
         }
@@ -96,6 +103,7 @@ export function JepowViewportPreview({
         if (gen !== renderGen.current) return;
         setEngineError(e instanceof Error ? e.message : "原生视口错误");
       } finally {
+        renderInFlight.current = false;
         if (gen === renderGen.current && !silent) setLoading(false);
       }
     },
@@ -104,6 +112,8 @@ export function JepowViewportPreview({
 
   useEffect(() => {
     sceneOpened.current = false;
+    renderGen.current += 1;
+    renderInFlight.current = false;
     invalidateViewportCache();
     setEngineReady(null);
     setEngineError(null);
@@ -135,16 +145,17 @@ export function JepowViewportPreview({
     if (engineReady !== true) return;
 
     if (mode === "turntable") {
-      const tick = () => {
+      const tick = async () => {
+        if (renderInFlight.current) return;
         turntableYaw.current += 0.045;
         const cam: ViewportCamera = {
           ...DEFAULT_CAM,
           yaw: turntableYaw.current,
         };
-        void renderWithCamera(cam, true);
+        await renderWithCamera(cam, true);
       };
-      tick();
-      animRef.current = setInterval(tick, 120);
+      void renderWithCamera({ ...DEFAULT_CAM }, false);
+      animRef.current = setInterval(() => void tick(), 450);
       return () => {
         if (animRef.current) clearInterval(animRef.current);
       };
@@ -312,6 +323,7 @@ export function JepowViewportPreview({
           disabled={loading && mode !== "turntable"}
           onClick={(e) => {
             e.stopPropagation();
+            renderGen.current += 1;
             setCamera({ ...DEFAULT_CAM });
             if (mode === "turntable") turntableYaw.current = 0;
             void renderWithCamera({ ...DEFAULT_CAM }, false);

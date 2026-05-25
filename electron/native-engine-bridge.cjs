@@ -58,8 +58,11 @@ function parseLastJsonLine(stdout) {
   return null;
 }
 
+let engineQueue = Promise.resolve();
+
 function runEngineCommand(command, payload = {}, timeoutMs = 300000) {
-  return new Promise((resolve, reject) => {
+  const run = () =>
+    new Promise((resolve, reject) => {
     const executable = getEngineExecutable();
     if (!executable) {
       return resolve({
@@ -114,6 +117,9 @@ function runEngineCommand(command, payload = {}, timeoutMs = 300000) {
       });
     });
   });
+
+  engineQueue = engineQueue.then(run, run);
+  return engineQueue;
 }
 
 async function getStatus() {
