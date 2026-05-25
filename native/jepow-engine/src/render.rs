@@ -25,11 +25,33 @@ const DEMO: &[Vertex] = &[
     },
 ];
 
+#[derive(Clone, Copy, Debug)]
+pub struct ViewCamera {
+    pub yaw: f32,
+    pub pitch: f32,
+    pub distance: f32,
+    pub pan_x: f32,
+    pub pan_y: f32,
+}
+
+impl Default for ViewCamera {
+    fn default() -> Self {
+        Self {
+            yaw: 0.55,
+            pitch: 0.38,
+            distance: 2.45,
+            pan_x: 0.0,
+            pan_y: 0.0,
+        }
+    }
+}
+
 pub fn render_viewport_frame(
     output_path: &str,
     width: u32,
     height: u32,
     scene_path: Option<&str>,
+    camera: ViewCamera,
 ) -> Result<()> {
     let width = width.clamp(64, 4096);
     let height = height.clamp(64, 4096);
@@ -70,13 +92,18 @@ pub fn render_viewport_frame(
         source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Borrowed(VIEWPORT_WGSL)),
     });
 
-    let uniform_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+    let uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("jepow-uniforms"),
-        contents: bytemuck::bytes_of(&Uniforms {
-            mvp: orbit_mvp(width, height, 0.55),
-        }),
+        size: std::mem::size_of::<Uniforms>() as u64,
         usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
     });
+    let mvp = camera_mvp(width, height, camera);
+    queue.write_buffer(
+        &uniform_buffer,
+        0,
+        bytemuck::bytes_of(&Uniforms { mvp }),
+    );
 
     let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: Some("jepow-vertex-buffer"),
@@ -304,14 +331,18 @@ fn readback_png(
     Ok(())
 }
 
-fn orbit_mvp(width: u32, height: u32, yaw: f32) -> [[f32; 4]; 4] {
+fn camera_mvp(width: u32, height: u32, cam: ViewCamera) -> [[f32; 4]; 4] {
     let aspect = width as f32 / height.max(1) as f32;
     let proj = mat4_perspective(45.0_f32.to_radians(), aspect, 0.05, 100.0);
-    let view = mat4_look_at(
-        [2.2 * yaw.cos(), 1.35, 2.2 * yaw.sin()],
-        [0.0, 0.0, 0.0],
-        [0.0, 1.0, 0.0],
-    );
+    let pitch = cam.pitch.clamp(-1.2, 1.2);
+    let dist = cam.distance.clamp(0.35, 12.0);
+    let center = [cam.pan_x, cam.pan_y, 0.0];
+    let eye = [
+        center[0] + dist * pitch.cos() * cam.yaw.sin(),
+        center[1] + dist * pitch.sin(),
+        center[2] + dist * pitch.cos() * cam.yaw.cos(),
+    ];
+    let view = mat4_look_at(eye, center, [0.0, 1.0, 0.0]);
     mat4_mul(proj, view)
 }
 
@@ -402,6 +433,9 @@ fn vs_main(input: VertexInput) -> VertexOutput {
 
 @fragment
 fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
-  return vec4<f32>(input.color, 1.0);
+  // 白膜：顶点 color 存灰度明暗
+  let shade = input.color.x;
+  let clay = vec3<f32>(0.80, 0.82, 0.86) * shade;
+  return vec4<f32>(clay, 1.0);
 }
 "#;

@@ -94,6 +94,68 @@ export function parseLocalAssetRef(url: string): string | null {
   return url.slice(LOCAL_ASSET_PREFIX.length);
 }
 
+export type IngestedModelNodeData = {
+  glbUrl: string;
+  nativeScenePath: string;
+  localAssetPath: string;
+  modelName: string;
+  viewportBackend: 'jepow-native';
+  localPreviewUrl: '';
+};
+
+/** 画布拖入 FBX/GLB 等（含微信临时文件）→ 写入工程 assets/models */
+export async function ingestDroppedModelFile(
+  userId: string,
+  file: File,
+): Promise<{ ok: boolean; nodeData?: IngestedModelNodeData; error?: string }> {
+  const api = assetsApi();
+  if (!api) {
+    return { ok: false, error: 'local assets API unavailable' };
+  }
+
+  const electronPath =
+    typeof file === 'object' && file && 'path' in file
+      ? String((file as File & { path?: string }).path || '')
+      : '';
+
+  if (electronPath && electronPath.length > 1) {
+    const copied = await importLocalModelFile(userId, electronPath, {
+      projectId: getCurrentProjectId(),
+      nodeType: 'modelAssetNode',
+    });
+    if (copied.ok && copied.localPath) {
+      return {
+        ok: true,
+        nodeData: {
+          glbUrl: copied.assetRef || toLocalAssetRef(copied.localPath),
+          nativeScenePath: copied.localPath,
+          localAssetPath: copied.localPath,
+          modelName: copied.fileName || file.name,
+          viewportBackend: 'jepow-native',
+          localPreviewUrl: '',
+        },
+      };
+    }
+  }
+
+  const buf = await file.arrayBuffer();
+  const saved = await saveLocalModelBuffer(userId, file.name, buf);
+  if (!saved.ok || !saved.localPath) {
+    return { ok: false, error: saved.error || '保存拖入模型失败' };
+  }
+  return {
+    ok: true,
+    nodeData: {
+      glbUrl: saved.assetRef || toLocalAssetRef(saved.localPath),
+      nativeScenePath: saved.localPath,
+      localAssetPath: saved.localPath,
+      modelName: saved.fileName || file.name,
+      viewportBackend: 'jepow-native',
+      localPreviewUrl: '',
+    },
+  };
+}
+
 /** Resolve jepow-local or jepow-asset ref; absolute paths pass through. */
 export function parseAssetPath(url: string): string | null {
   const local = parseLocalAssetRef(url);

@@ -29,10 +29,19 @@ export interface SceneInfo {
 /** @deprecated alias */
 export type BlenderSceneInfo = SceneInfo;
 
+export interface ViewportCamera {
+  yaw?: number;
+  pitch?: number;
+  distance?: number;
+  panX?: number;
+  panY?: number;
+}
+
 export interface RenderPreviewOptions {
   scenePath: string;
   width?: number;
   height?: number;
+  camera?: ViewportCamera;
 }
 
 export interface RenderPreviewResult {

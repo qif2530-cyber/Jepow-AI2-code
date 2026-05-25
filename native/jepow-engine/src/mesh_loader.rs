@@ -13,6 +13,12 @@ pub struct MeshData {
     pub indices: Vec<u32>,
 }
 
+/// 白膜灰度（法线明暗）
+fn clay_vertex_color(ny: f32) -> [f32; 3] {
+    let shade = (ny * 0.5 + 0.5).clamp(0.22, 1.0);
+    [shade, shade, shade]
+}
+
 pub fn load_meshes(path: &str) -> Result<MeshData> {
     let p = Path::new(path);
     if !p.exists() {
@@ -66,10 +72,9 @@ fn load_gltf_mesh(path: &str) -> Result<MeshData> {
 
             for (i, p) in positions.iter().enumerate() {
                 let n = normals.get(i).copied().unwrap_or([0.0, 1.0, 0.0]);
-                let shade = (n[1] * 0.5 + 0.5).clamp(0.15, 1.0);
                 vertices.push(Vertex {
                     pos: *p,
-                    color: [0.1 + shade * 0.55, 0.45 + shade * 0.45, 0.35 + shade * 0.35],
+                    color: clay_vertex_color(n[1]),
                 });
             }
 
@@ -107,39 +112,58 @@ fn load_fbx_mesh(path: &str) -> Result<MeshData> {
                 continue;
             }
             let mut tri_corners = Vec::new();
-            ufbx::triangulate_face_vec(&mut tri_corners, mesh, *face);
+            let num_tris = ufbx::triangulate_face_vec(&mut tri_corners, mesh, *face);
+            if num_tris == 0 {
+                for t in 0..(face.num_indices.saturating_sub(2)) {
+                    tri_corners.push(0);
+                    tri_corners.push(t + 1);
+                    tri_corners.push(t + 2);
+                }
+                for c in &mut tri_corners {
+                    *c = face.index_begin + *c;
+                }
+            }
+
             for tri in tri_corners.chunks(3) {
                 if tri.len() < 3 {
                     continue;
                 }
                 let mut tri_idx = Vec::with_capacity(3);
-                for &local in tri {
-                    let corner = (face.index_begin + local) as usize;
+                for &mesh_ix in tri {
+                    let corner = mesh_ix as usize;
+                    if corner >= pos_el.indices.len() {
+                        continue;
+                    }
                     let vi = pos_el.indices[corner] as usize;
+                    if vi >= pos_el.values.len() {
+                        continue;
+                    }
                     let p = pos_el[vi];
                     let n = normal_el
                         .and_then(|el| {
-                            el.indices
-                                .get(corner)
-                                .map(|&ni| el[ni as usize])
+                            if corner >= el.indices.len() {
+                                return None;
+                            }
+                            let ni = el.indices[corner] as usize;
+                            if ni >= el.values.len() {
+                                return None;
+                            }
+                            Some(el[ni])
                         })
                         .unwrap_or(ufbx::Vec3 {
                             x: 0.0,
                             y: 1.0,
                             z: 0.0,
                         });
-                    let shade = (n.y as f32 * 0.5 + 0.5).clamp(0.15, 1.0);
                     tri_idx.push(vertices.len() as u32);
                     vertices.push(Vertex {
                         pos: [p.x as f32, p.y as f32, p.z as f32],
-                        color: [
-                            0.1 + shade * 0.55,
-                            0.45 + shade * 0.45,
-                            0.35 + shade * 0.35,
-                        ],
+                        color: clay_vertex_color(n.y as f32),
                     });
                 }
-                indices.extend(tri_idx);
+                if tri_idx.len() == 3 {
+                    indices.extend(tri_idx);
+                }
             }
         }
     }
@@ -164,10 +188,9 @@ fn load_obj_mesh(path: &str) -> Result<MeshData> {
             } else {
                 1.0
             };
-            let shade = (ny * 0.5 + 0.5).clamp(0.15, 1.0);
             vertices.push(Vertex {
                 pos: [px, py, pz],
-                color: [0.1 + shade * 0.55, 0.45 + shade * 0.45, 0.35 + shade * 0.35],
+                color: clay_vertex_color(ny),
             });
         }
         for idx in &mesh.indices {

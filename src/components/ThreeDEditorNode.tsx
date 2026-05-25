@@ -631,7 +631,11 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
           </div>
         ) : useDesktopNativeRenderer ? (
           <div className="w-full h-full min-h-[480px]">
-            <JepowViewportPreview scenePath={resolvedScenePath} height={480} />
+            <JepowViewportPreview
+              scenePath={resolvedScenePath}
+              height={480}
+              mode="orbit"
+            />
           </div>
         ) : canvasMounted && renderActive && glbToRender ? (
           <Canvas

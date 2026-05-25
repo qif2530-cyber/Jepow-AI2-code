@@ -50,10 +50,16 @@ export const jepowNativeViewportEngine: ViewportEngine = {
   async renderPreview(opts: RenderPreviewOptions): Promise<RenderPreviewResult> {
     const api = vp();
     if (!api) return { ok: false, error: 'viewport API 不可用' };
+    const cam = opts.camera;
     return api.renderPreview({
       scenePath: opts.scenePath,
       width: opts.width,
       height: opts.height,
+      cameraYaw: cam?.yaw,
+      cameraPitch: cam?.pitch,
+      cameraDistance: cam?.distance,
+      panX: cam?.panX,
+      panY: cam?.panY,
     }) as Promise<RenderPreviewResult>;
   },
 

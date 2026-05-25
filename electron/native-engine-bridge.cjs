@@ -164,6 +164,11 @@ async function renderPreview({ scenePath, width = 640, height = 480 }) {
     outputPath,
     width,
     height,
+    cameraYaw: opts.cameraYaw,
+    cameraPitch: opts.cameraPitch,
+    cameraDistance: opts.cameraDistance,
+    panX: opts.panX,
+    panY: opts.panY,
   });
   if (!result.ok) return result;
   return {

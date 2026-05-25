@@ -437,7 +437,11 @@ export function ModelAssetNode({ id, data, selected }: ModelAssetNodeProps) {
               </p>
             </div>
           ) : useDesktopNativeRenderer ? (
-            <JepowViewportPreview scenePath={scenePathForNative} height={220} />
+            <JepowViewportPreview
+              scenePath={scenePathForNative}
+              height={220}
+              mode="turntable"
+            />
           ) : (
           <>
           <style dangerouslySetInnerHTML={{ __html: `

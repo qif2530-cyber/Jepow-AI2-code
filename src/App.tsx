@@ -84,11 +84,14 @@ import {
   isCanvasOnlyMode,
   canUseInfiniteCanvas,
   shouldStoreProjectsLocally,
+  shouldUseLocalCanvasAssets,
   openJepowWeb,
   DESKTOP_WEB_PATHS,
   isDesktopLoginOnWeb,
   startDesktopBrowserLogin,
 } from "./lib/runtime";
+import { ingestDroppedModelFile } from "./lib/local-assets";
+import { getLocalUserId } from "./lib/local-user-id";
 import {
   listLocalProjects,
   loadLocalProject,
@@ -3524,18 +3527,55 @@ export default function App() {
           return;
 
         if (isModel) {
-          const localBlobUrl = URL.createObjectURL(file);
           const nodeId = `model-${Date.now()}-${index}`;
+          const position = {
+            x: dropPosition.x + index * 20,
+            y: dropPosition.y + index * 20,
+          };
 
+          if (shouldUseLocalCanvasAssets()) {
+            void (async () => {
+              try {
+                const ingested = await ingestDroppedModelFile(
+                  getLocalUserId(),
+                  file,
+                );
+                if (!ingested.ok || !ingested.nodeData) {
+                  toast.error(
+                    ingested.error ||
+                      "拖入模型未能写入本地工程，请用「从磁盘选择大场景」",
+                  );
+                  return;
+                }
+                setNodes((nds) => [
+                  ...nds,
+                  {
+                    id: nodeId,
+                    type: "modelAssetNode",
+                    position,
+                    data: ingested.nodeData,
+                  },
+                ]);
+                toast.success(
+                  `已导入 ${ingested.nodeData.modelName} 到工程 assets/models`,
+                );
+              } catch (err: unknown) {
+                console.error("Desktop model drop failed:", err);
+                toast.error(
+                  err instanceof Error ? err.message : "拖入模型失败",
+                );
+              }
+            })();
+            return;
+          }
+
+          const localBlobUrl = URL.createObjectURL(file);
           setNodes((nds) => [
             ...nds,
             {
               id: nodeId,
               type: "modelAssetNode",
-              position: {
-                x: dropPosition.x + index * 20,
-                y: dropPosition.y + index * 20,
-              },
+              position,
               data: {
                 glbUrl: localBlobUrl,
                 modelName: file.name,
@@ -3545,30 +3585,36 @@ export default function App() {
 
           const formData = new FormData();
           formData.append("file", file);
-          api.post("/upload", formData, {
-            headers: { "Content-Type": "multipart/form-data" },
-            showToast: false,
-          } as any)
-          .then((res) => {
-            if (res.data && res.data.url) {
-              setNodes((nds) =>
-                nds.map((n) =>
-                  n.id === nodeId
-                    ? { ...n, data: { ...n.data, glbUrl: res.data.url } }
-                    : n
-                )
+          api
+            .post("/upload", formData, {
+              headers: { "Content-Type": "multipart/form-data" },
+              showToast: false,
+            } as any)
+            .then((res) => {
+              if (res.data && res.data.url) {
+                setNodes((nds) =>
+                  nds.map((n) =>
+                    n.id === nodeId
+                      ? { ...n, data: { ...n.data, glbUrl: res.data.url } }
+                      : n,
+                  ),
+                );
+              }
+            })
+            .catch((err) => {
+              console.warn(
+                "Model background upload failed, keeping memory blob preview:",
+                err,
               );
-            }
-          })
-          .catch((err) => {
-            console.warn("Model background upload failed, keeping memory blob preview:", err);
-            const statusText = err.response?.status === 413
-              ? " (大小超出服务器限制)"
-              : " (服务器存储或通信限制)";
-            toast.info(`模型文件较重${statusText}，已启用本地浏览器内存极速加载，保存此项目已正常放行。`, {
-              duration: 8000
+              const statusText =
+                err.response?.status === 413
+                  ? " (大小超出服务器限制)"
+                  : " (服务器存储或通信限制)";
+              toast.info(
+                `模型文件较重${statusText}，已启用本地浏览器内存极速加载，保存此项目已正常放行。`,
+                { duration: 8000 },
+              );
             });
-          });
 
           return;
         }

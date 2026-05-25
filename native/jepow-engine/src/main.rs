@@ -74,6 +74,26 @@ fn cmd_open_scene(payload: &serde_json::Value) {
     }
 }
 
+fn parse_camera(payload: &serde_json::Value) -> render::ViewCamera {
+    let mut cam = render::ViewCamera::default();
+    if let Some(v) = payload.get("cameraYaw").and_then(|v| v.as_f64()) {
+        cam.yaw = v as f32;
+    }
+    if let Some(v) = payload.get("cameraPitch").and_then(|v| v.as_f64()) {
+        cam.pitch = v as f32;
+    }
+    if let Some(v) = payload.get("cameraDistance").and_then(|v| v.as_f64()) {
+        cam.distance = v as f32;
+    }
+    if let Some(v) = payload.get("panX").and_then(|v| v.as_f64()) {
+        cam.pan_x = v as f32;
+    }
+    if let Some(v) = payload.get("panY").and_then(|v| v.as_f64()) {
+        cam.pan_y = v as f32;
+    }
+    cam
+}
+
 fn cmd_render_frame(payload: &serde_json::Value) {
     let output_path = match payload.get("outputPath").and_then(|v| v.as_str()) {
         Some(p) => p,
@@ -84,7 +104,8 @@ fn cmd_render_frame(payload: &serde_json::Value) {
 
     let scene_path = payload.get("scenePath").and_then(|v| v.as_str());
 
-    match render::render_viewport_frame(output_path, width, height, scene_path) {
+    let camera = parse_camera(payload);
+    match render::render_viewport_frame(output_path, width, height, scene_path, camera) {
         Ok(()) => emit(serde_json::json!({
             "imagePath": output_path,
             "width": width,
