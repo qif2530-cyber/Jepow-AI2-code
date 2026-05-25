@@ -1,0 +1,5 @@
+{
+  "name": "jepow AI",
+  "description": "Professional design agent integrating AI creation, infinite canvas, real-time collaboration, and an interactive Vectary 3D workstation supporting Image-to-3D GLB modeling, PBR textures generation, OrbitControls viewports, and high-fidelity AI light rendering.",
+  "requestFramePermissions": []
+}

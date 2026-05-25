@@ -1,0 +1,123 @@
+{
+  "name": "react-example",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "main": "electron/main.cjs",
+  "scripts": {
+    "dev": "tsx server.ts",
+    "build": "vite build",
+    "preview": "vite preview",
+    "clean": "rm -rf dist",
+    "lint": "tsc --noEmit",
+    "start": "NODE_ENV=production tsx server.ts",
+    "canvas": "cross-env JEPOW_WEB_URL=https://jepow.com electron electron/main.cjs",
+    "desktop": "cross-env JEPOW_WEB_URL=https://jepow.com electron electron/main.cjs",
+    "desktop:local": "electron electron/main.cjs",
+    "desktop:remote": "cross-env JEPOW_WEB_URL=https://jepow.com electron electron/main.cjs",
+    "desktop:prod": "cross-env JEPOW_DESKTOP_PROD=1 electron electron/main.cjs",
+    "desktop:build": "npm run build && electron-builder",
+    "push:github": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/push-github.ps1",
+    "seed-ai-works": "tsx scripts/seed_ai_works.ts",
+    "seed": "tsx seed.ts",
+    "seed-ai": "NODE_ENV=production tsx fill_ai_data.ts"
+  },
+  "dependencies": {
+    "@alicloud/dysmsapi20170525": "^4.5.1",
+    "@alicloud/openapi-client": "^0.4.15",
+    "@alicloud/pop-core": "^1.8.0",
+    "@alicloud/tea-util": "^1.4.11",
+    "@base-ui/react": "^1.3.0",
+    "@fontsource-variable/geist": "^5.2.8",
+    "@google/genai": "^1.29.0",
+    "@react-three/drei": "^10.7.7",
+    "@react-three/fiber": "^9.5.0",
+    "@tailwindcss/vite": "^4.1.14",
+    "@types/multer": "^2.1.0",
+    "@vitejs/plugin-react": "^5.0.4",
+    "@xyflow/react": "^12.10.2",
+    "alipay-sdk": "^4.14.0",
+    "axios": "^1.13.6",
+    "bcryptjs": "^3.0.3",
+    "class-variance-authority": "^0.7.1",
+    "clsx": "^2.1.1",
+    "cors": "^2.8.6",
+    "dagre": "^0.8.5",
+    "dotenv": "^17.3.1",
+    "express": "^4.22.1",
+    "fabric": "^7.2.0",
+    "jsonwebtoken": "^9.0.3",
+    "lucide-react": "^0.546.0",
+    "lz-string": "^1.5.0",
+    "motion": "^12.38.0",
+    "multer": "^2.1.1",
+    "next-themes": "^0.4.6",
+    "qrcode.react": "^4.2.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "react-is": "^19.2.6",
+    "recharts": "^3.8.1",
+    "shadcn": "^4.1.0",
+    "socket.io": "^4.8.3",
+    "socket.io-client": "^4.8.3",
+    "sonner": "^2.0.7",
+    "tailwind-merge": "^3.5.0",
+    "three": "^0.183.2",
+    "tw-animate-css": "^1.4.0",
+    "vite": "^6.2.0",
+    "wechatpay-node-v3": "^2.2.1"
+  },
+  "devDependencies": {
+    "@eslint/eslintrc": "^3.3.5",
+    "@types/bcryptjs": "^2.4.6",
+    "@types/cors": "^2.8.19",
+    "@types/express": "^4.17.25",
+    "@types/jsonwebtoken": "^9.0.10",
+    "@types/node": "^22.14.0",
+    "@types/three": "^0.183.1",
+    "autoprefixer": "^10.4.21",
+    "cross-env": "^7.0.3",
+    "electron": "^35.7.5",
+    "electron-builder": "^25.1.8",
+    "eslint": "^10.2.1",
+    "eslint-plugin-react-hooks": "^7.1.1",
+    "tailwindcss": "^4.1.14",
+    "tsx": "^4.21.0",
+    "typescript": "~5.8.2",
+    "vite": "^6.2.0",
+    "vite-plugin-pwa": "^1.2.0"
+  },
+  "build": {
+    "appId": "com.jepow.ai.desktop",
+    "productName": "Jepow AI",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "electron/**/*",
+      "server.ts",
+      "package.json",
+      "node_modules/**/*"
+    ],
+    "asarUnpack": [
+      "node_modules/tsx/**/*",
+      "node_modules/@esbuild/**/*"
+    ],
+    "win": {
+      "target": [
+        "nsis"
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
+    },
+    "protocols": [
+      {
+        "name": "Jepow AI Auth",
+        "schemes": ["jepow"]
+      }
+    ]
+  }
+}

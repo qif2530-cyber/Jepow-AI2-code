@@ -1,0 +1,13 @@
+node_modules/
+build/
+dist/
+release/
+coverage/
+.DS_Store
+*.log
+.env*
+!.env.example
+# db.json
+db.json
+uploads/
+

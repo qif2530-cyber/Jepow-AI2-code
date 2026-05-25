@@ -1,0 +1,19 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "启动无限画布 (连接 jepow.com)",
+      "type": "node-terminal",
+      "request": "launch",
+      "command": "cmd /c npm run canvas",
+      "cwd": "${workspaceFolder}"
+    },
+    {
+      "name": "【可选】本地全套 API+网站 (仅改 server 时用)",
+      "type": "node-terminal",
+      "request": "launch",
+      "command": "cmd /c npm run desktop:local",
+      "cwd": "${workspaceFolder}"
+    }
+  ]
+}

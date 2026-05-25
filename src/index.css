@@ -1,0 +1,421 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;600&display=swap');
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+  
+  --color-brand: #FFFFFF;
+  --color-bg-dark: #000000;
+  --color-card-bg: #111111;
+  --color-card-border: #222222;
+}
+
+@layer base {
+  body {
+    @apply bg-white text-neutral-900 antialiased overflow-x-hidden;
+  }
+}
+
+.saturn-ring {
+  background: radial-gradient(circle at center, transparent 40%, rgba(255,255,255,0.05) 45%, rgba(255,255,255,0.1) 50%, rgba(255,255,255,0.05) 55%, transparent 60%);
+  transform: rotateX(75deg);
+}
+
+.custom-scrollbar::-webkit-scrollbar {
+  width: 6px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background: #ccc;
+  border-radius: 10px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: #bbb;
+}
+
+.react-flow__edge-path {
+  stroke-width: 2px;
+  stroke: var(--border);
+  transition: stroke 0.3s ease;
+}
+
+.react-flow__edge.animated .react-flow__edge-path {
+  stroke-dasharray: 5;
+  animation: dash 1s linear infinite;
+}
+
+@keyframes dash {
+  from {
+    stroke-dashoffset: 10;
+  }
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
+@keyframes edge-flow {
+  from {
+    stroke-dashoffset: 16;
+  }
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
+.react-flow__edge.selected .react-flow__edge-path {
+  stroke: var(--primary) !important;
+  stroke-width: 3px !important;
+}
+
+.react-flow__edge:hover .edge-delete-button {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.edge-delete-button {
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.2s;
+}
+
+.react-flow__attribution {
+  display: none !important;
+}
+
+.react-flow__handle {
+  width: 10px !important;
+  height: 10px !important;
+  border-radius: 50% !important;
+  background-color: var(--background) !important;
+  border: 2px solid var(--border) !important;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1) !important;
+}
+
+.react-flow__handle:hover {
+  background-color: var(--primary) !important;
+  border-color: var(--primary) !important;
+  transform: scale(1.3);
+  box-shadow: 0 0 10px var(--primary);
+}
+
+.react-flow__handle-left {
+  left: -6px !important;
+}
+
+.react-flow__handle-right {
+  right: -6px !important;
+}
+
+.selected-glow {
+  outline: 2px solid var(--primary) !important;
+  box-shadow: 0 0 25px -5px var(--primary) !important;
+}
+
+.react-flow__node,
+.react-flow__node.selected,
+.react-flow__node.selected:hover,
+.react-flow__node:focus,
+.react-flow__node:focus-visible,
+.react-flow__node-default,
+.react-flow__node-input,
+.react-flow__node-output,
+.react-flow__node-default.selected,
+.react-flow__node-input.selected,
+.react-flow__node-output.selected {
+  user-select: none !important;
+  border: none !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  outline: none !important;
+  padding: 0 !important;
+}
+
+.react-flow__node input, 
+.react-flow__node textarea,
+.react-flow__node [contenteditable="true"] {
+  user-select: text;
+}
+
+/* Hardware Aesthetic Utilities */
+.hardware-card {
+  background-color: var(--card);
+  border: 1px solid var(--border);
+  box-shadow: 0 10px 30px -10px rgba(0, 0, 0, 0.5);
+}
+
+.hardware-label {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--muted-foreground);
+}
+
+.hardware-value {
+  font-family: var(--font-mono);
+}
+
+.dashed-track {
+  border: 1px dashed var(--border);
+  border-radius: 50%;
+}
+
+.recording-glow {
+  box-shadow: 0 0 15px rgba(239, 68, 68, 0.5);
+}
+
+@theme inline {
+  --font-heading: var(--font-sans);
+  --font-sans: 'Geist Variable', sans-serif;
+  --font-mono: 'JetBrains Mono', monospace;
+  
+  --color-sidebar-ring: var(--sidebar-ring);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar: var(--sidebar);
+  --color-chart-5: var(--chart-5);
+  --color-chart-4: var(--chart-4);
+  --color-chart-3: var(--chart-3);
+  --color-chart-2: var(--chart-2);
+  --color-chart-1: var(--chart-1);
+  --color-ring: var(--ring);
+  --color-input: var(--input);
+  --color-border: var(--border);
+  --color-destructive: var(--destructive);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-accent: var(--accent);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-muted: var(--muted);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-secondary: var(--secondary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-primary: var(--primary);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-popover: var(--popover);
+  --color-card-foreground: var(--card-foreground);
+  --color-card: var(--card);
+  --color-foreground: var(--foreground);
+  --color-background: var(--background);
+  
+  --radius-sm: calc(var(--radius) * 0.6);
+  --radius-md: calc(var(--radius) * 0.8);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) * 1.4);
+  --radius-2xl: calc(var(--radius) * 1.8);
+  --radius-3xl: calc(var(--radius) * 2.2);
+  --radius-4xl: calc(var(--radius) * 2.6);
+}
+
+:root {
+  --background: #FFFFFF;
+  --foreground: #000000;
+  --card: #151619;
+  --card-foreground: #FFFFFF;
+  --popover: #1A1B1E;
+  --popover-foreground: #FFFFFF;
+  --primary: #3b82f6;
+  --primary-foreground: #FFFFFF;
+  --secondary: #2A2B2F;
+  --secondary-foreground: #FFFFFF;
+  --muted: #2A2B2F;
+  --muted-foreground: #8E9299;
+  --accent: #3b82f6;
+  --accent-foreground: #FFFFFF;
+  --destructive: #ef4444;
+  --border: #2A2B2F;
+  --input: #2A2B2F;
+  --ring: #3b82f6;
+  --radius: 0.5rem;
+}
+
+.dark {
+  --background: #FFFFFF;
+  --foreground: #000000;
+  --card: #151619;
+  --card-foreground: #FFFFFF;
+  --popover: #1A1B1E;
+  --popover-foreground: #FFFFFF;
+  --primary: #3b82f6;
+  --primary-foreground: #FFFFFF;
+  --secondary: #2A2B2F;
+  --secondary-foreground: #FFFFFF;
+  --muted: #2A2B2F;
+  --muted-foreground: #8E9299;
+  --accent: #3b82f6;
+  --accent-foreground: #FFFFFF;
+  --destructive: #ef4444;
+  --border: #2A2B2F;
+  --input: #2A2B2F;
+  --ring: #3b82f6;
+}
+
+@layer utilities {
+  .animate-sss-glow {
+    animation: sss-glow 1.5s ease-in-out infinite alternate;
+  }
+  .animate-ss-glow {
+    animation: ss-glow 2.5s ease-in-out infinite alternate;
+  }
+  .animate-shine-sweep {
+    animation: shine-sweep 2.5s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+  }
+}
+
+@keyframes sss-glow {
+  0% { opacity: 0.6; transform: scale(1); }
+  100% { opacity: 1; transform: scale(1.01); }
+}
+
+@keyframes ss-glow {
+  0% { opacity: 0.7; transform: scale(1); }
+  100% { opacity: 1; transform: scale(1.005); }
+}
+
+@keyframes shine-sweep {
+  0% { transform: translateX(-150%) skewX(-30deg); }
+  50%, 100% { transform: translateX(250%) skewX(-30deg); }
+}
+
+@keyframes flip-in {
+  0% { transform: perspective(2000px) rotateY(-90deg) scale(0.9); opacity: 0; }
+  100% { transform: perspective(2000px) rotateY(0deg) scale(1); opacity: 1; }
+}
+
+.animate-flip-in {
+  animation: flip-in 0.6s cubic-bezier(0.2, 0.8, 0.2, 1) forwards;
+  transform-style: preserve-3d;
+  backface-visibility: hidden;
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply bg-background text-foreground;
+  }
+  html {
+    @apply font-sans;
+  }
+}
+
+@keyframes gold-flow {
+  0% { background-position: 0% 50%; }
+  50% { background-position: 100% 50%; }
+  100% { background-position: 0% 50%; }
+}
+
+.animate-gold-flow {
+  background: linear-gradient(
+    90deg,
+    #8A6E2F 0%,
+    #CBB276 25%,
+    #F2E2B5 50%,
+    #CBB276 75%,
+    #8A6E2F 100%
+  );
+  background-size: 200% 100%;
+  animation: gold-flow 3s linear infinite;
+}
+
+.gold-text-flow {
+  background: linear-gradient(
+    90deg,
+    #FFD700 0%,
+    #FFFACD 25%,
+    #FFD700 50%,
+    #FFFACD 75%,
+    #FFD700 100%
+  );
+  background-size: 200% auto;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: gold-flow 2s linear infinite;
+}
+
+@keyframes pulse-slow {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.9; transform: scale(1.02); }
+}
+
+.animate-pulse-slow {
+  animation: pulse-slow 3s ease-in-out infinite;
+}
+
+.glass-panel {
+  background: rgba(255, 255, 255, 0.8);
+  backdrop-filter: blur(12px);
+  border: 1px solid rgba(0, 0, 0, 0.1);
+}
+
+.mission-control-header {
+  background: #ffffff;
+  border-bottom: 1px solid #E5E7EB;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.05);
+}
+
+/* Custom Scrollbar Utility */
+.custom-scrollbar::-webkit-scrollbar {
+  width: 8px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-track {
+  background: rgba(0, 0, 0, 0.2);
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 4px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.2);
+}
+
+/* Global mobile scrollbar removal */
+@media (max-width: 768px) {
+  html, body, * {
+    -ms-overflow-style: none !important;
+    scrollbar-width: none !important;
+  }
+  html::-webkit-scrollbar, body::-webkit-scrollbar, *::-webkit-scrollbar {
+    display: none !important;
+    width: 0 !important;
+    height: 0 !important;
+  }
+}
+
+.scrollbar-hide {
+  -ms-overflow-style: none !important;
+  scrollbar-width: none !important;
+}
+
+.scrollbar-hide::-webkit-scrollbar {
+  display: none !important;
+  width: 0 !important;
+  height: 0 !important;
+}
+
+@keyframes marquee {
+  0% { transform: translateX(0%); }
+  100% { transform: translateX(-33.333333%); }
+}
+
+.animate-marquee {
+  animation: marquee 30s linear infinite;
+  will-change: transform;
+}
+
+.animate-marquee:hover {
+  animation-play-state: paused;
+}

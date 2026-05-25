@@ -1,0 +1,49 @@
+server {
+    listen 80;
+    server_name jepow.com www.jepow.com;
+    client_max_body_size 500M;
+
+    # 强制将所有 HTTP 请求重定向到 HTTPS
+    return 301 https://$host$request_uri;
+}
+
+server {
+    listen 443 ssl;
+    server_name jepow.com www.jepow.com;
+    client_max_body_size 500M;
+
+    # 证书文件路径 (需替换为您实际上传到服务器的路径)
+    ssl_certificate /etc/nginx/cert/www.jepow.com.pem;
+    ssl_certificate_key /etc/nginx/cert/www.jepow.com.key;
+
+    # SSL 优化配置
+    ssl_session_timeout 5m;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_ciphers ECDHE-RSA-AES128-GCM-SHA256:HIGH:!aNULL:!MD5:!RC4:!DHE;
+    ssl_prefer_server_ciphers on;
+
+    location / {
+        proxy_pass http://localhost:3000;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection 'upgrade';
+        proxy_set_header Host $host;
+        proxy_cache_bypass $http_upgrade;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    }
+
+    # 静态资源缓存
+    location /assets/ {
+        proxy_pass http://localhost:3000/assets/;
+        expires 1y;
+        add_header Cache-Control "public, no-transform";
+    }
+
+    # 上传的文件
+    location /uploads/ {
+        proxy_pass http://localhost:3000/uploads/;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        add_header Cache-Control "public, no-transform";
+    }
+}

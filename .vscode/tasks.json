@@ -1,0 +1,26 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "启动无限画布 (jepow.com)",
+      "type": "npm",
+      "script": "canvas",
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated",
+        "focus": true
+      },
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      }
+    },
+    {
+      "label": "同步到 GitHub",
+      "type": "npm",
+      "script": "push:github",
+      "problemMatcher": []
+    }
+  ]
+}

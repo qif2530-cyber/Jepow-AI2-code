@@ -1,0 +1,139 @@
+49-import { PhotoEditorNode } from './components/PhotoEditorNode';
+50-import { useHistory } from './hooks/useHistory';
+51-import { KLING_MODELS, KlingModelId } from './lib/kling-models';
+52-import { socket } from './lib/socket';
+53-
+54:import { AuthModal } from './components/AuthModal';
+55-import { UserActionModal } from './components/UserActionModal';
+56-import { ProjectListModal } from './components/ProjectListModal';
+57-import { RechargeModal } from './components/RechargeModal';
+58-import { PostViewModal } from './components/PostViewModal';
+59-import { CreditsModal } from './components/CreditsModal';
+--
+685-        socket.off('connect', handleConnect);
+686-      };
+687-    }
+688-  }, [user?.id]);
+689-  const [token, setToken] = useState<string | null>(localStorage.getItem('ais-token'));
+690:  const [showAuthModal, setShowAuthModal] = useState(false);
+691-  const [showRechargeModal, setShowRechargeModal] = useState(false);
+692-  const [selectedRechargePkg, setSelectedRechargePkg] = useState<any>(null);
+693-  const [showProjectList, setShowProjectList] = useState(false);
+694-  const [showAdminPanel, setShowAdminPanel] = useState(false);
+695-  const [showPublicProfile, setShowPublicProfile] = useState<string | null>(null);
+--
+895-    }
+896-  };
+897-
+898-  const handleCloudSave = useCallback(async (isAuto = false) => {
+899-    if (!token) {
+900:      if (!isAuto) setShowAuthModal(true);
+901-      return;
+902-    }
+903-
+904-    try {
+905-      const projectData = {
+--
+953-    return () => window.removeEventListener('keydown', handleKeyDown);
+954-  }, [handleCloudSave]);
+955-
+956-  const handleLoadCloudProject = async (id: string) => {
+957-    if (!user) {
+958:      setShowAuthModal(true);
+959-      return;
+960-    }
+961-    
+962-    // Check canvas access
+963-    if (siteConfig?.infiniteCanvasEnabled === false && user.role !== 'admin' && user.role !== 'super_admin') {
+--
+1080-    }
+1081-  }, [nodes, edges, canvasColor]);
+1082-
+1083-  const handleLoadProject = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+1084-    if (!user) {
+1085:      setShowAuthModal(true);
+1086-      e.target.value = '';
+1087-      return;
+1088-    }
+1089-    const file = e.target.files?.[0];
+1090-    if (!file) return;
+--
+1128-    e.target.value = '';
+1129-  }, [reactFlowInstance]);
+1130-
+1131-  const handleNewProject = useCallback(() => {
+1132-    if (!user) {
+1133:      setShowAuthModal(true);
+1134-      setShowNewProjectConfirm(false);
+1135-      return;
+1136-    }
+1137-
+1138-    // Check canvas access
+--
+4853-  }, [showUserMenu]);
+4854-
+4855-  useEffect(() => {
+4856-    if (!user && view === 'canvas') {
+4857-      setView('landing');
+4858:      setShowAuthModal(true);
+4859-    }
+4860-  }, [user, view]);
+4861-
+4862-  return (
+4863-    <div 
+--
+4906-            setCurrentProjectId(null);
+4907-            setProjectName('UNTITLED_PROTO');
+4908-            setView('landing');
+4909-            toast.info("已成功登出");
+4910-          }}
+4911:          onLogin={() => setShowAuthModal(true)}
+4912-          onOpenAdmin={() => pushView('admin')}
+4913-          onOpenProfile={(uid) => pushView('profile', uid || user?.id || null)}
+4914-          onCloseProfile={() => popView()}
+4915-          onOpenCredits={() => pushView('credits')}
+4916-          onUpdateProfile={handleUpdateProfile}
+--
+5045-                            setShowLayoutMenu(false);
+5046-                            setShowAiChat(false);
+5047-                          }
+5048-                          setShowUserMenu(nextState);
+5049-                        } else {
+5050:                          setShowAuthModal(true);
+5051-                        }
+5052-                      }} 
+5053-                      title={user ? `代理: ${user.username}` : "身份验证"}
+5054-                    >
+5055-                      <User className={`w-3.5 h-3.5 md:w-4 md:h-4 mb-0.5 ${user ? 'text-blue-400' : ''}`} />
+--
+5984-          </React.Suspense>
+5985-        </ErrorBoundary>
+5986-      )}
+5987-
+5988-      {/* --- User Management Modals --- */}
+5989:      {showAuthModal && (
+5990:        <AuthModal 
+5991:          onClose={() => setShowAuthModal(false)} 
+5992-          onSuccess={(userData, token) => {
+5993-            setUser(userData);
+5994-            setToken(token);
+5995-            localStorage.setItem('ais-token', token);
+5996-            localStorage.setItem('ais-user', JSON.stringify(userData));
+5997:            setShowAuthModal(false);
+5998-            toast.success(`AUTHENTICATION_RECOGNIZED: ${userData.username}`);
+5999-          }} 
+6000-        />
+6001-      )}
+6002-
+--
+6206-        {viewingPost && (
+6207-          <PostViewModal
+6208-            key={viewingPost.id}
+6209-            post={viewingPost}
+6210-            currentUser={user}
+6211:            onLogin={() => setShowAuthModal(true)}
+6212-            onClose={popView}
+6213-            onPurchaseProject={(postId) => {
+6214-              // Handle purchase
+6215-            }}
+6216-            onOpenProfile={(id) => {

@@ -1,0 +1,5 @@
+{
+  "npm.enableRunFromFolder": true,
+  "npm.autoDetect": "on",
+  "terminal.integrated.defaultProfile.windows": "Command Prompt"
+}
