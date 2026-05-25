@@ -47,30 +47,40 @@ declare global {
         importFile: (
           userId: string,
           sourcePath: string,
+          projectId?: string | null,
+          nodeType?: string,
         ) => Promise<{
           ok: boolean;
           localPath?: string;
           fileName?: string;
+          assetRef?: string;
+          category?: string;
           error?: string;
         }>;
         saveBuffer: (
           userId: string,
           fileName: string,
           base64: string,
+          projectId?: string | null,
+          nodeType?: string,
         ) => Promise<{
           ok: boolean;
           localPath?: string;
           fileName?: string;
+          assetRef?: string;
           error?: string;
         }>;
         saveBufferRaw: (
           userId: string,
           fileName: string,
           arrayBuffer: ArrayBuffer,
+          projectId?: string | null,
+          nodeType?: string,
         ) => Promise<{
           ok: boolean;
           localPath?: string;
           fileName?: string;
+          assetRef?: string;
           error?: string;
         }>;
         readBuffer: (localPath: string) => Promise<{
@@ -86,6 +96,7 @@ declare global {
             localAssetPath?: string;
             glbUrl?: string;
             modelName?: string;
+            projectId?: string | null;
           },
         ) => Promise<{ ok: boolean; scenePath?: string; error?: string }>;
       };

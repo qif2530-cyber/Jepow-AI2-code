@@ -3,7 +3,11 @@
  * Cloud API is only for auth, profile, credits, AI generation.
  */
 
+import { AI_ASSET_PREFIX, parseAiAssetRef } from './ai-project-format';
+import { getCurrentProjectId } from './current-project';
 import { isCanvasOnlyMode } from './runtime';
+
+export { AI_ASSET_PREFIX, parseAiAssetRef };
 
 function assetsApi() {
   return window.jepowDesktop?.assets;
@@ -25,10 +29,18 @@ export async function pickLocalModelFile(): Promise<{
 export async function importLocalModelFile(
   userId: string,
   sourcePath: string,
-): Promise<{ ok: boolean; localPath?: string; fileName?: string; error?: string }> {
+  options?: { projectId?: string | null; nodeType?: string },
+): Promise<{
+  ok: boolean;
+  localPath?: string;
+  fileName?: string;
+  assetRef?: string;
+  error?: string;
+}> {
   const api = assetsApi();
   if (!api) return { ok: false, error: 'local assets API unavailable' };
-  return api.importFile(userId, sourcePath);
+  const projectId = options?.projectId ?? getCurrentProjectId();
+  return api.importFile(userId, sourcePath, projectId, options?.nodeType);
 }
 
 export async function saveLocalModelBuffer(
@@ -38,8 +50,9 @@ export async function saveLocalModelBuffer(
 ): Promise<{ ok: boolean; localPath?: string; fileName?: string; error?: string }> {
   const api = assetsApi();
   if (!api) return { ok: false, error: 'local assets API unavailable' };
+  const projectId = getCurrentProjectId();
   if (api.saveBufferRaw) {
-    return api.saveBufferRaw(userId, fileName, buffer);
+    return api.saveBufferRaw(userId, fileName, buffer, projectId);
   }
   if (buffer.byteLength > 8 * 1024 * 1024) {
     return {
@@ -51,7 +64,7 @@ export async function saveLocalModelBuffer(
   let binary = '';
   for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
   const base64 = btoa(binary);
-  return api.saveBuffer(userId, fileName, base64);
+  return api.saveBuffer(userId, fileName, base64, projectId);
 }
 
 export async function readLocalModelBuffer(
@@ -79,4 +92,13 @@ export function toLocalAssetRef(absolutePath: string): string {
 export function parseLocalAssetRef(url: string): string | null {
   if (!url.startsWith(LOCAL_ASSET_PREFIX)) return null;
   return url.slice(LOCAL_ASSET_PREFIX.length);
+}
+
+/** Resolve jepow-local or jepow-asset ref; absolute paths pass through. */
+export function parseAssetPath(url: string): string | null {
+  const local = parseLocalAssetRef(url);
+  if (local) return local;
+  if (url.startsWith(AI_ASSET_PREFIX)) return url;
+  if (/^[a-zA-Z]:[\\/]/.test(url) || url.startsWith('\\\\')) return url;
+  return null;
 }

@@ -1458,7 +1458,7 @@ export default function App() {
       const url = URL.createObjectURL(blob);
       const link = document.createElement("a");
       link.href = url;
-      link.download = `project-${new Date().toISOString().split("T")[0]}.aiswork`;
+      link.download = `project-${new Date().toISOString().split("T")[0]}.AI.json`;
 
       // APPEND LINK TO DOM_TREE TO INITIATE TRIGGER
       document.body.appendChild(link);
@@ -1471,7 +1471,7 @@ export default function App() {
       }, 100);
 
       toast.success("项目已加密并导出", {
-        description: "FORMAT: .aiswork (NEXUS_ENCRYPTED_DATA)",
+        description: "桌面主格式为 .AI 文件夹；此为单文件快照备份",
       });
     } catch (err) {
       console.error("Save failed:", err);
@@ -7311,7 +7311,7 @@ export default function App() {
                           type="file"
                           id="project-load-input"
                           className="hidden"
-                          accept=".aiswork"
+                          accept=".aiswork,.AI.json,.json"
                           onChange={(e: any) => {
                             handleLoadProject(e);
                             setShowTransferMenu(false);

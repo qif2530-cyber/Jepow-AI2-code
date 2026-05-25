@@ -26,12 +26,12 @@ contextBridge.exposeInMainWorld('jepowDesktop', {
   /** 本地 3D 资产库（桌面端不上传云端） */
   assets: {
     pickModelFile: () => ipcRenderer.invoke('assets:pickModelFile'),
-    importFile: (userId, sourcePath) =>
-      ipcRenderer.invoke('assets:importFile', userId, sourcePath),
-    saveBuffer: (userId, fileName, base64) =>
-      ipcRenderer.invoke('assets:saveBuffer', userId, fileName, base64),
-    saveBufferRaw: (userId, fileName, arrayBuffer) =>
-      ipcRenderer.invoke('assets:saveBufferRaw', userId, fileName, arrayBuffer),
+    importFile: (userId, sourcePath, projectId, nodeType) =>
+      ipcRenderer.invoke('assets:importFile', userId, sourcePath, projectId, nodeType),
+    saveBuffer: (userId, fileName, base64, projectId, nodeType) =>
+      ipcRenderer.invoke('assets:saveBuffer', userId, fileName, base64, projectId, nodeType),
+    saveBufferRaw: (userId, fileName, arrayBuffer, projectId, nodeType) =>
+      ipcRenderer.invoke('assets:saveBufferRaw', userId, fileName, arrayBuffer, projectId, nodeType),
     readBuffer: (localPath) => ipcRenderer.invoke('assets:readBuffer', localPath),
     resolveScenePath: (userId, hints) =>
       ipcRenderer.invoke('assets:resolveScenePath', userId, hints),

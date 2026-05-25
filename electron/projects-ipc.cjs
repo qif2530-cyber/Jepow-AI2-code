@@ -1,6 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const { app, dialog } = require('electron');
+const bundle = require('./ai-project-bundle.cjs');
 
 const INDEX_DIR = () => path.join(app.getPath('userData'), 'project-index');
 const LEGACY_ROOT = () => path.join(app.getPath('userData'), 'projects');
@@ -20,9 +21,11 @@ function loadIndex(userId) {
   if (fs.existsSync(fp)) {
     try {
       const data = JSON.parse(fs.readFileSync(fp, 'utf8'));
-      return Array.isArray(data.entries) ? data : { entries: [], lastSaveDir: data.lastSaveDir || '' };
+      return Array.isArray(data.entries)
+        ? data
+        : { entries: [], lastSaveDir: data.lastSaveDir || '', activeProjectId: data.activeProjectId || null };
     } catch {
-      return { entries: [], lastSaveDir: '' };
+      return { entries: [], lastSaveDir: '', activeProjectId: null };
     }
   }
   return migrateLegacyIndex(userId);
@@ -43,6 +46,7 @@ function migrateLegacyIndex(userId) {
         entries.push({
           id: record.id,
           name: record.name,
+          bundlePath: null,
           filePath,
           thumbnail: record.thumbnail || '',
           thumbnails: record.thumbnails || [],
@@ -54,7 +58,7 @@ function migrateLegacyIndex(userId) {
       }
     }
   }
-  const index = { entries, lastSaveDir: app.getPath('documents') };
+  const index = { entries, lastSaveDir: app.getPath('documents'), activeProjectId: null };
   saveIndex(userId, index);
   return index;
 }
@@ -67,7 +71,8 @@ function toMeta(entry) {
     updatedAt: entry.updatedAt,
     thumbnail: entry.thumbnail,
     thumbnails: entry.thumbnails,
-    filePath: entry.filePath,
+    filePath: entry.bundlePath || entry.filePath,
+    bundlePath: entry.bundlePath || null,
   };
 }
 
@@ -75,21 +80,67 @@ function findEntry(index, id) {
   return index.entries.find((e) => String(e.id) === String(id));
 }
 
+function entryBundlePath(entry) {
+  if (entry?.bundlePath && bundle.isBundlePath(entry.bundlePath)) {
+    return entry.bundlePath;
+  }
+  return null;
+}
+
+function readRecordFromEntry(entry) {
+  const bp = entryBundlePath(entry);
+  if (bp) {
+    const { manifest, data } = bundle.readBundle(bp);
+    return {
+      id: manifest.id || entry.id,
+      userId: manifest.userId,
+      name: manifest.name || entry.name,
+      data,
+      thumbnail: entry.thumbnail || '',
+      thumbnails: entry.thumbnails || [],
+      createdAt: manifest.createdAt || entry.createdAt,
+      updatedAt: manifest.updatedAt || entry.updatedAt,
+    };
+  }
+  if (entry?.filePath && fs.existsSync(entry.filePath)) {
+    return JSON.parse(fs.readFileSync(entry.filePath, 'utf8'));
+  }
+  return null;
+}
+
+function extractThumbnails(data, fallback) {
+  const nodes = data?.nodes || [];
+  const urls = nodes
+    .filter((n) => {
+      const t = n?.type;
+      return (
+        (t === 'mediaNode' && n.data?.url) ||
+        (t === 'imageShotNode' && n.data?.shot?.imageUrl) ||
+        (t === 'videoShotNode' && n.data?.shot?.videoUrl) ||
+        (t === 'imageNode' && n.data?.url)
+      );
+    })
+    .map((n) => n.data?.url || n.data?.shot?.imageUrl || n.data?.shot?.videoUrl)
+    .filter(Boolean);
+  const thumbnails = urls.length > 0 ? urls.slice(-4) : fallback ? [fallback] : [];
+  return {
+    thumbnail: thumbnails[thumbnails.length - 1] || fallback || '',
+    thumbnails,
+  };
+}
+
 function registerProjectIpc(ipcMain) {
   ipcMain.handle('projects:pickSavePath', async (_e, userId, defaultName) => {
     const index = loadIndex(userId);
     const base =
-      index.lastSaveDir ||
-      path.join(app.getPath('documents'), 'JepowProjects');
+      index.lastSaveDir || path.join(app.getPath('documents'), 'JepowProjects');
     if (!fs.existsSync(base)) fs.mkdirSync(base, { recursive: true });
 
     const safeName = (defaultName || '未命名工程').replace(/[<>:"/\\|?*]/g, '_');
     const result = await dialog.showSaveDialog({
-      title: '选择工程保存位置',
-      defaultPath: path.join(base, `${safeName}.jepow.json`),
-      filters: [
-        { name: 'Jepow 工程文件', extensions: ['jepow.json', 'json'] },
-      ],
+      title: '选择 .AI 工程保存位置',
+      defaultPath: path.join(base, `${safeName}.AI`),
+      filters: [{ name: 'Jepow AI 工程', extensions: ['AI'] }],
       properties: ['createDirectory', 'showOverwriteConfirmation'],
     });
 
@@ -97,11 +148,15 @@ function registerProjectIpc(ipcMain) {
       return { canceled: true, filePath: null };
     }
 
-    const dir = path.dirname(result.filePath);
-    index.lastSaveDir = dir;
+    let bundlePath = result.filePath;
+    if (!bundlePath.toLowerCase().endsWith('.ai')) {
+      bundlePath = `${bundlePath}.AI`;
+    }
+
+    index.lastSaveDir = path.dirname(bundlePath);
     saveIndex(userId, index);
 
-    return { canceled: false, filePath: result.filePath };
+    return { canceled: false, filePath: bundlePath };
   });
 
   ipcMain.handle('projects:pickDirectory', async () => {
@@ -113,23 +168,41 @@ function registerProjectIpc(ipcMain) {
     return result.filePaths[0];
   });
 
+  ipcMain.handle('projects:getBundlePath', async (_e, userId, projectId) => {
+    const index = loadIndex(userId);
+    const entry = findEntry(index, projectId);
+    return entryBundlePath(entry);
+  });
+
+  ipcMain.handle('projects:getActiveBundlePath', async (_e, userId) => {
+    const index = loadIndex(userId);
+    if (!index.activeProjectId) return null;
+    const entry = findEntry(index, index.activeProjectId);
+    return entryBundlePath(entry);
+  });
+
   ipcMain.handle('projects:list', async (_e, userId) => {
     const index = loadIndex(userId);
     const list = index.entries
-      .filter((e) => e.filePath && fs.existsSync(e.filePath))
+      .filter((e) => {
+        if (entryBundlePath(e)) return true;
+        return e.filePath && fs.existsSync(e.filePath);
+      })
       .map(toMeta)
-      .sort(
-        (a, b) =>
-          new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime(),
-      );
+      .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
     return list;
   });
 
   ipcMain.handle('projects:read', async (_e, userId, id) => {
     const index = loadIndex(userId);
     const entry = findEntry(index, id);
-    if (!entry?.filePath || !fs.existsSync(entry.filePath)) return null;
-    return JSON.parse(fs.readFileSync(entry.filePath, 'utf8'));
+    if (!entry) return null;
+    const record = readRecordFromEntry(entry);
+    if (record) {
+      index.activeProjectId = id;
+      saveIndex(userId, index);
+    }
+    return record;
   });
 
   ipcMain.handle('projects:write', async (_e, userId, record) => {
@@ -138,14 +211,14 @@ function registerProjectIpc(ipcMain) {
     const now = new Date().toISOString();
 
     if (!entry) {
-      const filePath = path.join(
-        index.lastSaveDir || app.getPath('documents'),
-        `${String(record.id).replace(/[^a-zA-Z0-9_-]/g, '_')}.jepow.json`,
-      );
+      const baseDir = index.lastSaveDir || app.getPath('documents');
+      const safeId = String(record.id).replace(/[^a-zA-Z0-9_-]/g, '_');
+      const bundlePath = path.join(baseDir, `${safeId}.AI`);
       entry = {
         id: record.id,
         name: record.name,
-        filePath,
+        bundlePath,
+        filePath: null,
         thumbnail: '',
         thumbnails: [],
         createdAt: now,
@@ -154,15 +227,42 @@ function registerProjectIpc(ipcMain) {
       index.entries.push(entry);
     }
 
-    const payload = { ...record, updatedAt: now };
-    fs.mkdirSync(path.dirname(entry.filePath), { recursive: true });
-    fs.writeFileSync(entry.filePath, JSON.stringify(payload, null, 2), 'utf8');
+    let bundlePath = entryBundlePath(entry);
+    if (!bundlePath) {
+      if (entry.filePath && entry.filePath.toLowerCase().endsWith('.json')) {
+        const legacy = JSON.parse(fs.readFileSync(entry.filePath, 'utf8'));
+        bundlePath = bundle.normalizeBundlePath(
+          entry.filePath.replace(/\.json$/i, '.AI'),
+        );
+        bundle.createEmptyBundle(bundlePath, { ...legacy, ...record, updatedAt: now });
+        entry.bundlePath = bundlePath;
+        entry.filePath = null;
+      } else {
+        bundlePath = bundle.normalizeBundlePath(
+          path.join(
+            index.lastSaveDir || app.getPath('documents'),
+            `${String(record.id).replace(/[^a-zA-Z0-9_-]/g, '_')}.AI`,
+          ),
+        );
+        entry.bundlePath = bundlePath;
+      }
+    }
+
+    const payload = {
+      ...record,
+      createdAt: entry.createdAt || record.createdAt || now,
+      updatedAt: now,
+    };
+    const written = bundle.writeBundle(bundlePath, payload);
+    const thumbs = extractThumbnails(written.data, record.thumbnail);
 
     entry.name = record.name;
     entry.updatedAt = now;
-    entry.thumbnail = record.thumbnail || '';
-    entry.thumbnails = record.thumbnails || [];
-    index.lastSaveDir = path.dirname(entry.filePath);
+    entry.thumbnail = thumbs.thumbnail;
+    entry.thumbnails = thumbs.thumbnails;
+    entry.bundlePath = bundlePath;
+    index.lastSaveDir = path.dirname(bundlePath);
+    index.activeProjectId = record.id;
     saveIndex(userId, index);
 
     return toMeta(entry);
@@ -171,12 +271,13 @@ function registerProjectIpc(ipcMain) {
   ipcMain.handle('projects:createAtPath', async (_e, userId, name, filePath) => {
     if (!filePath) return { error: '未选择保存路径' };
 
+    const bundlePath = bundle.normalizeBundlePath(filePath);
     const id = `${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
     const now = new Date().toISOString();
     const record = {
       id,
       userId: String(userId),
-      name: name || path.basename(filePath, path.extname(filePath)),
+      name: name || path.basename(bundlePath, path.extname(bundlePath)),
       data: { nodes: [], edges: [], canvasColor: '#ffffff' },
       thumbnail: '',
       thumbnails: [],
@@ -184,23 +285,24 @@ function registerProjectIpc(ipcMain) {
       updatedAt: now,
     };
 
-    fs.mkdirSync(path.dirname(filePath), { recursive: true });
-    fs.writeFileSync(filePath, JSON.stringify(record, null, 2), 'utf8');
+    bundle.createEmptyBundle(bundlePath, record);
 
     const index = loadIndex(userId);
     index.entries = index.entries.filter(
-      (e) => path.resolve(e.filePath) !== path.resolve(filePath),
+      (e) => e.bundlePath && path.resolve(e.bundlePath) !== path.resolve(bundlePath),
     );
     index.entries.push({
       id,
       name: record.name,
-      filePath,
+      bundlePath,
+      filePath: null,
       thumbnail: '',
       thumbnails: [],
       createdAt: now,
       updatedAt: now,
     });
-    index.lastSaveDir = path.dirname(filePath);
+    index.lastSaveDir = path.dirname(bundlePath);
+    index.activeProjectId = id;
     saveIndex(userId, index);
 
     return { meta: toMeta(index.entries[index.entries.length - 1]), record };
@@ -209,6 +311,13 @@ function registerProjectIpc(ipcMain) {
   ipcMain.handle('projects:remove', async (_e, userId, id) => {
     const index = loadIndex(userId);
     const entry = findEntry(index, id);
+    if (entry?.bundlePath && fs.existsSync(entry.bundlePath)) {
+      try {
+        fs.rmSync(entry.bundlePath, { recursive: true, force: true });
+      } catch {
+        /* ignore */
+      }
+    }
     if (entry?.filePath && fs.existsSync(entry.filePath)) {
       try {
         fs.unlinkSync(entry.filePath);
@@ -217,23 +326,31 @@ function registerProjectIpc(ipcMain) {
       }
     }
     index.entries = index.entries.filter((e) => String(e.id) !== String(id));
+    if (index.activeProjectId === id) index.activeProjectId = null;
     saveIndex(userId, index);
   });
 
   ipcMain.handle('projects:rename', async (_e, userId, id, name) => {
     const index = loadIndex(userId);
     const entry = findEntry(index, id);
-    if (!entry?.filePath || !fs.existsSync(entry.filePath)) {
-      throw new Error('项目不存在');
-    }
-    const record = JSON.parse(fs.readFileSync(entry.filePath, 'utf8'));
+    if (!entry) throw new Error('项目不存在');
+
+    const record = readRecordFromEntry(entry);
+    if (!record) throw new Error('项目不存在');
+
     record.name = name;
     record.updatedAt = new Date().toISOString();
-    fs.writeFileSync(entry.filePath, JSON.stringify(record, null, 2), 'utf8');
+
+    if (entryBundlePath(entry)) {
+      bundle.writeBundle(entry.bundlePath, record);
+    } else if (entry.filePath) {
+      fs.writeFileSync(entry.filePath, JSON.stringify(record, null, 2), 'utf8');
+    }
+
     entry.name = name;
     entry.updatedAt = record.updatedAt;
     saveIndex(userId, index);
   });
 }
 
-module.exports = { registerProjectIpc };
+module.exports = { registerProjectIpc, loadIndex, findEntry, entryBundlePath };

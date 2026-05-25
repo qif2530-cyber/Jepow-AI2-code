@@ -10,6 +10,8 @@ import { parseLocalAssetRef, toLocalAssetRef } from "../lib/local-assets";
 import { loadModelGroup } from "../lib/model-asset-loader";
 import { JepowViewportPreview } from "./JepowViewportPreview";
 import { useDesktopScenePath } from "../hooks/useDesktopScenePath";
+import { getLocalUserId } from "../lib/local-user-id";
+import { getCurrentProjectId } from "../lib/current-project";
 
 interface ThreeDEditorNodeProps {
   id: string;
@@ -363,16 +365,6 @@ function ErrorPlaceholder() {
   );
 }
 
-function getLocalUserId() {
-  try {
-    const raw = localStorage.getItem("ais-user");
-    if (!raw) return "default";
-    return String(JSON.parse(raw).id || "default");
-  } catch {
-    return "default";
-  }
-}
-
 export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) {
   const { getNodes, getEdges, updateNodeData } = useReactFlow();
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -463,6 +455,7 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
     localAssetPath: modelNodeData.localAssetPath,
     glbUrl: glbToRender || modelNodeData.glbUrl,
     modelName: activeModelName || modelNodeData.modelName,
+    projectId: getCurrentProjectId(),
   });
 
   const useDesktopNativeRenderer =

@@ -1,3 +1,4 @@
+import { AI_ASSET_PREFIX } from './ai-project-format';
 import { parseLocalAssetRef, toLocalAssetRef } from './local-assets';
 import { isDesktopApp } from './runtime';
 
@@ -6,6 +7,7 @@ export type ScenePathHints = {
   localAssetPath?: string;
   glbUrl?: string;
   modelName?: string;
+  projectId?: string | null;
 };
 
 /** Best-effort path from node fields (sync). */
@@ -13,7 +15,9 @@ export function resolveNativeScenePathSync(hints: ScenePathHints): string {
   const direct = (hints.nativeScenePath || hints.localAssetPath || '').trim();
   if (direct) return direct;
 
-  const fromRef = parseLocalAssetRef(hints.glbUrl || '');
+  const glb = hints.glbUrl || '';
+  if (glb.startsWith(AI_ASSET_PREFIX)) return glb;
+  const fromRef = parseLocalAssetRef(glb);
   if (fromRef) return fromRef;
 
   const url = (hints.glbUrl || '').trim();

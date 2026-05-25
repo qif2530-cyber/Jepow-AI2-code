@@ -18,6 +18,8 @@ import { JepowViewportPreview } from "./JepowViewportPreview";
 import { getViewportEngine } from "../lib/viewport-engine";
 import { useDesktopScenePath } from "../hooks/useDesktopScenePath";
 import { scenePathToNodePatch } from "../lib/desktop-scene-path";
+import { getLocalUserId } from "../lib/local-user-id";
+import { getCurrentProjectId } from "../lib/current-project";
 
 interface ModelAssetNodeProps {
   id: string;
@@ -216,6 +218,7 @@ export function ModelAssetNode({ id, data, selected }: ModelAssetNodeProps) {
     localAssetPath: data.localAssetPath,
     glbUrl: data.glbUrl,
     modelName,
+    projectId: getCurrentProjectId(),
   });
 
   useEffect(() => {
@@ -256,26 +259,21 @@ export function ModelAssetNode({ id, data, selected }: ModelAssetNodeProps) {
     return () => clearTimeout(timer);
   }, []);
 
-  const getLocalUserId = () => {
-    try {
-      const raw = localStorage.getItem("ais-user");
-      if (!raw) return "default";
-      return String(JSON.parse(raw).id || "default");
-    } catch {
-      return "default";
-    }
-  };
-
   const applyLocalScene = async (filePath: string, fileName: string) => {
     let localPath = filePath;
+    let assetRef: string | undefined;
     if (shouldUseLocalAssets()) {
-      const copied = await importLocalModelFile(getLocalUserId(), filePath);
+      const copied = await importLocalModelFile(getLocalUserId(), filePath, {
+        projectId: getCurrentProjectId(),
+        nodeType: 'modelAssetNode',
+      });
       if (copied.ok && copied.localPath) {
         localPath = copied.localPath;
         fileName = copied.fileName || fileName;
+        assetRef = copied.assetRef;
       }
     }
-    const ref = toLocalAssetRef(localPath);
+    const ref = assetRef || toLocalAssetRef(localPath);
     updateNodeData(id, {
       nativeScenePath: localPath,
       localAssetPath: localPath,
@@ -339,7 +337,9 @@ export function ModelAssetNode({ id, data, selected }: ModelAssetNodeProps) {
         if (!saved.ok || !saved.localPath) {
           throw new Error(saved.error || "本地保存失败");
         }
-        const ref = toLocalAssetRef(saved.localPath);
+        const ref =
+          (saved as { assetRef?: string }).assetRef ||
+          toLocalAssetRef(saved.localPath);
         updateNodeData(id, {
           glbUrl: ref,
           localAssetPath: saved.localPath,

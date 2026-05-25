@@ -6,12 +6,15 @@
 |------|----------|
 | 登录 / 个人资料 / 能量 / 充值 | 云端 API（jepow.com） |
 | AI 大模型生成（图/视频/脚本） | 云端 API |
-| **无限画布工程** | **本机** `userData/project-index` |
-| **3D 模型 / 场景文件** | **本机** `userData/assets/{userId}/` |
+| **无限画布工程** | **本机** `*.AI` 目录包（`manifest.json` + `canvas.json` + `assets/`） |
+| **3D 模型 / 场景文件** | 工程内 `assets/models/`（无工程时回退 `userData/assets/{userId}/`） |
+| **生成图片** | `assets/images/` |
+| **生成视频** | `assets/videos/` |
+| **3D 贴图** | `assets/textures/` |
 | **3D 视口渲染** | **本机** `jepow-engine`（Rust + wgpu + Rayon） |
 | 画布 UI | Electron 壳 + React |
 
-桌面端 **不上传** FBX/GLB 到服务器做预览；节点内引用 `jepow-local://绝对路径`。
+桌面端 **不上传** FBX/GLB 到服务器做预览；节点内引用 `jepow-asset://models/…`（工程内）或 `jepow-local://`（临时绝对路径，保存时归入 `.AI`）。
 
 ## 分层（照 Blender 思路拆，但是自己的代码）
 

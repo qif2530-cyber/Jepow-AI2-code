@@ -252,10 +252,11 @@ export async function createLocalProjectAtPath(
   return { meta: res.meta, record: res.record };
 }
 
-/** Export .aiswork file payload */
+/** Export .AI / legacy .aiswork 单文件快照（桌面主格式为 .AI 目录包） */
 export function serializeProjectFile(record: LocalProjectRecord): string {
   return compress(
     JSON.stringify({
+      format: 'jepow-ai',
       version: 1,
       name: record.name,
       data: record.data,

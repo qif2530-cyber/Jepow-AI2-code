@@ -56,7 +56,7 @@ export function NewProjectSaveDialog({
               新建工程
             </h2>
             <p className="text-sm text-neutral-500 mt-1">
-              请选择工程名称与保存位置（存于本机）
+              将创建 <strong>.AI</strong> 工程文件夹，内含画布与分类素材目录
             </p>
           </div>
           <button
@@ -83,7 +83,7 @@ export function NewProjectSaveDialog({
         </label>
         <div className="flex gap-2 mb-6">
           <div className="flex-1 min-w-0 flex items-center gap-2 rounded-xl border border-black/10 bg-neutral-50 px-3 py-2.5 text-sm text-neutral-600">
-            <FileJson className="w-4 h-4 shrink-0 text-neutral-400" />
+            <FolderOpen className="w-4 h-4 shrink-0 text-neutral-400" />
             <span className="truncate" title={filePath || undefined}>
               {filePath || "尚未选择…"}
             </span>
