@@ -36,8 +36,8 @@ import { Button } from "./ui/button";
 import { CloudProject } from "../types";
 import api from "../lib/api";
 import { isDesktopApp } from "../lib/runtime";
-import { LandingDownloadSection } from "./LandingDownloadSection";
 import { checkIsVideoUrl } from "../lib/video";
+import { LandingDownloadSection } from "./LandingDownloadSection";
 
 interface LandingPageProps {
   onNewProject: () => void;
@@ -852,7 +852,6 @@ export function LandingPage({
         </div>
       </section>
 
-      {/* Desktop client — projects are stored locally, not on the website server */}
       {!isDesktopApp() && (
         <LandingDownloadSection downloadUrl={siteConfig?.desktopAppDownloadUrl} />
       )}
