@@ -8,8 +8,8 @@
 set -e
 
 # --- 配置变量 ---
-GIT_REPO="https://gitee.com/jepow/Jepow-AI.git"
-PROJECT_DIR="/home/admin/Jepow-AI"
+GIT_REPO="https://gitee.com/jepow/Jepow-AI2-code.git"
+PROJECT_DIR="/home/admin/Jepow-AI2-code"
 CERT_DIR="/etc/nginx/cert"
 DOMAIN="www.jepow.com"
 MAIN_DOMAIN="jepow.com"
@@ -134,9 +134,16 @@ echo "🧹 确保 npm 缓存与 node_modules 是干净的..."
 sudo rm -rf node_modules package-lock.json
 npm cache clean --force
 
-echo "👇 正式开始 npm install (添加了连接超时保护，预计 2-3 分钟)..."
+echo "👇 正式开始 npm install (跳过 Electron 桌面包下载，预计 2-5 分钟)..."
+# 阿里云只部署网站，不需下载 Electron；避免从国外源拉取导致 socket hang up
+export ELECTRON_SKIP_BINARY_DOWNLOAD=1
+export npm_config_electron_mirror="https://npmmirror.com/mirrors/electron/"
 # 使用当前用户级进行安装，防止 root 引发的 EACCES
-npm install --no-audit --no-fund --legacy-peer-deps --network-timeout=300000
+npm install --no-audit --no-fund --legacy-peer-deps --network-timeout=300000 || {
+  echo "⚠️ 安装中断，清理 node_modules 后重试..."
+  rm -rf node_modules
+  npm install --no-audit --no-fund --legacy-peer-deps --network-timeout=300000
+}
 
 echo "🛠️ 5. 构建前端产物..."
 npm run build

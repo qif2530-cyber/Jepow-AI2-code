@@ -288,17 +288,61 @@ npm run push:github -- "修复登录与本地工程保存"
 
 ---
 
-## 十二、你每次发版的极简清单
+## 十二、阿里云一键拉取部署（新仓库 Jepow-AI2-code）
+
+**不要用以前的 `~/WAGAN` + `update-docker.sh`**（那是旧项目 Docker 方案）。
+
+新仓库地址：`https://gitee.com/jepow/Jepow-AI2-code.git`
+
+### 第一次在新目录部署
+
+```bash
+git clone https://gitee.com/jepow/Jepow-AI2-code.git /home/admin/Jepow-AI2-code
+cd /home/admin/Jepow-AI2-code
+bash deploy.sh
+```
+
+### 以后每次更新（等价于你以前的 fetch + reset + 脚本）
+
+```bash
+cd /home/admin/Jepow-AI2-code
+bash deploy-pull.sh
+```
+
+或手动：
+
+```bash
+cd /home/admin/Jepow-AI2-code
+git fetch --all && git clean -fd && git reset --hard origin/main
+bash deploy.sh
+```
+
+用户数据仍在 `~/.jepow-data`，不会被覆盖。
+
+### 若仍用旧目录 `/home/admin/Jepow-AI`
+
+先改远程地址再拉取：
+
+```bash
+cd /home/admin/Jepow-AI
+git remote set-url origin https://gitee.com/jepow/Jepow-AI2-code.git
+git fetch --all && git clean -fd && git reset --hard origin/main
+bash deploy.sh
+```
+
+---
+
+## 十三、你每次发版的极简清单
 
 **在你电脑上：**
 
 1. 改好代码  
-2. 双击 `push-github.bat` 或 `npm run push:github`（等价于 add + commit + push）  
+2. GitHub Desktop **Push**（Gitee 已同步则自动更新）  
 
 **在阿里云上：**
 
 3. `ssh` 登录  
-4. `cd /home/admin/Jepow-AI && bash deploy.sh`  
-5. 打开 jepow.com 验证  
+4. `cd /home/admin/Jepow-AI2-code && bash deploy-pull.sh`  
+5. 打开 https://jepow.com 验证  
 
 完成。

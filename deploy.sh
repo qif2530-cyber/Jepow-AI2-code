@@ -14,7 +14,11 @@ echo -e "${GREEN}>>> 开始执行一键部署...${NC}"
 # 2. 检查目录
 PROJECT_DIR="$(pwd)"
 if [[ ! "$PROJECT_DIR" == *"Jepow-AI"* ]]; then
-    PROJECT_DIR="/home/admin/Jepow-AI"
+    if [ -d "/home/admin/Jepow-AI2-code" ]; then
+        PROJECT_DIR="/home/admin/Jepow-AI2-code"
+    else
+        PROJECT_DIR="/home/admin/Jepow-AI"
+    fi
 fi
 
 if [ ! -d "$PROJECT_DIR" ]; then
@@ -58,9 +62,26 @@ echo -e "${GREEN}>>> 正在拉取云端最新代码...${NC}"
 git checkout .
 git pull origin main
 
-# 5. 安装依赖
-echo -e "${GREEN}>>> 正在安装/更新依赖...${NC}"
-npm install
+# 5. 安装依赖（服务器只跑网站，跳过 Electron 大文件下载，避免 socket hang up）
+echo -e "${GREEN}>>> 正在安装/更新依赖（首次较慢，请耐心等待）...${NC}"
+npm config set registry https://registry.npmmirror.com 2>/dev/null || true
+export ELECTRON_SKIP_BINARY_DOWNLOAD=1
+export npm_config_electron_mirror="https://npmmirror.com/mirrors/electron/"
+
+install_deps() {
+  npm install --no-audit --no-fund --loglevel=warn "$@"
+}
+
+if ! install_deps; then
+  echo -e "${RED}>>> 依赖安装失败，清理 node_modules 后重试（跳过 Electron）...${NC}"
+  rm -rf node_modules
+  install_deps || exit 1
+fi
+
+if [ ! -x node_modules/.bin/vite ] || [ ! -x node_modules/.bin/tsx ]; then
+  echo -e "${RED}错误: vite 或 tsx 未安装成功，请检查网络后重新运行 deploy.sh${NC}"
+  exit 1
+fi
 
 # 6. 构建前端
 echo -e "${GREEN}>>> 正在打包前端 UI...${NC}"
