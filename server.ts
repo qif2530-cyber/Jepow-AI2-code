@@ -228,9 +228,12 @@ const storage = multer.diskStorage({
   }
 });
 
-const upload = multer({ 
+const MAX_UPLOAD_BYTES = 1024 * 1024 * 1024; // 1GB — 3D 等大文件
+const MAX_UPLOAD_MB = Math.round(MAX_UPLOAD_BYTES / (1024 * 1024));
+
+const upload = multer({
   storage: storage,
-  limits: { fileSize: 1024 * 1024 * 1024 } // 1GB (1024MB) limit to fully support grand 3D standard models up to 1GB
+  limits: { fileSize: MAX_UPLOAD_BYTES },
 });
 const JWT_SECRET = process.env.JWT_SECRET || 'ais-proprietary-secret-key-2026';
 
@@ -6108,6 +6111,22 @@ app.get('/api/admin/stats', authenticateToken, isAdmin, (req, res) => {
     const isFirstUser = db.users.length > 0 && db.users[0].id === req.user.id;
     if (!permData || (!permData.isSuperAdminUser && !isFirstUser)) return res.sendStatus(403);
     res.json(db);
+  });
+
+  // 上传过大等 Multer 错误：返回 413，避免整段堆栈刷屏
+  app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
+    if (err?.name === 'MulterError') {
+      if (err.code === 'LIMIT_FILE_SIZE') {
+        console.warn(`[Upload] 文件超过 ${MAX_UPLOAD_MB}MB: ${req.method} ${req.path}`);
+        return res.status(413).json({
+          error: `文件过大，单文件不能超过 ${MAX_UPLOAD_MB}MB，请压缩后重试`,
+          code: 'LIMIT_FILE_SIZE',
+        });
+      }
+      console.warn(`[Upload] ${err.code}: ${req.method} ${req.path}`);
+      return res.status(400).json({ error: err.message || '上传失败', code: err.code });
+    }
+    next(err);
   });
 
   app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
