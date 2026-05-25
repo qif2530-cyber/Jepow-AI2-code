@@ -141,15 +141,26 @@ async function getStatus() {
   };
 }
 
+function normalizeScenePath(scenePath) {
+  if (!scenePath || typeof scenePath !== 'string') return scenePath;
+  let raw = scenePath.trim();
+  if (raw.startsWith('jepow-local://')) {
+    raw = raw.slice('jepow-local://'.length);
+  }
+  return path.normalize(raw);
+}
+
 async function openScene(scenePath) {
-  return runEngineCommand('open_scene', { scenePath });
+  return runEngineCommand('open_scene', {
+    scenePath: normalizeScenePath(scenePath),
+  });
 }
 
 async function renderPreview({ scenePath, width = 640, height = 480 }) {
   const id = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   const outputPath = path.join(getViewportCacheDir(), `jepow-${id}.png`);
   const result = await runEngineCommand('render_frame', {
-    scenePath,
+    scenePath: normalizeScenePath(scenePath),
     outputPath,
     width,
     height,

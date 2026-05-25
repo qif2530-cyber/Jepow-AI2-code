@@ -33,6 +33,8 @@ contextBridge.exposeInMainWorld('jepowDesktop', {
     saveBufferRaw: (userId, fileName, arrayBuffer) =>
       ipcRenderer.invoke('assets:saveBufferRaw', userId, fileName, arrayBuffer),
     readBuffer: (localPath) => ipcRenderer.invoke('assets:readBuffer', localPath),
+    resolveScenePath: (userId, hints) =>
+      ipcRenderer.invoke('assets:resolveScenePath', userId, hints),
   },
   /** Jepow 自研原生 3D 内核 — 与 AI / LLM API 无关 */
   viewport: {

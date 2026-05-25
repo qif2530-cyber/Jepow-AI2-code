@@ -106,10 +106,14 @@ fn load_fbx_mesh(path: &str) -> Result<MeshData> {
             if face.num_indices < 3 {
                 continue;
             }
-            for t in 0..(face.num_indices - 2) {
-                let local_corners = [0_u32, t + 1, t + 2];
+            let mut tri_corners = Vec::new();
+            ufbx::triangulate_face_vec(&mut tri_corners, mesh, *face);
+            for tri in tri_corners.chunks(3) {
+                if tri.len() < 3 {
+                    continue;
+                }
                 let mut tri_idx = Vec::with_capacity(3);
-                for local in local_corners {
+                for &local in tri {
                     let corner = (face.index_begin + local) as usize;
                     let vi = pos_el.indices[corner] as usize;
                     let p = pos_el[vi];

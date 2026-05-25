@@ -79,6 +79,15 @@ declare global {
           byteLength?: number;
           error?: string;
         }>;
+        resolveScenePath: (
+          userId: string,
+          hints: {
+            nativeScenePath?: string;
+            localAssetPath?: string;
+            glbUrl?: string;
+            modelName?: string;
+          },
+        ) => Promise<{ ok: boolean; scenePath?: string; error?: string }>;
       };
     };
   }

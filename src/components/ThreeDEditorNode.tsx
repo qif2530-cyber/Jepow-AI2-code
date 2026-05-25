@@ -9,6 +9,7 @@ import { isDesktopApp } from "../lib/runtime";
 import { parseLocalAssetRef, toLocalAssetRef } from "../lib/local-assets";
 import { loadModelGroup } from "../lib/model-asset-loader";
 import { JepowViewportPreview } from "./JepowViewportPreview";
+import { useDesktopScenePath } from "../hooks/useDesktopScenePath";
 
 interface ThreeDEditorNodeProps {
   id: string;
@@ -362,6 +363,16 @@ function ErrorPlaceholder() {
   );
 }
 
+function getLocalUserId() {
+  try {
+    const raw = localStorage.getItem("ais-user");
+    if (!raw) return "default";
+    return String(JSON.parse(raw).id || "default");
+  } catch {
+    return "default";
+  }
+}
+
 export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) {
   const { getNodes, getEdges, updateNodeData } = useReactFlow();
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -435,9 +446,27 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
 
   // Fallback to offline procedural preview if no active connection (completely bypassing raw.githubusercontent.com)
   const glbToRender = activeGlb || "";
-  const nativeScenePath = parseLocalAssetRef(glbToRender) || "";
+  const modelNodeData = (modelNode?.data || {}) as {
+    nativeScenePath?: string;
+    localAssetPath?: string;
+    glbUrl?: string;
+    modelName?: string;
+  };
+
+  const {
+    scenePath: resolvedScenePath,
+    resolving: scenePathResolving,
+    error: scenePathError,
+  } = useDesktopScenePath(getLocalUserId(), {
+    nativeScenePath:
+      modelNodeData.nativeScenePath || modelNodeData.localAssetPath,
+    localAssetPath: modelNodeData.localAssetPath,
+    glbUrl: glbToRender || modelNodeData.glbUrl,
+    modelName: activeModelName || modelNodeData.modelName,
+  });
+
   const useDesktopNativeRenderer =
-    isDesktopApp() && !!nativeScenePath && renderActive;
+    isDesktopApp() && !!resolvedScenePath && renderActive;
 
   // Position, Rotation, Scale configurations
   const [transform, setTransform] = useState({
@@ -596,9 +625,20 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
           </div>
         </div>
 
-        {useDesktopNativeRenderer ? (
+        {isDesktopApp() && modelNode && !resolvedScenePath && !scenePathResolving ? (
+          <div className="absolute inset-0 z-20 flex flex-col items-center justify-center p-6 text-center bg-neutral-950">
+            <Compass className="w-10 h-10 text-amber-400 mb-3" />
+            <span className="text-[11px] font-bold text-amber-300 mb-2">
+              3D 视口：找不到模型文件
+            </span>
+            <p className="text-[10px] text-amber-100/80 leading-relaxed max-w-[320px]">
+              {scenePathError ||
+                "请在左侧模型节点用「从磁盘选择大场景」重新导入 FBX/GLB。"}
+            </p>
+          </div>
+        ) : useDesktopNativeRenderer ? (
           <div className="w-full h-full min-h-[480px]">
-            <JepowViewportPreview scenePath={nativeScenePath} height={480} />
+            <JepowViewportPreview scenePath={resolvedScenePath} height={480} />
           </div>
         ) : canvasMounted && renderActive && glbToRender ? (
           <Canvas

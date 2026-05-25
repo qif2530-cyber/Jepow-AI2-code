@@ -16,6 +16,8 @@ import { isDesktopApp, shouldUseLocalCanvasAssets } from "../lib/runtime";
 import { loadModelGroup } from "../lib/model-asset-loader";
 import { JepowViewportPreview } from "./JepowViewportPreview";
 import { getViewportEngine } from "../lib/viewport-engine";
+import { useDesktopScenePath } from "../hooks/useDesktopScenePath";
+import { scenePathToNodePatch } from "../lib/desktop-scene-path";
 
 interface ModelAssetNodeProps {
   id: string;
@@ -204,9 +206,35 @@ export function ModelAssetNode({ id, data, selected }: ModelAssetNodeProps) {
       : "unnamed_asset.glb");
   const fileExtension = modelName.substring(modelName.lastIndexOf(".")).toLowerCase();
   const desktop3d = isDesktopApp();
-  const scenePathForNative =
-    nativeScenePath ||
-    (glbUrl.startsWith("jepow-local://") ? glbUrl.replace("jepow-local://", "") : "");
+
+  const {
+    scenePath: scenePathForNative,
+    resolving: scenePathResolving,
+    error: scenePathError,
+  } = useDesktopScenePath(getLocalUserId(), {
+    nativeScenePath: data.nativeScenePath,
+    localAssetPath: data.localAssetPath,
+    glbUrl: data.glbUrl,
+    modelName,
+  });
+
+  useEffect(() => {
+    if (!scenePathForNative) return;
+    if (
+      data.nativeScenePath === scenePathForNative &&
+      data.localAssetPath === scenePathForNative
+    ) {
+      return;
+    }
+    updateNodeData(id, scenePathToNodePatch(scenePathForNative));
+  }, [
+    scenePathForNative,
+    id,
+    data.nativeScenePath,
+    data.localAssetPath,
+    updateNodeData,
+  ]);
+
   /** 桌面端：只用 Jepow 自研 wgpu 渲染器，不用 WebGL/Three.js */
   const useDesktopNativeRenderer = desktop3d && !!scenePathForNative;
   
@@ -397,7 +425,18 @@ export function ModelAssetNode({ id, data, selected }: ModelAssetNodeProps) {
         </Button>
 
         <div id={`model-canvas-container-${id}`} className="absolute inset-0 z-0 nodrag nopan nowheel" onMouseDown={(e) => e.stopPropagation()} onTouchStart={(e) => e.stopPropagation()}>
-          {useDesktopNativeRenderer ? (
+          {desktop3d && !scenePathForNative && !scenePathResolving ? (
+            <div className="absolute inset-0 z-20 flex flex-col items-center justify-center p-4 text-center bg-neutral-950">
+              <Box className="w-8 h-8 text-amber-400 mb-2" />
+              <span className="text-[10px] font-bold text-amber-300 mb-1">
+                未找到本地模型文件
+              </span>
+              <p className="text-[9px] text-amber-100/80 leading-relaxed max-w-[220px]">
+                {scenePathError ||
+                  `「${modelName}」路径已丢失。请点下方「从磁盘选择大场景」重新指定文件。`}
+              </p>
+            </div>
+          ) : useDesktopNativeRenderer ? (
             <JepowViewportPreview scenePath={scenePathForNative} height={220} />
           ) : (
           <>

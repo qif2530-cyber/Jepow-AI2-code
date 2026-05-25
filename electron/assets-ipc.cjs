@@ -69,6 +69,52 @@ function registerAssetsIpc(ipcMain) {
     const buf = fs.readFileSync(localPath);
     return { ok: true, base64: buf.toString('base64'), byteLength: buf.length };
   });
+
+  /** Resolve absolute on-disk path for native wgpu renderer (fixes saved projects missing paths). */
+  ipcMain.handle('assets:resolveScenePath', async (_e, userId, hints) => {
+    const tryFile = (p) => {
+      if (!p || typeof p !== 'string') return null;
+      let raw = p.trim();
+      if (raw.startsWith('jepow-local://')) {
+        raw = raw.slice('jepow-local://'.length);
+      }
+      const norm = path.normalize(raw);
+      return fs.existsSync(norm) ? norm : null;
+    };
+
+    const h = hints || {};
+    let found =
+      tryFile(h.nativeScenePath) ||
+      tryFile(h.localAssetPath) ||
+      tryFile(h.glbUrl);
+
+    if (!found && h.modelName) {
+      const safe = path.basename(String(h.modelName));
+      const root = assetsRoot(userId);
+      try {
+        for (const f of fs.readdirSync(root)) {
+          if (f === safe || f.endsWith(`_${safe}`)) {
+            const full = path.join(root, f);
+            const hit = tryFile(full);
+            if (hit) {
+              found = hit;
+              break;
+            }
+          }
+        }
+      } catch {
+        /* empty assets dir */
+      }
+    }
+
+    if (!found) {
+      return {
+        ok: false,
+        error: `找不到本地模型文件「${h.modelName || 'scene'}」。请用「从磁盘选择大场景」重新导入。`,
+      };
+    }
+    return { ok: true, scenePath: found };
+  });
 }
 
 module.exports = { registerAssetsIpc, assetsRoot };
