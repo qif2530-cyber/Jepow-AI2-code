@@ -7,6 +7,7 @@
 # 1. 设置颜色
 GREEN='\033[0;32m'
 RED='\033[0;31m'
+YELLOW='\033[1;33m'
 NC='\033[0m'
 
 echo -e "${GREEN}>>> 开始执行一键部署...${NC}"
@@ -114,6 +115,22 @@ export NODE_ENV=production
 pm2 start ./node_modules/.bin/tsx --name jepow-ai --cwd "$(pwd)" -- server.ts
 pm2 save 2>/dev/null || true
 echo -e "${GREEN}>>> PM2 工作目录: $(pm2 describe jepow-ai 2>/dev/null | grep 'exec cwd' || pwd)${NC}"
+
+# 8. 修复 Nginx 仍指向旧目录 Jepow-AI/dist 的问题（否则网站永远显示旧首页）
+NGINX_SITE="/etc/nginx/sites-available/jepow"
+if [ -f "$NGINX_SITE" ]; then
+  if grep -q "/home/admin/Jepow-AI/dist" "$NGINX_SITE" 2>/dev/null; then
+    echo -e "${YELLOW}>>> 检测到 Nginx 仍使用旧目录，正在改为 $PROJECT_DIR/dist ...${NC}"
+    sudo sed -i "s|/home/admin/Jepow-AI/dist|${PROJECT_DIR}/dist|g" "$NGINX_SITE"
+    sudo sed -i "s|/home/admin/Jepow-AI2-code/dist|${PROJECT_DIR}/dist|g" "$NGINX_SITE"
+    sudo nginx -t && sudo systemctl reload nginx
+    echo -e "${GREEN}>>> Nginx 已指向新 dist${NC}"
+  else
+    echo -e "${GREEN}>>> Nginx 站点配置已检查（未使用旧 Jepow-AI/dist）${NC}"
+  fi
+else
+  echo -e "${YELLOW}>>> 未找到 $NGINX_SITE，若用 Nginx 直连静态文件，请确认 root 为: ${PROJECT_DIR}/dist${NC}"
+fi
 
 echo -e "${GREEN}==========================================${NC}"
 echo -e "${GREEN}部署完成！[数据安全分离版]${NC}"
