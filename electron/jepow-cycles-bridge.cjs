@@ -13,12 +13,32 @@ const { buildCyclesSceneXml, clampNumber } = require('./cycles-xml-export.cjs');
 const { buildMeshStateBlock } = require('./cycles-mesh-xml.cjs');
 
 const CYCLES_NAME = process.platform === 'win32' ? 'jepow-cycles.exe' : 'jepow-cycles';
+const CYCLES_DAEMON_NAME = process.platform === 'win32' ? 'jepow-cycles-daemon.exe' : 'jepow-cycles-daemon';
 const LICENSE = 'GPL-2.0-or-later';
 const STANDALONE_RELATIVE = process.platform === 'darwin'
   ? path.join('intern', 'cycles', 'app', 'Blender.app', 'Contents', 'MacOS', 'cycles')
   : path.join('intern', 'cycles', 'app', 'cycles');
+const DAEMON_RELATIVE = process.platform === 'darwin'
+  ? path.join('intern', 'cycles', 'app', 'Blender.app', 'Contents', 'MacOS', CYCLES_DAEMON_NAME)
+  : path.join('intern', 'cycles', 'app', CYCLES_DAEMON_NAME);
 
 const MESH_EXPORT_EXT = new Set(['.glb', '.gltf', '.fbx', '.obj']);
+const meshExportCache = new Map();
+const cyclesSessions = new Map();
+let cyclesSessionSeq = 0;
+let daemonProc = null;
+let daemonBuf = '';
+let daemonReqId = 0;
+const daemonPending = new Map();
+
+function getSceneCacheKey(scenePath) {
+  try {
+    const st = fs.statSync(scenePath);
+    return `${scenePath}:${st.mtimeMs}:${st.size}`;
+  } catch {
+    return scenePath;
+  }
+}
 
 function isMetalKernelBundled(standaloneExecutable) {
   if (process.platform !== 'darwin' || !standaloneExecutable) return false;
@@ -158,6 +178,7 @@ function getCyclesCandidates() {
   const root = path.join(__dirname, '..');
   return [
     process.env.JEPOW_CYCLES_PATH,
+    path.join(root, 'native', 'jepow-cycles', 'build-cycles-standalone', DAEMON_RELATIVE),
     path.join(root, 'native', 'jepow-cycles', 'build', CYCLES_NAME),
     app.isPackaged
       ? path.join(process.resourcesPath, 'native', CYCLES_NAME)
@@ -170,6 +191,88 @@ function getCyclesExecutable() {
     if (fs.existsSync(p)) return p;
   }
   return null;
+}
+
+function parseDaemonLine(line) {
+  try {
+    return JSON.parse(line);
+  } catch {
+    return null;
+  }
+}
+
+function stopCyclesDaemon() {
+  if (!daemonProc) return;
+  try {
+    daemonProc.stdin.write(`${JSON.stringify({ cmd: 'shutdown', id: 0 })}\n`);
+  } catch {
+    /* ignore */
+  }
+  try {
+    daemonProc.kill();
+  } catch {
+    /* ignore */
+  }
+  daemonProc = null;
+  daemonBuf = '';
+  for (const pending of daemonPending.values()) {
+    clearTimeout(pending.timer);
+    pending.resolve({ ok: false, error: 'jepow-cycles daemon stopped' });
+  }
+  daemonPending.clear();
+}
+
+async function ensureCyclesDaemon() {
+  if (daemonProc && !daemonProc.killed) return daemonProc;
+  const executable = getCyclesExecutable();
+  if (!executable) return null;
+  daemonProc = spawn(executable, ['--stdio'], { windowsHide: true });
+  daemonBuf = '';
+  daemonProc.stdout.on('data', (d) => {
+    daemonBuf += d.toString();
+    let idx;
+    while ((idx = daemonBuf.indexOf('\n')) >= 0) {
+      const line = daemonBuf.slice(0, idx).trim();
+      daemonBuf = daemonBuf.slice(idx + 1);
+      if (!line) continue;
+      const msg = parseDaemonLine(line);
+      if (!msg) continue;
+      const pending = daemonPending.get(msg.id);
+      if (pending) {
+        daemonPending.delete(msg.id);
+        clearTimeout(pending.timer);
+        pending.resolve(msg);
+      }
+    }
+  });
+  daemonProc.on('close', () => {
+    daemonProc = null;
+    for (const pending of daemonPending.values()) {
+      clearTimeout(pending.timer);
+      pending.resolve({ ok: false, error: 'jepow-cycles daemon exited' });
+    }
+    daemonPending.clear();
+  });
+  daemonProc.on('error', () => {
+    daemonProc = null;
+  });
+  return daemonProc;
+}
+
+async function runDaemonCommand(cmd, payload = {}, timeoutMs = 5000) {
+  const proc = await ensureCyclesDaemon();
+  if (!proc || !proc.stdin || proc.killed) {
+    return { ok: false, error: 'jepow-cycles daemon unavailable' };
+  }
+  const id = ++daemonReqId;
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => {
+      daemonPending.delete(id);
+      resolve({ ok: false, error: `jepow-cycles daemon timeout (${cmd})` });
+    }, timeoutMs);
+    daemonPending.set(id, { resolve, timer });
+    proc.stdin.write(`${JSON.stringify({ id, cmd, ...payload })}\n`);
+  });
 }
 
 function getCyclesStandaloneExecutable() {
@@ -314,7 +417,17 @@ async function exportMeshViaNativeEngine(scenePath) {
   if (!nativeEngine.getEngineExecutable()) {
     return { ok: false, error: 'jepow-engine 未构建，无法导出 Cycles 网格' };
   }
-  return nativeEngine.runEngineCommand('mesh_for_cycles', { scenePath }, 120000);
+  const key = getSceneCacheKey(scenePath);
+  const cached = meshExportCache.get(key);
+  if (cached) {
+    return { ...cached, cached: true };
+  }
+  const result = await nativeEngine.runEngineCommand('mesh_for_cycles', { scenePath }, 120000);
+  if (result?.ok !== false) {
+    meshExportCache.clear();
+    meshExportCache.set(key, result);
+  }
+  return result;
 }
 
 async function prepareCyclesSceneXml(opts, cacheDir, id) {
@@ -372,6 +485,7 @@ async function prepareCyclesSceneXml(opts, cacheDir, id) {
     rawTriangleCount: Number(meshRes.rawTriangleCount) || 0,
     vertexCount: Number(meshRes.vertexCount) || 0,
     decimated: !!meshRes.decimated,
+    cachedMesh: !!meshRes.cached,
     xmlBytes,
     meshExporter: 'jepow-engine',
   };
@@ -494,6 +608,7 @@ async function renderFrame(opts = {}) {
         rawTriangleCount: prepared.rawTriangleCount,
         vertexCount: prepared.vertexCount,
         xmlBytes: prepared.xmlBytes,
+        cachedMesh: prepared.cachedMesh,
         meshExporter: prepared.meshExporter,
         procedural: !!prepared.procedural,
         stdout: stdout.slice(-2000),
@@ -511,10 +626,261 @@ async function renderFrame(opts = {}) {
   });
 }
 
+async function renderFrameViaDaemon(opts = {}, prepared, outputPath) {
+  const device = opts.device === 'METAL' ? 'METAL' : 'CPU';
+  const samples = clampNumber(opts.samples || opts.renderSettings?.samples, 1, 4096, 64);
+  const width = clampNumber(opts.width, 64, 8192, 768);
+  const height = clampNumber(opts.height, 64, 8192, 512);
+  const started = Date.now();
+  const res = await runDaemonCommand(
+    'render_frame',
+    {
+      sessionId: opts.sessionId || 'cycles-session',
+      scenePath: prepared.scenePath,
+      outputPath,
+      device,
+      samples,
+      width,
+      height,
+    },
+    180000,
+  );
+  if (!res.ok) {
+    return { ok: false, error: res.error || 'jepow-cycles daemon render failed' };
+  }
+  const brightness = fs.existsSync(outputPath) ? analyzePngBrightness(outputPath) : null;
+  const failure = parseCyclesRenderFailure({
+    code: fs.existsSync(outputPath) ? 0 : 1,
+    stderr: '',
+    stdout: '',
+    device,
+    outputPath,
+  });
+  let previewDataUrl = null;
+  if (!failure) {
+    previewDataUrl = `data:image/png;base64,${fs.readFileSync(outputPath).toString('base64')}`;
+  }
+  return {
+    ok: !failure,
+    error: failure,
+    license: LICENSE,
+    renderer: 'jepow-cycles-daemon',
+    scenePath: prepared.scenePath,
+    outputPath,
+    previewDataUrl,
+    device,
+    luminanceMax: brightness?.max ?? null,
+    luminanceMin: brightness?.min ?? null,
+    luminanceMean: brightness?.mean ?? null,
+    luminanceSpan: brightness?.span ?? null,
+    renderSeconds: Number(res.renderSeconds) || (Date.now() - started) / 1000,
+    convertedScene: !!prepared.converted,
+    meshCount: prepared.meshCount,
+    triangleCount: prepared.triangleCount,
+    rawTriangleCount: prepared.rawTriangleCount,
+    vertexCount: prepared.vertexCount,
+    xmlBytes: prepared.xmlBytes,
+    cachedMesh: prepared.cachedMesh,
+    meshExporter: prepared.meshExporter,
+    procedural: !!prepared.procedural,
+  };
+}
+
+function buildFramePayload(session, res, status, stage) {
+  return {
+    ok: !!res?.ok,
+    sessionId: session.id,
+    status,
+    stage,
+    frameVersion: session.frameVersion,
+    previewDataUrl: res?.previewDataUrl || null,
+    renderSeconds: res?.renderSeconds || 0,
+    renderer: res?.renderer || 'cycles-standalone',
+    device: res?.device || session.device,
+    error: res?.error || null,
+    luminanceMax: res?.luminanceMax ?? null,
+    luminanceMin: res?.luminanceMin ?? null,
+    luminanceMean: res?.luminanceMean ?? null,
+    luminanceSpan: res?.luminanceSpan ?? null,
+    triangleCount: res?.triangleCount,
+    rawTriangleCount: res?.rawTriangleCount,
+    vertexCount: res?.vertexCount,
+    cachedMesh: res?.cachedMesh,
+  };
+}
+
+async function runProgressiveSession(session) {
+  const opts = session.opts;
+  const id = session.id;
+  const cacheDir = getCyclesCacheDir();
+  const prepared = await prepareCyclesSceneXml(opts, cacheDir, id);
+  if (!prepared.ok) {
+    session.status = 'error';
+    session.frameVersion += 1;
+    session.frame = {
+      ok: false,
+      sessionId: session.id,
+      status: 'error',
+      stage: 'error',
+      frameVersion: session.frameVersion,
+      error: `Cycles 场景准备失败: ${prepared.error}`,
+    };
+    return;
+  }
+  if (prepared.xmlBytes && prepared.xmlBytes > 6 * 1024 * 1024) {
+    session.status = 'error';
+    session.frameVersion += 1;
+    session.frame = {
+      ok: false,
+      sessionId: session.id,
+      status: 'error',
+      stage: 'error',
+      frameVersion: session.frameVersion,
+      error: `Cycles 场景 XML 过大 (${(prepared.xmlBytes / 1024 / 1024).toFixed(1)} MB)。请简化 FBX 后重试。`,
+    };
+    return;
+  }
+
+  const finalWidth = clampNumber(opts.width || opts.renderSettings?.width, 64, 8192, 768);
+  const finalHeight = clampNumber(opts.height || opts.renderSettings?.height, 64, 8192, 512);
+  const finalSamples = clampNumber(opts.samples || opts.renderSettings?.samples, 1, 4096, 64);
+  const previewScale = Math.min(1, 384 / Math.max(finalWidth, finalHeight));
+  const previewWidth = Math.max(192, Math.round(finalWidth * previewScale));
+  const previewHeight = Math.max(128, Math.round(finalHeight * previewScale));
+  const previewSamples = Math.min(16, finalSamples);
+
+  session.status = 'rendering';
+  session.updatedAt = Date.now();
+
+  await runDaemonCommand('init_session', { sessionId: session.id }, 1500);
+
+  if (session.stopped) return;
+  const previewPath = path.join(cacheDir, `cycles-preview-${id}.png`);
+  const preview = await renderFrameViaDaemon(
+    {
+      ...opts,
+      sessionId: session.id,
+      width: previewWidth,
+      height: previewHeight,
+      samples: previewSamples,
+    },
+    prepared,
+    previewPath,
+  );
+  const previewFrame = preview.ok ? preview : await renderFrame({
+    ...opts,
+    width: previewWidth,
+    height: previewHeight,
+    samples: previewSamples,
+  });
+  if (session.stopped) return;
+  session.frameVersion += 1;
+  session.frame = buildFramePayload(
+    session,
+    previewFrame,
+    previewFrame.ok ? 'rendering' : 'error',
+    'preview',
+  );
+  session.status = session.frame.status;
+  session.updatedAt = Date.now();
+  if (!previewFrame.ok) return;
+
+  await runDaemonCommand('load_scene', { sessionId: session.id, scenePath: prepared.scenePath }, 1500);
+
+  if (session.stopped) return;
+  const finalPath = path.join(cacheDir, `cycles-final-${id}.png`);
+  const daemonFinal = await renderFrameViaDaemon(
+    {
+      ...opts,
+      sessionId: session.id,
+      width: finalWidth,
+      height: finalHeight,
+      samples: finalSamples,
+    },
+    prepared,
+    finalPath,
+  );
+  const finalFrame = daemonFinal.ok ? daemonFinal : await renderFrame({
+    ...opts,
+    width: finalWidth,
+    height: finalHeight,
+    samples: finalSamples,
+  });
+  if (session.stopped) return;
+  session.frameVersion += 1;
+  session.frame = buildFramePayload(session, finalFrame, finalFrame.ok ? 'done' : 'error', 'final');
+  session.status = session.frame.status;
+  session.updatedAt = Date.now();
+}
+
+function startSession(opts = {}) {
+  const sessionId = `cycles-${Date.now()}-${++cyclesSessionSeq}`;
+  const session = {
+    id: sessionId,
+    opts: { ...opts, device: opts.device === 'METAL' ? 'METAL' : 'CPU' },
+    device: opts.device === 'METAL' ? 'METAL' : 'CPU',
+    status: 'starting',
+    frame: null,
+    frameVersion: 0,
+    stopped: false,
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+  };
+  cyclesSessions.set(sessionId, session);
+  runProgressiveSession(session).catch((err) => {
+    if (session.stopped) return;
+    session.status = 'error';
+    session.frameVersion += 1;
+    session.frame = {
+      ok: false,
+      sessionId,
+      status: 'error',
+      stage: 'error',
+      frameVersion: session.frameVersion,
+      error: err instanceof Error ? err.message : String(err),
+    };
+  });
+  return {
+    ok: true,
+    sessionId,
+    status: 'starting',
+    renderer: 'jepow-cycles-progressive',
+    mode: 'standalone-backed-daemon',
+  };
+}
+
+function readSession(sessionId) {
+  const session = cyclesSessions.get(sessionId);
+  if (!session) {
+    return { ok: false, error: 'Cycles session not found', sessionId };
+  }
+  return {
+    ok: true,
+    sessionId,
+    status: session.status,
+    frameVersion: session.frameVersion,
+    frame: session.frame,
+    updatedAt: session.updatedAt,
+  };
+}
+
+function stopSession(sessionId) {
+  const session = cyclesSessions.get(sessionId);
+  if (!session) return { ok: true, sessionId, stopped: true };
+  session.stopped = true;
+  session.status = 'stopped';
+  cyclesSessions.delete(sessionId);
+  return { ok: true, sessionId, stopped: true };
+}
+
 module.exports = {
   LICENSE,
   getCyclesExecutable,
   getCyclesStandaloneExecutable,
   getStatus,
   renderFrame,
+  startSession,
+  readSession,
+  stopSession,
+  stopCyclesDaemon,
 };

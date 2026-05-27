@@ -14,3 +14,4 @@ if [ ! -f "$BUILD_DIR/build.ninja" ]; then
 fi
 
 cmake --build "$BUILD_DIR" --target cycles
+cmake --build "$BUILD_DIR" --target jepow-cycles-daemon

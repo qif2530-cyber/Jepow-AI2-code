@@ -1,5 +1,6 @@
 import type {
   BlenderSceneInfo,
+  CyclesSessionResult,
   RenderPreviewOptions,
   RenderPreviewResult,
   ViewportCapabilities,
@@ -105,6 +106,30 @@ export const jepowNativeViewportEngine: ViewportEngine = {
       return { ok: false, error: 'Cycles renderer API 不可用' };
     }
     return api.renderCyclesFrame(opts) as unknown as Promise<RenderPreviewResult>;
+  },
+
+  async startCyclesSession(opts: RenderPreviewOptions & Record<string, unknown>) {
+    const api = vp();
+    if (!api?.startCyclesSession) {
+      return { ok: false, error: 'Cycles session API 不可用' };
+    }
+    return api.startCyclesSession(opts) as unknown as Promise<CyclesSessionResult>;
+  },
+
+  async readCyclesSession(sessionId: string) {
+    const api = vp();
+    if (!api?.readCyclesSession) {
+      return { ok: false, error: 'Cycles session API 不可用' };
+    }
+    return api.readCyclesSession(sessionId) as unknown as Promise<CyclesSessionResult>;
+  },
+
+  async stopCyclesSession(sessionId: string) {
+    const api = vp();
+    if (!api?.stopCyclesSession) {
+      return { ok: true, sessionId, stopped: true };
+    }
+    return api.stopCyclesSession(sessionId) as unknown as Promise<CyclesSessionResult>;
   },
 
   async readPreviewDataUrl(previewUrl: string) {

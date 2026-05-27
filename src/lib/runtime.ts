@@ -41,6 +41,9 @@ declare global {
         sceneInfo: (scenePath: string) => Promise<Record<string, unknown>>;
         renderPreview: (opts: Record<string, unknown>) => Promise<Record<string, unknown>>;
         renderCyclesFrame?: (opts: Record<string, unknown>) => Promise<Record<string, unknown>>;
+        startCyclesSession?: (opts: Record<string, unknown>) => Promise<Record<string, unknown>>;
+        readCyclesSession?: (sessionId: string) => Promise<Record<string, unknown>>;
+        stopCyclesSession?: (sessionId: string) => Promise<Record<string, unknown>>;
         readPreview: (previewUrl: string) => Promise<string | null>;
       };
       assets?: {

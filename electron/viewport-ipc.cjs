@@ -123,6 +123,22 @@ function registerViewportIpc(ipcMain) {
     });
   });
 
+  ipcMain.handle('viewport:startCyclesSession', async (_e, opts) => {
+    const o = opts || {};
+    return cyclesBridge.startSession({
+      ...o,
+      scenePath: normalizeScenePath(o.scenePath),
+    });
+  });
+
+  ipcMain.handle('viewport:readCyclesSession', async (_e, sessionId) => {
+    return cyclesBridge.readSession(sessionId);
+  });
+
+  ipcMain.handle('viewport:stopCyclesSession', async (_e, sessionId) => {
+    return cyclesBridge.stopSession(sessionId);
+  });
+
   ipcMain.handle('viewport:readPreview', async (_e, previewUrl) => {
     if (!previewUrl || typeof previewUrl !== 'string') return null;
     const name = previewUrl.replace('viewport-cache://', '');

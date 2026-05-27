@@ -101,11 +101,23 @@ export interface RenderPreviewResult {
   error?: string;
 }
 
+export interface CyclesSessionResult extends RenderPreviewResult {
+  sessionId?: string;
+  status?: 'starting' | 'rendering' | 'done' | 'error' | 'stopped';
+  stage?: 'preview' | 'final' | 'error';
+  frameVersion?: number;
+  frame?: CyclesSessionResult | null;
+  mode?: string;
+}
+
 export interface ViewportEngine {
   getCapabilities(): Promise<ViewportCapabilities>;
   openScene(scenePath: string): Promise<SceneInfo>;
   renderPreview(opts: RenderPreviewOptions): Promise<RenderPreviewResult>;
   renderCyclesFrame?(opts: RenderPreviewOptions & Record<string, unknown>): Promise<RenderPreviewResult>;
+  startCyclesSession?(opts: RenderPreviewOptions & Record<string, unknown>): Promise<CyclesSessionResult>;
+  readCyclesSession?(sessionId: string): Promise<CyclesSessionResult>;
+  stopCyclesSession?(sessionId: string): Promise<CyclesSessionResult>;
   readPreviewDataUrl(previewUrl: string): Promise<string | null>;
   pickSceneFile(): Promise<{ canceled: boolean; filePath: string | null }>;
 }

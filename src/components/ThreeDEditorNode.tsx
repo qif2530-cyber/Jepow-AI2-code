@@ -483,8 +483,8 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
   }, [hasNativeScene, modelNode, id, data.renderActive, updateNodeData]);
 
   const highPerfDynamic = perfProfile === "high";
-  /** Cycles 离线成片模式下不叠实时视口，避免 GPU 失败时误显示洋红 MIT 预览 */
-  const showLiveViewport = hasNativeScene && renderActive && viewportMode !== "render";
+  /** Cycles 模式下先保留自研实时视口，离线路径追踪结果出来后再叠加。 */
+  const showLiveViewport = hasNativeScene && renderActive;
   const showPausedOverlay = hasNativeScene && !renderActive;
 
   // Position, Rotation, Scale configurations
@@ -523,6 +523,7 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
     error?: string;
     renderSeconds?: number;
   }>({ status: "idle" });
+  const cyclesRenderSeqRef = useRef(0);
 
   const connectedCyclesLight = editorPipeline.cyclesLight as {
     yaw?: number;
@@ -629,10 +630,56 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
   useEffect(() => {
     if (viewportMode !== "render" || !renderActive || !activeCyclesMaterial) return;
     let cancelled = false;
-    const timer = window.setTimeout(() => {
-      setCyclesFrame((prev) => ({ ...prev, status: "rendering", error: undefined }));
+    let activeCyclesSessionId: string | null = null;
+    let pollTimer: number | null = null;
+    const seq = cyclesRenderSeqRef.current + 1;
+    cyclesRenderSeqRef.current = seq;
+
+    const applyCyclesResult = (res: any, finalFrame: boolean) => {
+      if (cancelled || cyclesRenderSeqRef.current !== seq) return false;
+      const triCount = Number((res as { triangleCount?: number }).triangleCount ?? 0);
+      if (res.ok && res.previewDataUrl) {
+        if ((res as { convertedScene?: boolean }).convertedScene && triCount <= 0) {
+          setCyclesFrame({
+            status: "error",
+            error: "模型导出无三角面，请检查 FBX/GLB 文件",
+          });
+          return false;
+        }
+        const lumMax = Number((res as { luminanceMax?: number }).luminanceMax ?? 255);
+        const lumSpan = Number(
+          (res as { luminanceSpan?: number }).luminanceSpan ??
+            lumMax - Number((res as { luminanceMin?: number }).luminanceMin ?? 0),
+        );
+        const lowContrast = lumMax > 0 && lumMax < 200 && lumSpan < 25;
+        setCyclesFrame({
+          status: finalFrame ? "done" : "rendering",
+          previewDataUrl: res.previewDataUrl,
+          renderSeconds: res.renderSeconds,
+          error: lowContrast
+            ? "Cycles 已出图但对比度偏低，可提高 Key/Env 或换深色材质便于辨认轮廓。"
+            : undefined,
+        });
+        return true;
+      }
+      setCyclesFrame({
+        status: "error",
+        error:
+          res.error ||
+          (res as { stderr?: string }).stderr?.slice(-200) ||
+          "Cycles 渲染失败",
+      });
+      return false;
+    };
+
+    const timer = window.setTimeout(async () => {
+      setCyclesFrame((prev) => ({
+        ...prev,
+        status: "rendering",
+        error: undefined,
+      }));
       const engine = getViewportEngine();
-      if (!engine.renderCyclesFrame) {
+      if (!engine.renderCyclesFrame && !engine.startCyclesSession) {
         setCyclesFrame({ status: "error", error: "Cycles 渲染入口不可用" });
         return;
       }
@@ -641,64 +688,83 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
         setCyclesFrame({ status: "error", error: "未找到可渲染的模型路径" });
         return;
       }
-      engine
-        .renderCyclesFrame({
-          scenePath,
-          width: effectiveRenderSettings.width || 768,
-          height: effectiveRenderSettings.height || 512,
-          material: activeCyclesMaterial as any,
-          cyclesMaterial: activeCyclesMaterial,
-          renderSettings: effectiveRenderSettings,
-          cyclesLight: effectiveCyclesLight,
-          samples: Math.max(16, Number(effectiveRenderSettings.samples) || 32),
-          lighting: nativeLighting,
-          device: effectiveRenderSettings.device || "CPU",
-        } as any)
-        .then((res) => {
-          if (cancelled) return;
-          const triCount = Number((res as { triangleCount?: number }).triangleCount ?? 0);
-          if (res.ok && res.previewDataUrl) {
-            if ((res as { convertedScene?: boolean }).convertedScene && triCount <= 0) {
-              setCyclesFrame({
-                status: "error",
-                error: "模型导出无三角面，请检查 FBX/GLB 文件",
-              });
-              return;
-            }
-            const lumMax = Number((res as { luminanceMax?: number }).luminanceMax ?? 255);
-            const lumSpan = Number(
-              (res as { luminanceSpan?: number }).luminanceSpan ??
-                lumMax - Number((res as { luminanceMin?: number }).luminanceMin ?? 0),
-            );
-            const lowContrast = lumMax > 0 && lumMax < 200 && lumSpan < 25;
-            setCyclesFrame({
-              status: "done",
-              previewDataUrl: res.previewDataUrl,
-              renderSeconds: res.renderSeconds,
-              error: lowContrast
-                ? "Cycles 已出图但对比度偏低，可提高 Key/Env 或换深色材质便于辨认轮廓。"
-                : undefined,
-            });
-          } else {
-            setCyclesFrame({
-              status: "error",
-              error:
-                res.error ||
-                (res as { stderr?: string }).stderr?.slice(-200) ||
-                "Cycles 渲染失败",
-            });
+
+      const baseRequest = {
+        scenePath,
+        material: activeCyclesMaterial as any,
+        cyclesMaterial: activeCyclesMaterial,
+        renderSettings: effectiveRenderSettings,
+        cyclesLight: effectiveCyclesLight,
+        lighting: nativeLighting,
+        device: effectiveRenderSettings.device || "CPU",
+      } as any;
+      const finalWidth = Number(effectiveRenderSettings.width) || 768;
+      const finalHeight = Number(effectiveRenderSettings.height) || 512;
+      const finalSamples = Math.max(16, Number(effectiveRenderSettings.samples) || 32);
+
+      try {
+        if (engine.startCyclesSession && engine.readCyclesSession) {
+          const start = await engine.startCyclesSession({
+            ...baseRequest,
+            width: finalWidth,
+            height: finalHeight,
+            samples: finalSamples,
+          } as any);
+          if (cancelled || cyclesRenderSeqRef.current !== seq) return;
+          const sessionId = String((start as { sessionId?: string }).sessionId || "");
+          if (!start.ok || !sessionId) {
+            applyCyclesResult(start, true);
+            return;
           }
-        })
-        .catch((err: unknown) => {
-          if (cancelled) return;
-          setCyclesFrame({
-            status: "error",
-            error: err instanceof Error ? err.message : "Cycles 渲染失败",
-          });
+          activeCyclesSessionId = sessionId;
+          let lastFrameVersion = -1;
+          const poll = async () => {
+            if (cancelled || cyclesRenderSeqRef.current !== seq || !activeCyclesSessionId) return;
+            const state = await engine.readCyclesSession!(activeCyclesSessionId);
+            if (cancelled || cyclesRenderSeqRef.current !== seq) return;
+            const frame = (state as { frame?: any }).frame;
+            if (frame && Number(frame.frameVersion ?? 0) !== lastFrameVersion) {
+              lastFrameVersion = Number(frame.frameVersion ?? 0);
+              applyCyclesResult(frame, frame.status === "done" || frame.stage === "final");
+            }
+            if (state.status === "done" || state.status === "error") return;
+            pollTimer = window.setTimeout(poll, 280);
+          };
+          pollTimer = window.setTimeout(poll, 120);
+          return;
+        }
+
+        const previewScale = Math.min(1, 384 / Math.max(finalWidth, finalHeight));
+        const previewRes = await engine.renderCyclesFrame!({
+          ...baseRequest,
+          width: Math.max(192, Math.round(finalWidth * previewScale)),
+          height: Math.max(128, Math.round(finalHeight * previewScale)),
+          samples: Math.min(16, finalSamples),
+        } as any);
+        const previewOk = applyCyclesResult(previewRes, false);
+        if (!previewOk || cancelled || cyclesRenderSeqRef.current !== seq) return;
+
+        const finalRes = await engine.renderCyclesFrame!({
+          ...baseRequest,
+          width: finalWidth,
+          height: finalHeight,
+          samples: finalSamples,
+        } as any);
+        applyCyclesResult(finalRes, true);
+      } catch (err: unknown) {
+        if (cancelled || cyclesRenderSeqRef.current !== seq) return;
+        setCyclesFrame({
+          status: "error",
+          error: err instanceof Error ? err.message : "Cycles 渲染失败",
         });
-    }, 220);
+      }
+    }, 180);
     return () => {
       cancelled = true;
+      if (pollTimer != null) window.clearTimeout(pollTimer);
+      if (activeCyclesSessionId) {
+        void getViewportEngine().stopCyclesSession?.(activeCyclesSessionId);
+      }
       window.clearTimeout(timer);
     };
   }, [
@@ -894,8 +960,6 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
                 "请在左侧模型节点用「从磁盘选择大场景」重新导入 FBX/GLB。"}
             </p>
           </div>
-        ) : viewportMode === "render" && hasNativeScene ? (
-          <div className="absolute inset-0 bg-neutral-950" aria-hidden />
         ) : showLiveViewport ? (
           <JepowViewportPreview
             scenePath={resolvedScenePath}
@@ -1030,7 +1094,6 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
         )}
 
         {viewportMode === "render" &&
-          cyclesFrame.status === "done" &&
           cyclesFrame.previewDataUrl && (
           <div className="absolute inset-0 z-[8] bg-neutral-950 pointer-events-none">
             <img
@@ -1071,7 +1134,9 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
               />
               <span className="text-[9px] font-bold text-neutral-200">
                 {cyclesFrame.status === "rendering"
-                  ? "Cycles Path Tracing..."
+                  ? cyclesFrame.previewDataUrl
+                    ? "Cycles Refining..."
+                    : "Cycles Path Tracing..."
                   : cyclesFrame.status === "done"
                     ? `Cycles ${cyclesFrame.renderSeconds?.toFixed(2) ?? ""}s`
                     : "Cycles Error"}

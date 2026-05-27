@@ -71,7 +71,12 @@ Apple Silicon 上还需要 `third_party/blender/lib/macos_arm64` 官方预编译
 
 ## Cycles 原生数据链路
 
-离线渲染走 **Cycles Standalone XML**（非自定义着色器格式）：
+当前产品集成分两层：
+
+- **交互预览层**：Electron 管理 `jepow-cycles` 会话协议，优先连接 `jepow-cycles-daemon --stdio`。
+- **渲染层**：`jepow-cycles-daemon` 直接链接 Cycles `Session`，在常驻进程内读 XML、渲染 preview/final PNG；外层 `jepow-cycles` stub 仅保留 ABI/状态入口。
+
+离线/导入过渡阶段仍走 **Cycles Standalone XML**（非自定义着色器格式）：
 
 - 官方文档：[Cycles Standalone](https://developer.blender.org/docs/features/cycles/standalone/)
 - Principled 字段名与 `intern/cycles/scene/shader_nodes.cpp` 中 `PrincipledBsdfNode` 的 SOCKET 一致（`snake_case`）
@@ -83,6 +88,11 @@ Apple Silicon 上还需要 `third_party/blender/lib/macos_arm64` 官方预编译
 | 画布 Cycles 节点 | 封装 UI，不进入 AI `createNodeViaAi` |
 | 连线 / 解析 | `src/lib/native-3d-pipeline.ts`、`cycles-shader-graph.ts` |
 | 交互视口 | MIT `jepow-engine` PBR 预览（与 GPL Cycles 隔离） |
+| Cycles 预览 | GPL `jepow-cycles-daemon --stdio` 会话；不可用时 fallback 到 standalone progressive |
 | 离线成片 | GPL `jepow-cycles` / standalone `cycles` 子进程 |
+
+### Metal / GPU 状态
+
+Apple Silicon 的 Cycles Metal 需要把 `kernel.framework` / Metal kernel 资源打进 standalone app bundle。未检测到这些资源时，Electron UI 固定为 CPU，避免显示可用但实际编译失败。
 
 **Shader graph：** 画布节点导出为官方 XML 节点链（`image_texture` → `gamma` / `brightness_contrast` / `rgb_curves` / `rgb_ramp` / `mix_color` / `map_range` / `rgb_to_bw` → `principled_bsdf`，以及 `normal_map`、`displacement`）。IR 构建见 `src/lib/cycles-shader-graph-ir.ts`。

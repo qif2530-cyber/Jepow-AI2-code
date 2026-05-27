@@ -44,6 +44,9 @@ contextBridge.exposeInMainWorld('jepowDesktop', {
     sceneInfo: (scenePath) => ipcRenderer.invoke('viewport:sceneInfo', scenePath),
     renderPreview: (opts) => ipcRenderer.invoke('viewport:renderPreview', opts),
     renderCyclesFrame: (opts) => ipcRenderer.invoke('viewport:renderCyclesFrame', opts),
+    startCyclesSession: (opts) => ipcRenderer.invoke('viewport:startCyclesSession', opts),
+    readCyclesSession: (sessionId) => ipcRenderer.invoke('viewport:readCyclesSession', sessionId),
+    stopCyclesSession: (sessionId) => ipcRenderer.invoke('viewport:stopCyclesSession', sessionId),
     readPreview: (previewUrl) => ipcRenderer.invoke('viewport:readPreview', previewUrl),
   },
 });
