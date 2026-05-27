@@ -1,4 +1,7 @@
-const { principledBsdfXmlAttrs, xmlEscape } = require('./cycles-xml-export.cjs');
+const {
+  principledBsdfXmlAttrs,
+  xmlEscape,
+} = require('./cycles-xml-principled.cjs');
 
 function nodeXml(node) {
   const { name, type, params = {} } = node;
@@ -37,8 +40,14 @@ function buildShaderGraphInnerXml(shaderGraph) {
   return lines.join('\n');
 }
 
+function hasOutputSurfaceLink(shaderGraph) {
+  return (shaderGraph?.links || []).some(
+    (l) => l.to?.[0] === 'output' && String(l.to?.[1]).toLowerCase() === 'surface',
+  );
+}
+
 function buildShaderBlockXml(shaderGraph, fallbackPrincipled) {
-  if (shaderGraph?.nodes?.length) {
+  if (shaderGraph?.nodes?.length && hasOutputSurfaceLink(shaderGraph)) {
     return `  <shader name="jepow_material">\n${buildShaderGraphInnerXml(shaderGraph)}\n  </shader>`;
   }
   const attrs = principledBsdfXmlAttrs(fallbackPrincipled || {});

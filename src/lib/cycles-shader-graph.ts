@@ -68,7 +68,11 @@ export function resolveCyclesMaterialForEditor(
   const data = materialNode.data as Record<string, unknown>;
 
   if (type === "materialGenNode" || type === "materialReplaceNode") {
-    return createCyclesMaterial(data);
+    const mat = createCyclesMaterial(data);
+    return {
+      ...mat,
+      shaderGraph: buildCyclesShaderGraphIR(materialNode, nodes, edges, mat),
+    };
   }
 
   if (type === "cyclesPrincipledNode") {

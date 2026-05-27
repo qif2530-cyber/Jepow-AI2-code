@@ -196,6 +196,13 @@ pub fn run_daemon_loop() {
                 loaded_path = None;
                 ok_response(id, json!({ "closed": true }))
             }
+            "mesh_for_cycles" => match req.get("scenePath").and_then(|v| v.as_str()) {
+                None => err_response(id, "scenePath required"),
+                Some(path) => match crate::cycles_mesh::mesh_for_cycles(path) {
+                    Err(e) => err_response(id, e.to_string()),
+                    Ok(data) => ok_response(id, data),
+                },
+            },
             _ => err_response(id, format!("unknown cmd: {}", cmd)),
         };
 

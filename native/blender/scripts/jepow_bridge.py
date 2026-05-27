@@ -446,7 +446,14 @@ def _shader_node_xml_line(node: dict) -> str:
 
 
 def _shader_graph_shader_lines(shader_graph: dict | None, material: dict) -> list[str]:
-    if shader_graph and shader_graph.get("nodes"):
+    has_surface = False
+    if shader_graph:
+        for link in shader_graph.get("links") or []:
+            to = link.get("to") or []
+            if len(to) == 2 and to[0] == "output" and str(to[1]).lower() == "surface":
+                has_surface = True
+                break
+    if shader_graph and shader_graph.get("nodes") and has_surface:
         lines = ['  <shader name="jepow_material">']
         for node in shader_graph["nodes"]:
             lines.append(_shader_node_xml_line(node))
@@ -466,6 +473,23 @@ def _shader_graph_shader_lines(shader_graph: dict | None, material: dict) -> lis
         f'    <principled_bsdf name="principled" {attrs} />',
         '    <connect from="principled BSDF" to="output surface" />',
         "  </shader>",
+    ]
+
+
+def _cycles_background_block(strength: float, color: str) -> list[str]:
+    return [
+        "  <background>",
+        f'    <background_shader name="jepow_bg" color="{color}" strength="{strength}" />',
+        '    <connect from="jepow_bg Background" to="output surface" />',
+        "  </background>",
+    ]
+
+
+def _cycles_camera_block(width: int, height: int, fov: float = 0.72, distance: float = 4.2) -> list[str]:
+    return [
+        f'  <transform matrix="1 0 0 0  0 1 0 0  0 0 1 0  0 0 {distance} 1">',
+        f'    <camera width="{width}" height="{height}" type="perspective" fov="{fov}" />',
+        "  </transform>",
     ]
 
 
@@ -502,7 +526,7 @@ def cmd_export_cycles_xml(payload: dict) -> None:
                 mesh.calc_loop_triangles()
                 points = [obj.matrix_world @ v.co for v in mesh.vertices]
                 triangles = [
-                    tuple(int(i) for i in tri.vertices)
+                    tuple(reversed(tuple(int(i) for i in tri.vertices)))
                     for tri in mesh.loop_triangles
                     if len(tri.vertices) == 3
                 ]
@@ -529,9 +553,9 @@ def cmd_export_cycles_xml(payload: dict) -> None:
         light = payload.get("cyclesLight") or {}
         render_settings = payload.get("renderSettings") or {}
 
-        background = _vec3(_hex_rgb(light.get("backgroundColor"), (0.03, 0.035, 0.04)))
-        environment_strength = _clamp(light.get("environmentStrength"), 0, 4, 0.75)
-        key_strength = _clamp(light.get("keyStrength"), 0, 5000, 650)
+        background = _vec3(_hex_rgb(light.get("backgroundColor"), (0.11, 0.12, 0.14)))
+        environment_strength = _clamp(light.get("environmentStrength"), 0, 8, 1.2)
+        key_strength = _clamp(light.get("keyStrength"), 0, 5000, 800)
         key_size = _clamp(light.get("keySize"), 0.01, 20, 3)
         yaw = math.radians(_clamp(light.get("yaw"), 0, 360, 45))
         pitch = math.radians(_clamp(light.get("pitch"), -85, 85, 35))
@@ -545,9 +569,9 @@ def cmd_export_cycles_xml(payload: dict) -> None:
         lines = [
             '<?xml version="1.0"?>',
             "<cycles>",
-            f'  <integrator max_bounce="{bounces}" diffuse_bounces="4" glossy_bounces="4" transparent_max_bounce="8" />',
-            f'  <camera width="{width}" height="{height}" type="perspective" fov="0.72" matrix="1 0 0 0  0 1 0 0  0 0 1 0  0 0 4.2 1" />',
-            f'  <background strength="{environment_strength}" color="{background}" />',
+            f'  <integrator use_adaptive_sampling="0" max_bounce="{bounces}" diffuse_bounces="4" glossy_bounces="4" transparent_max_bounce="8" />',
+            *_cycles_camera_block(width, height),
+            *_cycles_background_block(environment_strength, background),
             *_shader_graph_shader_lines(shader_graph, material),
             f'  <transform translate="{lx:.4f} {ly:.4f} {lz:.4f}">',
             f'    <light light_type="point" strength="{key_strength}" size="{key_size}" />',

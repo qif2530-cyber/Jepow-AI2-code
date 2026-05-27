@@ -14,6 +14,7 @@ import { getLocalUserId } from "../lib/local-user-id";
 import { getCurrentProjectId } from "../lib/current-project";
 import { createCyclesMaterial, cyclesToViewportMaterial } from "../lib/cycles-material";
 import { resolveEditorInputs } from "../lib/native-3d-pipeline";
+import { buildCyclesLightPayload } from "../lib/cycles-light-payload";
 import { getViewportEngine } from "../lib/viewport-engine";
 
 interface ThreeDEditorNodeProps {
@@ -406,7 +407,7 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
         nodes,
         edges,
       ),
-    [id, data, nodes, edges],
+    [id, nodes, edges],
   );
 
   const activeGlb =
@@ -420,12 +421,17 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
     "";
   const activeMaterial = editorPipeline.materialPreview;
   const activeCyclesMaterial = editorPipeline.cyclesMaterial;
+  const cyclesMaterialRenderKey = useMemo(() => {
+    if (!activeCyclesMaterial) return "";
+    const { shaderGraph, ...rest } = activeCyclesMaterial;
+    return JSON.stringify({ rest, graph: shaderGraph });
+  }, [activeCyclesMaterial]);
   const activeViewportMaterial = useMemo(
     () =>
       activeCyclesMaterial
         ? cyclesToViewportMaterial({ cyclesMaterial: activeCyclesMaterial })
         : null,
-    [activeCyclesMaterial],
+    [cyclesMaterialRenderKey],
   );
 
   const glbToRender = activeGlb || "";
@@ -477,7 +483,8 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
   }, [hasNativeScene, modelNode, id, data.renderActive, updateNodeData]);
 
   const highPerfDynamic = perfProfile === "high";
-  const showLiveViewport = hasNativeScene && renderActive;
+  /** Cycles 离线成片模式下不叠实时视口，避免 GPU 失败时误显示洋红 MIT 预览 */
+  const showLiveViewport = hasNativeScene && renderActive && viewportMode !== "render";
   const showPausedOverlay = hasNativeScene && !renderActive;
 
   // Position, Rotation, Scale configurations
@@ -539,6 +546,11 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
     [renderSettings, connectedCyclesSettings],
   );
 
+  const effectiveCyclesLight = useMemo(
+    () => buildCyclesLightPayload(lights, connectedCyclesLight),
+    [lights, connectedCyclesLight],
+  );
+
   const nativeLighting = useMemo(
     () => ({
       yaw: Number(connectedCyclesLight?.yaw ?? lights.yaw),
@@ -581,28 +593,38 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
     }));
   };
 
-  // Keep React Flow output in-sync
-  useEffect(() => {
-    updateNodeData(id, {
-      sceneData: {
+  // 同步 sceneData（勿写入 cyclesMaterial / shaderGraph，否则每次解析都会生成新对象引用 → updateNodeData 死循环）
+  const sceneDataSyncKey = useMemo(
+    () =>
+      JSON.stringify({
         glbUrl: glbToRender,
-        material: activeCyclesMaterial,
         transform,
         lights,
         renderSettings,
         cyclesLight: connectedCyclesLight,
-      }
+      }),
+    [glbToRender, transform, lights, renderSettings, connectedCyclesLight],
+  );
+  const sceneDataSyncRef = useRef<string>("");
+  useEffect(() => {
+    if (sceneDataSyncRef.current === sceneDataSyncKey) return;
+    sceneDataSyncRef.current = sceneDataSyncKey;
+    updateNodeData(id, {
+      sceneData: {
+        glbUrl: glbToRender,
+        transform,
+        lights,
+        renderSettings,
+        cyclesLight: connectedCyclesLight,
+      },
     });
-  }, [
-    glbToRender,
-    activeCyclesMaterial,
-    transform,
-    lights,
-    renderSettings,
-    connectedCyclesLight,
-    updateNodeData,
-    id,
-  ]);
+  }, [sceneDataSyncKey, glbToRender, transform, lights, renderSettings, connectedCyclesLight, updateNodeData, id]);
+
+  useEffect(() => {
+    if (viewportMode !== "render") {
+      setCyclesFrame({ status: "idle" });
+    }
+  }, [viewportMode]);
 
   useEffect(() => {
     if (viewportMode !== "render" || !renderActive || !activeCyclesMaterial) return;
@@ -614,31 +636,56 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
         setCyclesFrame({ status: "error", error: "Cycles 渲染入口不可用" });
         return;
       }
+      const scenePath = resolvedScenePath || glbToRender || "";
+      if (!scenePath) {
+        setCyclesFrame({ status: "error", error: "未找到可渲染的模型路径" });
+        return;
+      }
       engine
         .renderCyclesFrame({
-          scenePath: resolvedScenePath || glbToRender || "cycles-preview.xml",
+          scenePath,
           width: effectiveRenderSettings.width || 768,
           height: effectiveRenderSettings.height || 512,
           material: activeCyclesMaterial as any,
           cyclesMaterial: activeCyclesMaterial,
           renderSettings: effectiveRenderSettings,
-          cyclesLight: connectedCyclesLight,
-          samples: effectiveRenderSettings.samples,
+          cyclesLight: effectiveCyclesLight,
+          samples: Math.max(16, Number(effectiveRenderSettings.samples) || 32),
           lighting: nativeLighting,
           device: effectiveRenderSettings.device || "CPU",
         } as any)
         .then((res) => {
           if (cancelled) return;
+          const triCount = Number((res as { triangleCount?: number }).triangleCount ?? 0);
           if (res.ok && res.previewDataUrl) {
+            if ((res as { convertedScene?: boolean }).convertedScene && triCount <= 0) {
+              setCyclesFrame({
+                status: "error",
+                error: "模型导出无三角面，请检查 FBX/GLB 文件",
+              });
+              return;
+            }
+            const lumMax = Number((res as { luminanceMax?: number }).luminanceMax ?? 255);
+            const lumSpan = Number(
+              (res as { luminanceSpan?: number }).luminanceSpan ??
+                lumMax - Number((res as { luminanceMin?: number }).luminanceMin ?? 0),
+            );
+            const lowContrast = lumMax > 0 && lumMax < 200 && lumSpan < 25;
             setCyclesFrame({
               status: "done",
               previewDataUrl: res.previewDataUrl,
               renderSeconds: res.renderSeconds,
+              error: lowContrast
+                ? "Cycles 已出图但对比度偏低，可提高 Key/Env 或换深色材质便于辨认轮廓。"
+                : undefined,
             });
           } else {
             setCyclesFrame({
               status: "error",
-              error: res.error || "Cycles 渲染失败",
+              error:
+                res.error ||
+                (res as { stderr?: string }).stderr?.slice(-200) ||
+                "Cycles 渲染失败",
             });
           }
         })
@@ -657,9 +704,9 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
   }, [
     viewportMode,
     renderActive,
-    activeCyclesMaterial,
+    cyclesMaterialRenderKey,
     effectiveRenderSettings,
-    connectedCyclesLight,
+    effectiveCyclesLight,
     resolvedScenePath,
     glbToRender,
     nativeLighting,
@@ -847,6 +894,8 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
                 "请在左侧模型节点用「从磁盘选择大场景」重新导入 FBX/GLB。"}
             </p>
           </div>
+        ) : viewportMode === "render" && hasNativeScene ? (
+          <div className="absolute inset-0 bg-neutral-950" aria-hidden />
         ) : showLiveViewport ? (
           <JepowViewportPreview
             scenePath={resolvedScenePath}
@@ -980,13 +1029,31 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
           )
         )}
 
-        {viewportMode === "render" && cyclesFrame.previewDataUrl && (
-          <div className="absolute inset-0 z-[8] bg-black pointer-events-none">
+        {viewportMode === "render" &&
+          cyclesFrame.status === "done" &&
+          cyclesFrame.previewDataUrl && (
+          <div className="absolute inset-0 z-[8] bg-neutral-950 pointer-events-none">
             <img
               src={cyclesFrame.previewDataUrl}
               alt="Cycles Render"
-              className="w-full h-full object-cover"
+              className="w-full h-full object-contain"
+              onError={() =>
+                setCyclesFrame({
+                  status: "error",
+                  error: "Cycles 预览图加载失败",
+                })
+              }
             />
+          </div>
+        )}
+
+        {viewportMode === "render" &&
+          cyclesFrame.status === "rendering" &&
+          showLiveViewport && (
+          <div className="absolute inset-0 z-[6] bg-black/40 pointer-events-none flex items-center justify-center">
+            <span className="text-[10px] text-emerald-200/90 font-medium animate-pulse">
+              Cycles 路径追踪中…
+            </span>
           </div>
         )}
 
@@ -1011,7 +1078,7 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
               </span>
             </div>
             {cyclesFrame.error && (
-              <div className="mt-1 max-w-[220px] truncate text-[8px] text-red-300">
+              <div className="mt-1 max-w-[300px] text-[8px] text-red-300 leading-snug break-words line-clamp-5">
                 {cyclesFrame.error}
               </div>
             )}

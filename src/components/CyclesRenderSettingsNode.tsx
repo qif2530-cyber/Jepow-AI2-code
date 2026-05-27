@@ -59,10 +59,20 @@ export function CyclesRenderSettingsNode({ id, data, selected }: CyclesRenderSet
               update({ device: device === "CPU" ? "METAL" : "CPU" });
             }}
             className="text-[8px] text-blue-300 border border-blue-900/60 bg-blue-950/30 rounded px-1.5 py-0.5"
+            title={
+              device === "METAL"
+                ? "GPU 需 standalone 打包 Metal 内核；未打包时请用 CPU"
+                : "推荐：当前 jepow-cycles standalone 默认可用 CPU"
+            }
           >
             {device}
           </button>
         </div>
+        {device === "METAL" ? (
+          <p className="text-[8px] text-amber-400/90 leading-tight">
+            Metal 需 kernel.framework；未打包时会报错，请先用 CPU。
+          </p>
+        ) : null}
         <div className="grid grid-cols-2 gap-2 text-[9px]">
           <label className="flex flex-col gap-1 bg-neutral-900/60 rounded p-2">
             Samples {samples}

@@ -1,0 +1,18 @@
+<?xml version="1.0"?>
+<cycles>
+  <integrator use_adaptive_sampling="0" max_bounce="8" />
+  <transform matrix="1 0 0 0  0 1 0 0  0 0 1 0  0 0 4.2 1">
+    <camera width="256" height="256" type="perspective" fov="0.72" />
+  </transform>
+  <background>
+    <background_shader name="jepow_bg" color="0.05 0.05 0.08" strength="1" />
+    <connect from="jepow_bg Background" to="output surface" />
+  </background>
+  <shader name="jepow_material">
+    <principled_bsdf name="principled" base_color="0.8 0.2 0.15" roughness="0.4" metallic="0" />
+    <connect from="principled BSDF" to="output surface" />
+  </shader>
+  <state shader="jepow_material" interpolation="smooth">
+    <mesh P="-1 -1 0  1 -1 0  1 1 0  -1 1 0  0 0 1.35" verts="0 1 4  1 2 4  2 3 4  3 0 4  3 2 1 0" nverts="3 3 3 3 4" />
+  </state>
+</cycles>

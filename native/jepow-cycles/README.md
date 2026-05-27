@@ -76,7 +76,7 @@ Apple Silicon 上还需要 `third_party/blender/lib/macos_arm64` 官方预编译
 - 官方文档：[Cycles Standalone](https://developer.blender.org/docs/features/cycles/standalone/)
 - Principled 字段名与 `intern/cycles/scene/shader_nodes.cpp` 中 `PrincipledBsdfNode` 的 SOCKET 一致（`snake_case`）
 - 应用内契约：`src/lib/cycles-native-schema.ts`（`getCyclesNativeCompliance()`）
-- XML 生成：`electron/cycles-xml-export.cjs`；带网格导出：`native/blender/scripts/jepow_bridge.py`（`export_cycles_xml`）
+- XML 生成：`electron/cycles-xml-export.cjs`；网格导出：`jepow-engine` 命令 `mesh_for_cycles`（`electron/cycles-mesh-xml.cjs`）
 
 | 层级 | 实现 |
 |------|------|

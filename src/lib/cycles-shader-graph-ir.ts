@@ -8,10 +8,16 @@ import {
   type CyclesShaderGraphNode,
 } from "./cycles-shader-graph-types";
 
-let nameSeq = 0;
-function uid(prefix: string) {
-  nameSeq += 1;
-  return `${prefix}_${nameSeq}`;
+/** 稳定节点名（避免每次解析生成新 IR 导致下游 effect 抖动） */
+function stableNodeName(canvasNodeId: string, role: string) {
+  const safe = canvasNodeId.replace(/[^a-zA-Z0-9]/g, "").slice(0, 24) || "node";
+  return `${role}_${safe}`;
+}
+
+let fallbackSeq = 0;
+function fallbackName(prefix: string) {
+  fallbackSeq += 1;
+  return `${prefix}_fb_${fallbackSeq}`;
 }
 
 function upstreamColorEdge(targetId: string, edges: Edge[], handle = "colorIn") {
@@ -56,7 +62,7 @@ function traceColorChain(
 
     if (type === "cyclesImageTextureNode") {
       const url = imageUrlFromNode(node, nodes, edges);
-      const name = uid("tex");
+      const name = stableNodeName(node.id, "tex");
       ir.nodes.push({
         name,
         type: "image_texture",
@@ -75,7 +81,7 @@ function traceColorChain(
     }
 
     if (CYCLES_COLOR_NODE_TYPES.has(type)) {
-      const name = uid(type.replace("cycles", "").replace("Node", ""));
+      const name = stableNodeName(node.id, type.replace("cycles", "").replace("Node", ""));
       const n: CyclesShaderGraphNode = { name, type: "gamma", params: {} };
 
       switch (type) {
@@ -221,7 +227,7 @@ function buildNormalChain(
   const colorEnd = traceColorChain(normalNode.id, nodes, edges, ir);
   if (!colorEnd) return null;
   const sd = normalNode.data as { strength?: number };
-  const name = uid("nrm");
+  const name = stableNodeName(normalNode.id, "nrm");
   ir.nodes.push({
     name,
     type: "normal_map",
@@ -244,14 +250,14 @@ function buildDisplacementChain(
   let heightSocket = colorEnd.socket;
 
   if (colorEnd.socket === "Color") {
-    const bw = uid("disp_bw");
+    const bw = stableNodeName(dispNode.id, "disp_bw");
     ir.nodes.push({ name: bw, type: "rgb_to_bw", params: {} });
     ir.links.push({ from: [colorEnd.nodeName, colorEnd.socket], to: [bw, "Color"] });
     heightName = bw;
     heightSocket = "Val";
   }
 
-  const name = uid("disp");
+  const name = stableNodeName(dispNode.id, "disp");
   ir.nodes.push({
     name,
     type: "displacement",
@@ -272,10 +278,12 @@ export function buildCyclesShaderGraphIR(
   edges: Edge[],
   material: CyclesMaterial,
 ): CyclesShaderGraphIR {
-  nameSeq = 0;
+  fallbackSeq = 0;
   const ir: CyclesShaderGraphIR = { nodes: [], links: [] };
   const p = material.principled;
-  const principledName = uid("principled");
+  const principledName = materialNode
+    ? stableNodeName(materialNode.id, "principled")
+    : fallbackName("principled");
 
   ir.nodes.push({
     name: principledName,
@@ -343,7 +351,7 @@ function appendTextureFallbacks(
     if (linked.has(handle)) continue;
     const url = material.textures[key];
     if (!url) continue;
-    const name = uid(`tex_${key}`);
+    const name = fallbackName(`tex_${key}`);
     ir.nodes.push({
       name,
       type: "image_texture",
@@ -354,8 +362,8 @@ function appendTextureFallbacks(
   }
 
   if (!linked.has("Normal") && material.textures.normal) {
-    const tex = uid("tex_normal");
-    const nrm = uid("nrm");
+    const tex = fallbackName("tex_normal");
+    const nrm = fallbackName("nrm");
     ir.nodes.push({
       name: tex,
       type: "image_texture",
@@ -380,9 +388,9 @@ function appendTextureFallbacks(
     material.textures.displacement &&
     material.principled.displacementScale > 0
   ) {
-    const tex = uid("tex_disp");
-    const bw = uid("disp_bw");
-    const disp = uid("disp");
+    const tex = fallbackName("tex_disp");
+    const bw = fallbackName("disp_bw");
+    const disp = fallbackName("disp");
     ir.nodes.push({
       name: tex,
       type: "image_texture",
@@ -419,7 +427,7 @@ function appendColorManagementGamma(
   if (Math.abs(gamma - 1) < 0.001) return;
   const baseLink = ir.links.find((l) => l.to[0] === principledName && l.to[1] === "Base Color");
   if (!baseLink) return;
-  const g = uid("view_gamma");
+  const g = fallbackName("view_gamma");
   ir.nodes.push({ name: g, type: "gamma", params: { gamma } });
   ir.links.push({ from: [baseLink.from[0], baseLink.from[1]], to: [g, "Color"] });
   baseLink.from = [g, "Color"];
