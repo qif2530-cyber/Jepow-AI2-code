@@ -484,29 +484,30 @@ fn readback_png(
 }
 
 pub fn parse_object_transform(payload: &serde_json::Value) -> ObjectTransform {
+    let t_val = payload.get("transform").unwrap_or(payload);
     let mut t = ObjectTransform {
         scale: 1.0,
         ..Default::default()
     };
-    if let Some(v) = payload.get("x").and_then(|v| v.as_f64()) {
+    if let Some(v) = t_val.get("x").and_then(|v| v.as_f64()) {
         t.x = v as f32;
     }
-    if let Some(v) = payload.get("y").and_then(|v| v.as_f64()) {
+    if let Some(v) = t_val.get("y").and_then(|v| v.as_f64()) {
         t.y = v as f32;
     }
-    if let Some(v) = payload.get("z").and_then(|v| v.as_f64()) {
+    if let Some(v) = t_val.get("z").and_then(|v| v.as_f64()) {
         t.z = v as f32;
     }
-    if let Some(v) = payload.get("rx").and_then(|v| v.as_f64()) {
+    if let Some(v) = t_val.get("rx").and_then(|v| v.as_f64()) {
         t.rx = v as f32;
     }
-    if let Some(v) = payload.get("ry").and_then(|v| v.as_f64()) {
+    if let Some(v) = t_val.get("ry").and_then(|v| v.as_f64()) {
         t.ry = v as f32;
     }
-    if let Some(v) = payload.get("rz").and_then(|v| v.as_f64()) {
+    if let Some(v) = t_val.get("rz").and_then(|v| v.as_f64()) {
         t.rz = v as f32;
     }
-    if let Some(v) = payload.get("scale").and_then(|v| v.as_f64()) {
+    if let Some(v) = t_val.get("scale").and_then(|v| v.as_f64()) {
         t.scale = v as f32;
     }
     t

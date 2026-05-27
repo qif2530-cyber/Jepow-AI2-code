@@ -38,12 +38,13 @@ function buildCameraBlockXml(width, height, fov = Math.PI / 4, distance = 4.2, c
     center[2] + dist * Math.cos(pitch) * Math.cos(yaw),
   ];
   const forward = normalize3([center[0] - eye[0], center[1] - eye[1], center[2] - eye[2]]);
-  const right = normalize3(cross3([0, 1, 0], forward));
-  const up = cross3(forward, right);
+  const z_axis = [-forward[0], -forward[1], -forward[2]];
+  const right = normalize3(cross3([0, 1, 0], z_axis));
+  const up = cross3(z_axis, right);
   const matrix = [
     ...right, 0,
     ...up, 0,
-    ...forward, 0,
+    ...z_axis, 0,
     ...eye, 1,
   ].map((v) => Number(v).toFixed(6)).join(' ');
   const type = camera.type === 'panorama' || camera.type === 'orthograph' ? camera.type : 'perspective';
@@ -89,9 +90,9 @@ function buildObjectTransformMatrix(t = {}) {
   const m21 = (cy * sxr) * sx;
   const m22 = (cy * cx) * sx;
   return [
-    m00, m01, m02, 0,
-    m10, m11, m12, 0,
-    m20, m21, m22, 0,
+    m00, m10, m20, 0,
+    m01, m11, m21, 0,
+    m02, m12, m22, 0,
     clampNumber(t.x, -1000, 1000, 0),
     clampNumber(t.y, -1000, 1000, 0),
     clampNumber(t.z, -1000, 1000, 0),
