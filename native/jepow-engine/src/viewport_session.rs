@@ -46,6 +46,24 @@ pub enum ShadingMode {
     Render,
 }
 
+fn scene_fit_matrix(mesh: &MeshData) -> Mat4 {
+    if mesh.vertices.is_empty() {
+        return Mat4::IDENTITY;
+    }
+    let mut min = Vec3::splat(f32::MAX);
+    let mut max = Vec3::splat(f32::MIN);
+    for v in &mesh.vertices {
+        let p = Vec3::new(v.pos[0], v.pos[1], v.pos[2]);
+        min = min.min(p);
+        max = max.max(p);
+    }
+    let center = (min + max) * 0.5;
+    let size = max - min;
+    let max_dim = size.x.max(size.y).max(size.z).max(1e-6);
+    let scale = 1.6 / max_dim;
+    Mat4::from_scale(Vec3::splat(scale)) * Mat4::from_translation(-center)
+}
+
 /// Blender-style persistent viewport: GPU + mesh stay loaded; frames only update uniforms.
 pub struct ViewportSession {
     device: wgpu::Device,
@@ -61,6 +79,7 @@ pub struct ViewportSession {
     light: ViewLight,
     material: ViewMaterial,
     transform: ObjectTransform,
+    scene_fit: Mat4,
     shading: ShadingMode,
     frame_w: u32,
     frame_h: u32,
@@ -208,6 +227,7 @@ impl ViewportSession {
                 scale: 1.0,
                 ..Default::default()
             },
+            scene_fit: Mat4::IDENTITY,
             shading: ShadingMode::Clay,
             frame_w,
             frame_h,
@@ -284,6 +304,7 @@ impl ViewportSession {
         self.vertex_buffer = vb;
         self.index_buffer = ib;
         self.index_count = count;
+        self.scene_fit = scene_fit_matrix(mesh.as_ref());
         self.scene_path = Some(path.to_string());
         Ok(serde_json::json!({
             "scenePath": path,
@@ -323,6 +344,7 @@ impl ViewportSession {
             t.rz.to_radians(),
         );
         Mat4::from_scale_rotation_translation(Vec3::splat(scale), rot, Vec3::new(t.x, t.y, t.z))
+            * self.scene_fit
     }
 
     fn effective_light(&self) -> ViewLight {

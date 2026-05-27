@@ -32,7 +32,7 @@ fn mesh_cache_key(path: &str) -> String {
         .map(|d| d.as_millis())
         .unwrap_or(0);
     let size = meta.map(|m| m.len()).unwrap_or(0);
-    format!("v3-normals:{base}:{modified}:{size}")
+    format!("v4-raw-positions:{base}:{modified}:{size}")
 }
 
 /// Cached mesh load (parse FBX once per path per process).
@@ -72,7 +72,7 @@ fn load_meshes_uncached(path: &str) -> Result<MeshData> {
         .unwrap_or("")
         .to_lowercase();
 
-    let mut combined = match ext.as_str() {
+    let combined = match ext.as_str() {
         "glb" | "gltf" => load_gltf_mesh(path)?,
         "fbx" => load_fbx_mesh(path)?,
         "obj" => load_obj_mesh(path)?,
@@ -83,7 +83,6 @@ fn load_meshes_uncached(path: &str) -> Result<MeshData> {
         anyhow::bail!("no renderable triangles in {}", path);
     }
 
-    normalize_mesh(&mut combined);
     Ok(combined)
 }
 
@@ -270,27 +269,3 @@ fn load_obj_mesh(path: &str) -> Result<MeshData> {
     Ok(MeshData { vertices, indices })
 }
 
-fn normalize_mesh(mesh: &mut MeshData) {
-    let mut min = [f32::MAX; 3];
-    let mut max = [f32::MIN; 3];
-    for v in &mesh.vertices {
-        for i in 0..3 {
-            min[i] = min[i].min(v.pos[i]);
-            max[i] = max[i].max(v.pos[i]);
-        }
-    }
-    let center = [
-        (min[0] + max[0]) * 0.5,
-        (min[1] + max[1]) * 0.5,
-        (min[2] + max[2]) * 0.5,
-    ];
-    let size = [max[0] - min[0], max[1] - min[1], max[2] - min[2]];
-    let max_dim = size[0].max(size[1]).max(size[2]).max(1e-6);
-    let scale = 1.6 / max_dim;
-
-    for v in &mut mesh.vertices {
-        v.pos[0] = (v.pos[0] - center[0]) * scale;
-        v.pos[1] = (v.pos[1] - center[1]) * scale;
-        v.pos[2] = (v.pos[2] - center[2]) * scale;
-    }
-}

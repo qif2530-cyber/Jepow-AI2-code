@@ -26,6 +26,7 @@ const MESH_EXPORT_EXT = new Set(['.glb', '.gltf', '.fbx', '.obj']);
 const meshExportCache = new Map();
 const cyclesSessions = new Map();
 const navigationSettleTimers = new Map();
+const CYCLES_MESH_EXPORT_VERSION = 'cycles-mesh-v7-raw-faces-fit-matrix';
 let cyclesSessionSeq = 0;
 let daemonProc = null;
 let daemonBuf = '';
@@ -35,9 +36,9 @@ const daemonPending = new Map();
 function getSceneCacheKey(scenePath) {
   try {
     const st = fs.statSync(scenePath);
-    return `${scenePath}:${st.mtimeMs}:${st.size}`;
+    return `${CYCLES_MESH_EXPORT_VERSION}:${scenePath}:${st.mtimeMs}:${st.size}`;
   } catch {
-    return scenePath;
+    return `${CYCLES_MESH_EXPORT_VERSION}:${scenePath}`;
   }
 }
 

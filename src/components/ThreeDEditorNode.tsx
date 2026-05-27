@@ -660,15 +660,14 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
     }
     if (viewportMode === "render") {
       setCyclesFrame((prev) =>
-        prev.previewDataUrl
+        prev.status !== "idle"
           ? {
               ...prev,
-              previewDataUrl: undefined,
               status: "rendering",
               error: undefined,
-              cameraVersion: nextCameraVersion,
+              cameraVersion: prev.cameraVersion,
             }
-          : prev,
+          : { status: "rendering", cameraVersion: nextCameraVersion },
       );
     }
   };
@@ -680,13 +679,11 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
     setViewportInteracting(interacting);
     if (interacting && viewportMode === "render") {
       setCyclesFrame((prev) =>
-        prev.previewDataUrl
+        prev.status !== "idle"
           ? {
               ...prev,
-              previewDataUrl: undefined,
               status: "rendering",
               error: undefined,
-              cameraVersion: cameraVersionRef.current,
             }
           : prev,
       );
@@ -1324,10 +1321,7 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
           )
         )}
 
-        {viewportMode === "render" &&
-          !viewportInteracting &&
-          cyclesFrame.cameraVersion === cameraVersion &&
-          cyclesFrame.previewDataUrl && (
+        {viewportMode === "render" && cyclesFrame.previewDataUrl && (
           <div className="absolute inset-0 z-[8] bg-neutral-950 pointer-events-none">
             <img
               src={cyclesFrame.previewDataUrl}
