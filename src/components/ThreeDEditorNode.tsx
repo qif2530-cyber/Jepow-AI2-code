@@ -1440,7 +1440,11 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
                 {cyclesFrame.status === "rendering"
                   ? cyclesFrame.previewDataUrl
                     ? "Cycles Refining..."
-                    : "Cycles Path Tracing..."
+                    : cyclesFrame.detail?.includes("prepare_mesh_cache")
+                      ? "Cycles Sync Mesh..."
+                      : cyclesFrame.detail?.includes("load_mesh_cache")
+                        ? "Cycles Load Mesh..."
+                        : "Cycles Path Tracing..."
                   : cyclesFrame.status === "done"
                     ? `Cycles ${cyclesFrame.renderSeconds?.toFixed(2) ?? ""}s`
                     : "Cycles Error"}

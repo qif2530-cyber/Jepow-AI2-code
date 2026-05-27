@@ -26,7 +26,7 @@ const MESH_EXPORT_EXT = new Set(['.glb', '.gltf', '.fbx', '.obj']);
 const meshExportCache = new Map();
 const cyclesSessions = new Map();
 const navigationSettleTimers = new Map();
-const CYCLES_MESH_EXPORT_VERSION = 'cycles-mesh-v8-oneshot-raw-faces-fit-matrix';
+const CYCLES_MESH_EXPORT_VERSION = 'cycles-mesh-v9-binary-cache';
 let cyclesSessionSeq = 0;
 let daemonProc = null;
 let daemonBuf = '';
@@ -483,6 +483,33 @@ async function exportMeshViaNativeEngine(scenePath) {
   return result;
 }
 
+async function exportMeshCacheViaNativeEngine(scenePath, cacheDir, id) {
+  if (!nativeEngine.getEngineExecutable()) {
+    return { ok: false, error: 'jepow-engine 未构建，无法导出 Cycles 网格缓存' };
+  }
+  const key = `${getSceneCacheKey(scenePath)}:binary`;
+  const cached = meshExportCache.get(key);
+  if (cached && cached.meshCachePath && fs.existsSync(cached.meshCachePath)) {
+    return { ...cached, cached: true };
+  }
+  const meshCachePath = path.join(cacheDir, `cycles-mesh-${id}.jpcmesh`);
+  const result = await nativeEngine.runEngineCommand(
+    'mesh_cache_for_cycles',
+    { scenePath, outputPath: meshCachePath },
+    45000,
+  );
+  if (result?.ok !== false) {
+    const payload = { ...result, meshCachePath };
+    if (meshExportCache.size > 8) {
+      const oldest = meshExportCache.keys().next().value;
+      if (oldest) meshExportCache.delete(oldest);
+    }
+    meshExportCache.set(key, payload);
+    return payload;
+  }
+  return result;
+}
+
 async function prepareCyclesSceneXml(opts, cacheDir, id) {
   const requested = normalizeSceneRef(opts.scenePath);
   if (requested && path.extname(requested).toLowerCase() === '.xml' && fs.existsSync(requested)) {
@@ -541,6 +568,36 @@ async function prepareCyclesSceneXml(opts, cacheDir, id) {
     cachedMesh: !!meshRes.cached,
     xmlBytes,
     meshExporter: 'jepow-engine',
+  };
+}
+
+async function prepareCyclesMeshCache(opts, cacheDir, id) {
+  const requested = normalizeSceneRef(opts.scenePath);
+  const ext = requested ? path.extname(requested).toLowerCase() : '';
+  const canExportMesh =
+    requested && fs.existsSync(requested) && MESH_EXPORT_EXT.has(ext);
+  if (!canExportMesh) {
+    return { ok: false, fallback: true, error: 'no mesh file for binary cache' };
+  }
+  const meshRes = await exportMeshCacheViaNativeEngine(requested, cacheDir, id);
+  if (!meshRes.ok) {
+    return {
+      ok: false,
+      error: humanizeMeshExportError(meshRes.error) || 'jepow-engine 网格缓存导出失败',
+    };
+  }
+  return {
+    ok: true,
+    converted: true,
+    meshCachePath: meshRes.meshCachePath,
+    meshCount: 1,
+    triangleCount: Number(meshRes.triangleCount) || 0,
+    rawTriangleCount: Number(meshRes.rawTriangleCount) || 0,
+    vertexCount: Number(meshRes.vertexCount) || 0,
+    faceCount: Number(meshRes.faceCount) || 0,
+    cachedMesh: !!meshRes.cached,
+    cameraDistance: Number(meshRes.cameraDistance) || undefined,
+    meshExporter: 'jepow-engine-binary-cache',
   };
 }
 
@@ -823,6 +880,7 @@ function buildFramePayload(session, res, status, stage) {
     rawTriangleCount: res?.rawTriangleCount,
     vertexCount: res?.vertexCount,
     cachedMesh: res?.cachedMesh,
+    meshTransport: session.meshTransport,
   };
 }
 
@@ -830,10 +888,18 @@ async function runProgressiveSession(session) {
   const opts = session.opts;
   const id = session.id;
   const cacheDir = getCyclesCacheDir();
-  session.debugStage = 'prepare_xml';
-  session.debugMessage = '导出模型并生成 Cycles XML';
+  session.debugStage = 'prepare_mesh_cache';
+  session.debugMessage = '导出 Cycles 二进制 mesh cache';
   session.updatedAt = Date.now();
-  const prepared = await prepareCyclesSceneXml(opts, cacheDir, id);
+  let prepared = await prepareCyclesMeshCache(opts, cacheDir, id);
+  let useMeshCache = !!prepared.ok;
+  if (!prepared.ok && prepared.fallback) {
+    session.debugStage = 'prepare_xml';
+    session.debugMessage = '无原生模型文件，回退生成 Cycles XML';
+    session.updatedAt = Date.now();
+    prepared = await prepareCyclesSceneXml(opts, cacheDir, id);
+    useMeshCache = false;
+  }
   if (!prepared.ok) {
     session.status = 'error';
     session.frameVersion += 1;
@@ -847,7 +913,7 @@ async function runProgressiveSession(session) {
     };
     return;
   }
-  if (prepared.xmlBytes && prepared.xmlBytes > 6 * 1024 * 1024) {
+  if (!useMeshCache && prepared.xmlBytes && prepared.xmlBytes > 6 * 1024 * 1024) {
     session.status = 'error';
     session.frameVersion += 1;
     session.frame = {
@@ -860,6 +926,7 @@ async function runProgressiveSession(session) {
     };
     return;
   }
+  session.meshTransport = useMeshCache ? 'binary-cache' : 'xml';
 
   const finalWidth = clampNumber(
     normalizeRenderWidth(opts.width || opts.renderSettings?.width),
@@ -876,25 +943,40 @@ async function runProgressiveSession(session) {
   const finalSamples = clampNumber(opts.samples || opts.renderSettings?.samples, 1, 4096, 64);
 
   session.status = 'starting';
-  session.debugStage = 'load_scene';
-  session.debugMessage = `加载 Cycles 场景 ${(Number(prepared.xmlBytes || 0) / 1024 / 1024).toFixed(2)}MB，面数 ${prepared.triangleCount || 0}`;
+  session.debugStage = useMeshCache ? 'load_mesh_cache' : 'load_scene';
+  session.debugMessage = useMeshCache
+    ? `加载 Cycles mesh cache，三角面 ${prepared.triangleCount || 0}`
+    : `加载 Cycles 场景 ${(Number(prepared.xmlBytes || 0) / 1024 / 1024).toFixed(2)}MB，面数 ${prepared.triangleCount || 0}`;
   session.updatedAt = Date.now();
 
   await runDaemonCommand('init_session', { sessionId: session.id }, 1500);
 
   if (session.stopped) return;
-  const loaded = await runDaemonCommand(
-    'load_scene',
-    {
-      sessionId: session.id,
-      scenePath: prepared.scenePath,
-      device: session.device,
-      width: finalWidth,
-      height: finalHeight,
-      samples: finalSamples,
-    },
-    60000,
-  );
+  const loaded = useMeshCache
+    ? await runDaemonCommand(
+        'load_mesh_cache',
+        {
+          sessionId: session.id,
+          meshCachePath: prepared.meshCachePath,
+          device: session.device,
+          width: finalWidth,
+          height: finalHeight,
+          samples: finalSamples,
+        },
+        60000,
+      )
+    : await runDaemonCommand(
+        'load_scene',
+        {
+          sessionId: session.id,
+          scenePath: prepared.scenePath,
+          device: session.device,
+          width: finalWidth,
+          height: finalHeight,
+          samples: finalSamples,
+        },
+        60000,
+      );
   if (!loaded.ok) {
     session.status = 'error';
     session.frameVersion += 1;

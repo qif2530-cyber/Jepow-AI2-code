@@ -42,6 +42,7 @@ fn main() {
         "render_frame" => cmd_render_frame(&payload),
         "mesh_stats" => cmd_mesh_stats(&payload),
         "mesh_for_cycles" => cmd_mesh_for_cycles(&payload),
+        "mesh_cache_for_cycles" => cmd_mesh_cache_for_cycles(&payload),
         _ => emit_err(format!("unknown command: {}", cmd)),
     }
 }
@@ -116,6 +117,21 @@ fn cmd_mesh_for_cycles(payload: &serde_json::Value) {
         None => return emit_err("scenePath required"),
     };
     match cycles_mesh::mesh_for_cycles(scene_path) {
+        Ok(data) => emit(data),
+        Err(e) => emit_err(e.to_string()),
+    }
+}
+
+fn cmd_mesh_cache_for_cycles(payload: &serde_json::Value) {
+    let scene_path = match payload.get("scenePath").and_then(|v| v.as_str()) {
+        Some(p) => p,
+        None => return emit_err("scenePath required"),
+    };
+    let output_path = match payload.get("outputPath").and_then(|v| v.as_str()) {
+        Some(p) => p,
+        None => return emit_err("outputPath required"),
+    };
+    match cycles_mesh::write_mesh_cache_for_cycles(scene_path, output_path) {
         Ok(data) => emit(data),
         Err(e) => emit_err(e.to_string()),
     }

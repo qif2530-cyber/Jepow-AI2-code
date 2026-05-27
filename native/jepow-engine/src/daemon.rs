@@ -194,6 +194,19 @@ pub fn run_daemon_loop() {
                     Ok(data) => ok_response(id, data),
                 },
             },
+            "mesh_cache_for_cycles" => match (
+                req.get("scenePath").and_then(|v| v.as_str()),
+                req.get("outputPath").and_then(|v| v.as_str()),
+            ) {
+                (Some(path), Some(output_path)) => {
+                    match crate::cycles_mesh::write_mesh_cache_for_cycles(path, output_path) {
+                        Err(e) => err_response(id, e.to_string()),
+                        Ok(data) => ok_response(id, data),
+                    }
+                }
+                (None, _) => err_response(id, "scenePath required"),
+                (_, None) => err_response(id, "outputPath required"),
+            },
             _ => err_response(id, format!("unknown cmd: {}", cmd)),
         };
 

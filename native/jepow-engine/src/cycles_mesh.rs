@@ -1,5 +1,7 @@
 use anyhow::Result;
 use serde_json::json;
+use std::fs::File;
+use std::io::{BufWriter, Write};
 use std::path::Path;
 
 use crate::mesh_loader::{self, MeshData};
@@ -89,6 +91,17 @@ fn mesh_payload_from_triangle_mesh(mesh: MeshData, source_topology: &str) -> Res
         "weldEpsilon": 0.0,
         "cameraDistance": camera_distance,
     }))
+}
+
+struct CyclesMeshCache {
+    coords: Vec<f32>,
+    normals: Vec<f32>,
+    indices: Vec<u32>,
+    scene_fit_matrix: [f32; 16],
+    camera_distance: f32,
+    face_count: usize,
+    triangle_count: usize,
+    source_topology: &'static str,
 }
 
 fn fbx_load_opts_for_cycles() -> ufbx::LoadOpts<'static> {
@@ -192,6 +205,152 @@ fn mesh_payload_from_fbx_faces(scene_path: &str) -> Result<serde_json::Value> {
     }))
 }
 
+fn mesh_cache_from_triangle_mesh(mesh: MeshData, source_topology: &'static str) -> Result<CyclesMeshCache> {
+    let raw_tris = mesh.indices.len() / 3;
+    if mesh.vertices.is_empty() || raw_tris == 0 {
+        anyhow::bail!("no renderable triangles");
+    }
+    let mut coords: Vec<f32> = Vec::with_capacity(mesh.vertices.len() * 3);
+    let mut normals: Vec<f32> = Vec::with_capacity(mesh.vertices.len() * 3);
+    for v in &mesh.vertices {
+        coords.extend_from_slice(&v.pos);
+        normals.extend_from_slice(&v.normal);
+    }
+    let (_, normalized_extent, scene_fit_matrix) = scene_fit_matrix(&coords);
+    let camera_distance = (normalized_extent * 0.85 + 2.8).max(3.5);
+    Ok(CyclesMeshCache {
+        coords,
+        normals,
+        indices: mesh.indices,
+        scene_fit_matrix,
+        camera_distance,
+        face_count: raw_tris,
+        triangle_count: raw_tris,
+        source_topology,
+    })
+}
+
+fn mesh_cache_from_fbx_faces(scene_path: &str) -> Result<CyclesMeshCache> {
+    let scene = ufbx::load_file(scene_path, fbx_load_opts_for_cycles())
+        .map_err(|e| anyhow::anyhow!("fbx load: {:?}", e))?;
+    let mut coords: Vec<f32> = Vec::new();
+    let mut normals: Vec<f32> = Vec::new();
+    let mut indices: Vec<u32> = Vec::new();
+    let mut face_count = 0_usize;
+    let mut triangle_count = 0_usize;
+
+    for node in &scene.nodes {
+        if node.is_geometry_transform_helper || node.is_scale_helper {
+            continue;
+        }
+        let Some(mesh) = node.mesh.as_ref() else {
+            continue;
+        };
+        let normal_world = ufbx::matrix_for_normals(&node.geometry_to_world);
+        let pos_el = &mesh.vertex_position;
+        let normal_el = if mesh.vertex_normal.exists {
+            Some(&mesh.vertex_normal)
+        } else {
+            None
+        };
+
+        for (face_ix, face) in mesh.faces.iter().enumerate() {
+            if face.num_indices < 3 {
+                continue;
+            }
+            if mesh.face_hole.get(face_ix).map(|h| *h).unwrap_or(false) {
+                continue;
+            }
+            let begin = face.index_begin as usize;
+            let count = face.num_indices as usize;
+            if begin + count > pos_el.indices.len() {
+                continue;
+            }
+
+            let base = (coords.len() / 3) as u32;
+            for corner in begin..begin + count {
+                let p = ufbx::transform_position(&node.geometry_to_world, pos_el[corner]);
+                let n_local = normal_el
+                    .and_then(|el| if corner >= el.indices.len() { None } else { Some(el[corner]) })
+                    .unwrap_or(ufbx::Vec3 {
+                        x: 0.0,
+                        y: 1.0,
+                        z: 0.0,
+                    });
+                let n_world = ufbx::transform_direction(&normal_world, n_local);
+                let n = normalize_vec3([n_world.x as f32, n_world.y as f32, n_world.z as f32]);
+                coords.push(p.x as f32);
+                coords.push(p.y as f32);
+                coords.push(p.z as f32);
+                normals.extend_from_slice(&n);
+            }
+            for j in 0..count.saturating_sub(2) {
+                indices.push(base);
+                indices.push(base + j as u32 + 1);
+                indices.push(base + j as u32 + 2);
+            }
+            face_count += 1;
+            triangle_count += count.saturating_sub(2);
+        }
+    }
+
+    if coords.is_empty() || indices.is_empty() {
+        anyhow::bail!("no renderable faces in {}", scene_path);
+    }
+    let (_, normalized_extent, scene_fit_matrix) = scene_fit_matrix(&coords);
+    let camera_distance = (normalized_extent * 0.85 + 2.8).max(3.5);
+    Ok(CyclesMeshCache {
+        coords,
+        normals,
+        indices,
+        scene_fit_matrix,
+        camera_distance,
+        face_count,
+        triangle_count,
+        source_topology: "fbx-evaluated-triangles",
+    })
+}
+
+fn write_u32<W: Write>(w: &mut W, value: u32) -> Result<()> {
+    w.write_all(&value.to_le_bytes())?;
+    Ok(())
+}
+
+fn write_u64<W: Write>(w: &mut W, value: u64) -> Result<()> {
+    w.write_all(&value.to_le_bytes())?;
+    Ok(())
+}
+
+fn write_f32<W: Write>(w: &mut W, value: f32) -> Result<()> {
+    w.write_all(&value.to_le_bytes())?;
+    Ok(())
+}
+
+fn write_mesh_cache(cache: &CyclesMeshCache, output_path: &str) -> Result<()> {
+    let mut writer = BufWriter::new(File::create(output_path)?);
+    writer.write_all(b"JPCMESH1")?;
+    write_u32(&mut writer, 1)?;
+    write_u32(&mut writer, 0)?;
+    write_u64(&mut writer, (cache.coords.len() / 3) as u64)?;
+    write_u64(&mut writer, (cache.indices.len() / 3) as u64)?;
+    write_u64(&mut writer, cache.face_count as u64)?;
+    write_f32(&mut writer, cache.camera_distance)?;
+    for value in cache.scene_fit_matrix {
+        write_f32(&mut writer, value)?;
+    }
+    for value in &cache.coords {
+        write_f32(&mut writer, *value)?;
+    }
+    for value in &cache.normals {
+        write_f32(&mut writer, *value)?;
+    }
+    for value in &cache.indices {
+        write_u32(&mut writer, *value)?;
+    }
+    writer.flush()?;
+    Ok(())
+}
+
 /// Normalized mesh payload for Cycles Standalone XML, preserving source face topology where possible.
 pub fn mesh_for_cycles(scene_path: &str) -> Result<serde_json::Value> {
     let ext = Path::new(scene_path)
@@ -204,4 +363,29 @@ pub fn mesh_for_cycles(scene_path: &str) -> Result<serde_json::Value> {
     }
     let mesh = mesh_loader::load_meshes(scene_path)?;
     mesh_payload_from_triangle_mesh(mesh, "triangulated-source")
+}
+
+pub fn write_mesh_cache_for_cycles(scene_path: &str, output_path: &str) -> Result<serde_json::Value> {
+    let ext = Path::new(scene_path)
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_lowercase();
+    let cache = if ext == "fbx" {
+        mesh_cache_from_fbx_faces(scene_path)?
+    } else {
+        let mesh = mesh_loader::load_meshes(scene_path)?;
+        mesh_cache_from_triangle_mesh(mesh, "triangulated-source")?
+    };
+    write_mesh_cache(&cache, output_path)?;
+    Ok(json!({
+        "meshCachePath": output_path,
+        "vertexCount": cache.coords.len() / 3,
+        "triangleCount": cache.triangle_count,
+        "rawTriangleCount": cache.triangle_count,
+        "faceCount": cache.face_count,
+        "sourceTopology": cache.source_topology,
+        "cameraDistance": cache.camera_distance,
+        "format": "JPCMESH1",
+    }))
 }
