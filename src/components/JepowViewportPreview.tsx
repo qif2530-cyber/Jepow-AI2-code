@@ -78,9 +78,14 @@ function computeRenderSize(
   const vw = Math.max(1, viewportW);
   const vh = Math.max(1, viewportH);
   const aspect = vh / vw;
-  const maxW = quality === "draft" ? 640 : liveRender ? 960 : 2048;
-  const maxH = quality === "draft" ? 480 : liveRender ? 720 : 1536;
-  let w = Math.min(Math.max(vw, quality === "draft" ? 360 : 640), maxW);
+  const maxW = quality === "draft" ? 960 : 2048;
+  const maxH = quality === "draft" ? 720 : 1536;
+  let w =
+    quality === "draft"
+      ? Math.min(Math.max(vw, 480), maxW)
+      : liveRender
+        ? maxW
+        : Math.min(Math.max(vw, 640), maxW);
   let h = Math.round(w * aspect);
   if (h > maxH) {
     h = maxH;

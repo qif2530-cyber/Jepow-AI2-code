@@ -19,8 +19,8 @@ export function CyclesRenderSettingsNode({ id, data, selected }: CyclesRenderSet
   const { updateNodeData } = useReactFlow();
   const samples = data.samples ?? 128;
   const bounces = data.bounces ?? 8;
-  const width = data.width ?? 768;
-  const height = data.height ?? 512;
+  const width = data.width == null || data.width === 768 ? 2048 : data.width;
+  const height = data.height == null || data.height === 512 ? 1536 : data.height;
   const device = data.device ?? "CPU";
   const denoise = data.denoise ?? true;
   const [metalAvailable, setMetalAvailable] = useState(false);
@@ -48,8 +48,8 @@ export function CyclesRenderSettingsNode({ id, data, selected }: CyclesRenderSet
         type: "cycles_render_settings",
         samples: next.samples ?? 128,
         bounces: next.bounces ?? 8,
-        width: next.width ?? 768,
-        height: next.height ?? 512,
+        width: next.width ?? 2048,
+        height: next.height ?? 1536,
         device: next.device ?? "CPU",
         denoise: next.denoise ?? true,
       },

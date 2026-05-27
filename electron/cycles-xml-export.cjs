@@ -130,8 +130,8 @@ function buildCyclesSceneXml(opts) {
     ? `  <transform matrix="${buildObjectTransformMatrix(opts.transform)}">\n${meshBlocks}\n  </transform>`
     : meshBlocks;
 
-  const width = clampNumber(opts.width, 64, 8192, 768);
-  const height = clampNumber(opts.height, 64, 8192, 512);
+  const width = clampNumber(opts.width, 64, 8192, 2048);
+  const height = clampNumber(opts.height, 64, 8192, 1536);
   const camera = opts.cyclesCamera || opts.camera || {};
   const cameraDistance = clampNumber(
     camera.distance ?? opts.cameraDistance ?? opts.meshMeta?.cameraDistance,

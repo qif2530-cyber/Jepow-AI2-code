@@ -427,8 +427,7 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
     [activeCyclesMaterial, activeMaterial],
   );
   const cyclesMaterialRenderKey = useMemo(() => {
-    const { shaderGraph, ...rest } = effectiveCyclesMaterialForRender;
-    return JSON.stringify({ rest, graph: shaderGraph });
+    return JSON.stringify(effectiveCyclesMaterialForRender);
   }, [effectiveCyclesMaterialForRender]);
   const activeViewportMaterial = useMemo(
     () =>
@@ -571,16 +570,31 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
       })
     | null;
   const effectiveRenderSettings = useMemo(
-    () => ({
-      ...renderSettings,
-      ...(connectedCyclesSettings || {}),
-    }),
+    () => {
+      const merged = {
+        ...renderSettings,
+        ...(connectedCyclesSettings || {}),
+      };
+      return {
+        ...merged,
+        width: merged.width == null || merged.width === 768 ? 2048 : merged.width,
+        height: merged.height == null || merged.height === 512 ? 1536 : merged.height,
+      };
+    },
     [renderSettings, connectedCyclesSettings],
+  );
+  const renderSettingsKey = useMemo(
+    () => JSON.stringify(effectiveRenderSettings),
+    [effectiveRenderSettings],
   );
 
   const effectiveCyclesLight = useMemo(
     () => buildCyclesLightPayload(lights, connectedCyclesLight),
     [lights, connectedCyclesLight],
+  );
+  const cyclesLightKey = useMemo(
+    () => JSON.stringify(effectiveCyclesLight),
+    [effectiveCyclesLight],
   );
 
   const effectiveCyclesCamera = useMemo(
@@ -716,6 +730,11 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
       lights.environment,
     ],
   );
+  const nativeLightingKey = useMemo(
+    () => JSON.stringify(nativeLighting),
+    [nativeLighting],
+  );
+  const transformKey = useMemo(() => JSON.stringify(transform), [transform]);
 
   const updateLightAngle = (newYaw: number, newPitch: number) => {
     const radius = 8.6;
@@ -837,20 +856,24 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
         return;
       }
 
+      const stableCyclesMaterial = JSON.parse(cyclesMaterialRenderKey);
+      const stableNativeLighting = JSON.parse(nativeLightingKey);
+      const stableTransform = JSON.parse(transformKey);
       const baseRequest = {
         scenePath,
-        material: effectiveCyclesMaterialForRender as any,
-        cyclesMaterial: effectiveCyclesMaterialForRender,
-        renderSettings: effectiveRenderSettings,
-        cyclesLight: effectiveCyclesLight,
+        material: stableCyclesMaterial as any,
+        cyclesMaterial: stableCyclesMaterial,
+        renderSettings: JSON.parse(renderSettingsKey),
+        cyclesLight: JSON.parse(cyclesLightKey),
         camera: cyclesRenderCameraRef.current,
-        lighting: nativeLighting,
-        transform,
+        lighting: stableNativeLighting,
+        transform: stableTransform,
         device: effectiveRenderSettings.device || "CPU",
       } as any;
-      const finalWidth = Number(effectiveRenderSettings.width) || 768;
-      const finalHeight = Number(effectiveRenderSettings.height) || 512;
-      const finalSamples = Math.max(16, Number(effectiveRenderSettings.samples) || 32);
+      const stableRenderSettings = JSON.parse(renderSettingsKey);
+      const finalWidth = Number(stableRenderSettings.width) || 2048;
+      const finalHeight = Number(stableRenderSettings.height) || 1536;
+      const finalSamples = Math.max(16, Number(stableRenderSettings.samples) || 32);
       const sessionCameraVersion = cameraVersionRef.current;
 
       try {
@@ -876,7 +899,7 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
             width: finalWidth,
             height: finalHeight,
             samples: finalSamples,
-            renderSettings: effectiveRenderSettings,
+            renderSettings: stableRenderSettings,
             cameraVersion: sessionCameraVersion,
           } as any);
           let lastFrameVersion = -1;
@@ -940,13 +963,12 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
     viewportMode,
     renderActive,
     cyclesMaterialRenderKey,
-    effectiveRenderSettings,
-    effectiveCyclesLight,
-    transform,
+    renderSettingsKey,
+    cyclesLightKey,
+    transformKey,
     resolvedScenePath,
     glbToRender,
-    nativeLighting,
-    effectiveCyclesMaterialForRender,
+    nativeLightingKey,
   ]);
 
   useEffect(() => {
@@ -954,8 +976,8 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
     const timer = window.setTimeout(() => {
       const sessionId = activeCyclesSessionRef.current;
       if (!sessionId) return;
-      const finalWidth = Number(effectiveRenderSettings.width) || 768;
-      const finalHeight = Number(effectiveRenderSettings.height) || 512;
+      const finalWidth = Number(effectiveRenderSettings.width) || 2048;
+      const finalHeight = Number(effectiveRenderSettings.height) || 1536;
       const finalSamples = Math.max(16, Number(effectiveRenderSettings.samples) || 32);
       cyclesRenderCameraRef.current = cyclesRenderCamera;
       void getViewportEngine().updateCyclesSession?.(sessionId, {

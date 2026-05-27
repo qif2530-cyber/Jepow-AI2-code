@@ -41,6 +41,16 @@ function getSceneCacheKey(scenePath) {
   }
 }
 
+function normalizeRenderWidth(value) {
+  const n = Number(value);
+  return !Number.isFinite(n) || n === 768 ? 2048 : n;
+}
+
+function normalizeRenderHeight(value) {
+  const n = Number(value);
+  return !Number.isFinite(n) || n === 512 ? 1536 : n;
+}
+
 function isMetalKernelBundled(standaloneExecutable) {
   if (process.platform !== 'darwin' || !standaloneExecutable) return false;
   const appRoot = path.join(path.dirname(standaloneExecutable), '..', '..');
@@ -582,8 +592,8 @@ async function renderFrame(opts = {}) {
   const samples = String(
     clampNumber(opts.samples || opts.renderSettings?.samples, 1, 4096, 64),
   );
-  const width = String(clampNumber(opts.width, 64, 8192, 768));
-  const height = String(clampNumber(opts.height, 64, 8192, 512));
+  const width = String(clampNumber(normalizeRenderWidth(opts.width), 64, 8192, 2048));
+  const height = String(clampNumber(normalizeRenderHeight(opts.height), 64, 8192, 1536));
   const args = [
     '--background',
     '--device',
@@ -671,8 +681,8 @@ async function renderFrame(opts = {}) {
 async function renderFrameViaDaemon(opts = {}, prepared, outputPath) {
   const device = opts.device === 'METAL' ? 'METAL' : 'CPU';
   const samples = clampNumber(opts.samples || opts.renderSettings?.samples, 1, 4096, 64);
-  const width = clampNumber(opts.width, 64, 8192, 768);
-  const height = clampNumber(opts.height, 64, 8192, 512);
+  const width = clampNumber(normalizeRenderWidth(opts.width), 64, 8192, 2048);
+  const height = clampNumber(normalizeRenderHeight(opts.height), 64, 8192, 1536);
   const started = Date.now();
   const res = await runDaemonCommand(
     'render_frame',
@@ -736,25 +746,34 @@ async function renderFrameViaDaemon(opts = {}, prepared, outputPath) {
 
 async function readResidentFrameViaDaemon(session, outputPath) {
   const started = Date.now();
-  const res = await runDaemonCommand(
-    'read_frame',
-    {
-      sessionId: session.id,
-      outputPath,
-    },
-    5000,
-  );
+  let res = null;
+  const attempts = session.frame ? 1 : 10;
+  for (let i = 0; i < attempts; i += 1) {
+    res = await runDaemonCommand(
+      'read_frame',
+      {
+        sessionId: session.id,
+        outputPath,
+      },
+      5000,
+    );
+    if (res.ok || session.stopped) break;
+    await new Promise((resolve) => setTimeout(resolve, 220));
+  }
   if (!res.ok) {
     return { ok: false, error: res.error || 'resident Cycles frame unavailable' };
   }
-  const brightness = fs.existsSync(outputPath) ? analyzePngBrightness(outputPath) : null;
-  const failure = parseCyclesRenderFailure({
-    code: fs.existsSync(outputPath) ? 0 : 1,
-    stderr: '',
-    stdout: '',
-    device: session.device,
-    outputPath,
-  });
+  const fileExists = fs.existsSync(outputPath);
+  const brightness = !session.frame && fileExists ? analyzePngBrightness(outputPath) : null;
+  const failure = fileExists
+    ? null
+    : parseCyclesRenderFailure({
+        code: 1,
+        stderr: '',
+        stdout: '',
+        device: session.device,
+        outputPath,
+      });
   let previewDataUrl = null;
   if (!failure) {
     previewDataUrl = `data:image/png;base64,${fs.readFileSync(outputPath).toString('base64')}`;
@@ -838,8 +857,18 @@ async function runProgressiveSession(session) {
     return;
   }
 
-  const finalWidth = clampNumber(opts.width || opts.renderSettings?.width, 64, 8192, 768);
-  const finalHeight = clampNumber(opts.height || opts.renderSettings?.height, 64, 8192, 512);
+  const finalWidth = clampNumber(
+    normalizeRenderWidth(opts.width || opts.renderSettings?.width),
+    64,
+    8192,
+    2048,
+  );
+  const finalHeight = clampNumber(
+    normalizeRenderHeight(opts.height || opts.renderSettings?.height),
+    64,
+    8192,
+    1536,
+  );
   const finalSamples = clampNumber(opts.samples || opts.renderSettings?.samples, 1, 4096, 64);
 
   session.status = 'starting';
@@ -1014,8 +1043,18 @@ async function updateSession(sessionId, patch = {}) {
       cameraVersion: Number(session.opts.cameraVersion) || 0,
     };
   }
-  const width = clampNumber(session.opts.width || session.opts.renderSettings?.width, 64, 8192, 768);
-  const height = clampNumber(session.opts.height || session.opts.renderSettings?.height, 64, 8192, 512);
+  const width = clampNumber(
+    normalizeRenderWidth(session.opts.width || session.opts.renderSettings?.width),
+    64,
+    8192,
+    2048,
+  );
+  const height = clampNumber(
+    normalizeRenderHeight(session.opts.height || session.opts.renderSettings?.height),
+    64,
+    8192,
+    1536,
+  );
   const samples = clampNumber(session.opts.samples || session.opts.renderSettings?.samples, 1, 4096, 64);
   const res = await updateResidentCamera(session.id, session.opts, width, height, samples);
   if (res.ok) {
