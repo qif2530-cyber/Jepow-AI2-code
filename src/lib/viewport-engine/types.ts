@@ -117,6 +117,10 @@ export interface ViewportEngine {
   renderCyclesFrame?(opts: RenderPreviewOptions & Record<string, unknown>): Promise<RenderPreviewResult>;
   startCyclesSession?(opts: RenderPreviewOptions & Record<string, unknown>): Promise<CyclesSessionResult>;
   readCyclesSession?(sessionId: string): Promise<CyclesSessionResult>;
+  updateCyclesSession?(
+    sessionId: string,
+    patch: RenderPreviewOptions & Record<string, unknown>,
+  ): Promise<CyclesSessionResult>;
   stopCyclesSession?(sessionId: string): Promise<CyclesSessionResult>;
   readPreviewDataUrl(previewUrl: string): Promise<string | null>;
   pickSceneFile(): Promise<{ canceled: boolean; filePath: string | null }>;

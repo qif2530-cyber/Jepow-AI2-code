@@ -9,7 +9,7 @@ interface CyclesPaletteMenuProps {
   onAdd: (nodeType: string) => void;
 }
 
-const ORDER: CyclesNodeCategory[] = ["material", "color", "light", "render"];
+const ORDER: CyclesNodeCategory[] = ["material", "color", "light", "camera", "render"];
 
 export function CyclesPaletteMenu({ onAdd }: CyclesPaletteMenuProps) {
   return (

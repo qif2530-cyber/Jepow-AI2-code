@@ -3,7 +3,7 @@
  * 不接入 AI functionDeclarations / createNodeViaAi，避免影响原有 AI 调度 API。
  */
 
-export type CyclesNodeCategory = "material" | "color" | "light" | "render";
+export type CyclesNodeCategory = "material" | "color" | "light" | "camera" | "render";
 
 export interface CyclesPaletteItem {
   type: string;
@@ -16,6 +16,7 @@ export const CYCLES_CATEGORY_LABELS: Record<CyclesNodeCategory, string> = {
   material: "Cycles · 材质",
   color: "Cycles · 颜色校正",
   light: "Cycles · 灯光",
+  camera: "Cycles · 摄像机",
   render: "Cycles · 渲染",
 };
 
@@ -92,6 +93,12 @@ export const CYCLES_NODE_PALETTE: CyclesPaletteItem[] = [
     label: "灯光",
     hint: "环境光 + 主光",
     category: "light",
+  },
+  {
+    type: "cyclesCameraNode",
+    label: "摄像机",
+    hint: "FOV / DOF / Clip",
+    category: "camera",
   },
   {
     type: "cyclesRenderSettingsNode",
@@ -180,6 +187,37 @@ export function getCyclesNodeDefaultData(
           yaw: 45,
           pitch: 35,
           backgroundColor: "#08090a",
+        },
+      };
+    case "cyclesCameraNode":
+      return {
+        type: "perspective",
+        fov: 0.72,
+        distance: 2.45,
+        yaw: 0.55,
+        pitch: 0.38,
+        panX: 0,
+        panY: 0,
+        aperturesize: 0,
+        focaldistance: 10,
+        blades: 0,
+        bladesrotation: 0,
+        nearclip: 0.00001,
+        farclip: 100000,
+        cyclesCamera: {
+          type: "perspective",
+          fov: 0.72,
+          distance: 2.45,
+          yaw: 0.55,
+          pitch: 0.38,
+          panX: 0,
+          panY: 0,
+          aperturesize: 0,
+          focaldistance: 10,
+          blades: 0,
+          bladesrotation: 0,
+          nearclip: 0.00001,
+          farclip: 100000,
         },
       };
     case "cyclesRenderSettingsNode":

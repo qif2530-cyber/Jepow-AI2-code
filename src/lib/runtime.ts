@@ -43,6 +43,10 @@ declare global {
         renderCyclesFrame?: (opts: Record<string, unknown>) => Promise<Record<string, unknown>>;
         startCyclesSession?: (opts: Record<string, unknown>) => Promise<Record<string, unknown>>;
         readCyclesSession?: (sessionId: string) => Promise<Record<string, unknown>>;
+        updateCyclesSession?: (
+          sessionId: string,
+          patch: Record<string, unknown>,
+        ) => Promise<Record<string, unknown>>;
         stopCyclesSession?: (sessionId: string) => Promise<Record<string, unknown>>;
         readPreview: (previewUrl: string) => Promise<string | null>;
       };

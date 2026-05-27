@@ -143,6 +143,7 @@ import { ThreeDEditorNode } from "./components/ThreeDEditorNode";
 import { ModelAssetNode } from "./components/ModelAssetNode";
 import { ThreeDRenderNode } from "./components/ThreeDRenderNode";
 import { CyclesLightNode } from "./components/CyclesLightNode";
+import { CyclesCameraNode } from "./components/CyclesCameraNode";
 import { CyclesRenderSettingsNode } from "./components/CyclesRenderSettingsNode";
 import { CyclesPrincipledNode } from "./components/cycles/CyclesPrincipledNode";
 import { CyclesImageTextureNode } from "./components/cycles/CyclesImageTextureNode";
@@ -3035,6 +3036,7 @@ export default function App() {
       cyclesMapRangeNode: CyclesMapRangeNode,
       cyclesRgbToBwNode: CyclesRgbToBwNode,
       cyclesLightNode: CyclesLightNode,
+      cyclesCameraNode: CyclesCameraNode,
       cyclesRenderSettingsNode: CyclesRenderSettingsNode,
     }),
     [],

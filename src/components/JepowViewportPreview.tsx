@@ -38,6 +38,8 @@ interface JepowViewportPreviewProps {
   defaultCamera?: ViewportCamera;
   /** 锁定首次测量分辨率，避免无限画布缩放触发反复重渲 */
   lockRenderSize?: boolean;
+  /** Orbit 相机变化时同步给父组件，供 Cycles 使用同一视角。 */
+  onCameraChange?: (camera: ViewportCamera) => void;
   onSceneInfo?: (info: {
     meshCount?: number;
     nodeCount?: number;
@@ -63,18 +65,21 @@ export const PREVIEW_CAM_45: ViewportCamera = {
   panY: 0,
 };
 
-/** 离屏渲染长边 2K，避免小图放大发糊 */
-const RENDER_MAX_W = 2048;
-const RENDER_MAX_H = 1536;
-
-function computeRenderSize(viewportW: number, viewportH: number) {
+function computeRenderSize(
+  viewportW: number,
+  viewportH: number,
+  quality: "draft" | "final",
+  liveRender: boolean,
+) {
   const vw = Math.max(1, viewportW);
   const vh = Math.max(1, viewportH);
   const aspect = vh / vw;
-  let w = Math.max(vw, RENDER_MAX_W);
+  const maxW = quality === "draft" ? 640 : liveRender ? 960 : 2048;
+  const maxH = quality === "draft" ? 480 : liveRender ? 720 : 1536;
+  let w = Math.min(Math.max(vw, quality === "draft" ? 360 : 640), maxW);
   let h = Math.round(w * aspect);
-  if (h > RENDER_MAX_H) {
-    h = RENDER_MAX_H;
+  if (h > maxH) {
+    h = maxH;
     w = Math.round(h / aspect);
   }
   return { w, h };
@@ -125,6 +130,7 @@ export function JepowViewportPreview({
   orbitOnly = false,
   defaultCamera,
   lockRenderSize = false,
+  onCameraChange,
   onSceneInfo,
 }: JepowViewportPreviewProps) {
   const initialCam = useMemo(
@@ -154,10 +160,35 @@ export function JepowViewportPreview({
   const [capsLine, setCapsLine] = useState<string | null>(null);
   const [camera, setCamera] = useState<ViewportCamera>({ ...initialCam });
   const cameraRef = useRef(camera);
+  const parentCameraRaf = useRef(0);
+  const pendingParentCamera = useRef<ViewportCamera | null>(null);
   const transformRef = useRef(transform);
   const lightingRef = useRef(lighting);
   const materialRef = useRef(material);
   cameraRef.current = camera;
+  const syncCamera = useCallback(
+    (next: ViewportCamera) => {
+      cameraRef.current = next;
+      setCamera(next);
+      if (!onCameraChange) return;
+      pendingParentCamera.current = next;
+      if (parentCameraRaf.current) return;
+      parentCameraRaf.current = requestAnimationFrame(() => {
+        parentCameraRaf.current = 0;
+        const pending = pendingParentCamera.current;
+        if (pending) onCameraChange(pending);
+      });
+    },
+    [onCameraChange],
+  );
+
+  useEffect(
+    () => () => {
+      if (parentCameraRaf.current) cancelAnimationFrame(parentCameraRaf.current);
+    },
+    [],
+  );
+
   transformRef.current = transform;
   lightingRef.current = lighting;
   materialRef.current = material;
@@ -181,7 +212,6 @@ export function JepowViewportPreview({
   const [heavyScene, setHeavyScene] = useState(false);
   const [sceneMetaReady, setSceneMetaReady] = useState(false);
   const lockedRenderSize = useRef<{ w: number; h: number } | null>(null);
-  const dragRenderRaf = useRef(0);
 
   useEffect(() => {
     if (!liveRender) {
@@ -269,6 +299,8 @@ export function JepowViewportPreview({
         const { w: previewW, h: previewH } = computeRenderSize(
           viewportSize.w,
           viewportSize.h,
+          quality,
+          liveRender,
         );
         const lit = mapEditorLighting(lightingRef.current);
         const tr = transformRef.current;
@@ -283,7 +315,7 @@ export function JepowViewportPreview({
           material: mat,
           shading,
           liveRender,
-          previewQuality: "final",
+          previewQuality: quality,
         });
         if (gen !== renderGen.current) return;
         if (!result.ok || !result.previewUrl) {
@@ -321,8 +353,6 @@ export function JepowViewportPreview({
         if (queued && gen === renderGen.current) {
           queuedRender.current = null;
           void renderWithCamera(queued.cam, queued.silent, queued.quality);
-        } else if (liveRender && dragging.current && gen === renderGen.current) {
-          void renderWithCamera(cameraRef.current, true, "draft");
         }
       }
     },
@@ -366,8 +396,7 @@ export function JepowViewportPreview({
     }
     lastResetToken.current = resetViewToken;
     const cam = { ...initialCam };
-    cameraRef.current = cam;
-    setCamera(cam);
+    syncCamera(cam);
     staticRendered.current = false;
     void renderWithCamera(cam, liveRender, "final");
   }, [resetViewToken, engineReady, renderWithCamera, initialCam, liveRender]);
@@ -384,8 +413,7 @@ export function JepowViewportPreview({
     setEngineReady(null);
     setEngineError(null);
     lockedRenderSize.current = null;
-    setCamera({ ...initialCam });
-    cameraRef.current = { ...initialCam };
+    syncCamera({ ...initialCam });
     turntableYaw.current = 0;
 
     getViewportCapabilities(true)
@@ -454,8 +482,7 @@ export function JepowViewportPreview({
     }
 
     if (orbitOnly) {
-      cameraRef.current = { ...initialCam };
-      setCamera({ ...initialCam });
+      syncCamera({ ...initialCam });
       void renderWithCamera({ ...initialCam }, true, "final");
       return undefined;
     }
@@ -532,15 +559,6 @@ export function JepowViewportPreview({
     renderWithCamera,
   ]);
 
-  const scheduleDragRender = () => {
-    if (dragRenderRaf.current) return;
-    dragRenderRaf.current = requestAnimationFrame(() => {
-      dragRenderRaf.current = 0;
-      if (!dragging.current) return;
-      void renderWithCamera(cameraRef.current, true, "draft");
-    });
-  };
-
   const onPointerDown = (e: React.PointerEvent) => {
     if (mode !== "orbit") return;
     if (!liveRender) return;
@@ -573,9 +591,7 @@ export function JepowViewportPreview({
             ),
           }
         : panCameraScreen(base, dx, dy);
-    cameraRef.current = next;
-    setCamera(next);
-    if (liveRender) scheduleDragRender();
+    syncCamera(next);
   };
 
   const onPointerUp = (e: React.PointerEvent) => {
@@ -604,9 +620,8 @@ export function JepowViewportPreview({
         Math.min(10, (cameraRef.current.distance ?? 2.45) + e.deltaY * 0.004),
       ),
     };
-    cameraRef.current = next;
-    setCamera(next);
-    void renderWithCamera(next, true, "draft");
+    syncCamera(next);
+      void renderWithCamera(next, true, "draft");
   };
 
   const modeHint = orbitOnly

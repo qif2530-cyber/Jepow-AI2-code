@@ -124,6 +124,17 @@ export const jepowNativeViewportEngine: ViewportEngine = {
     return api.readCyclesSession(sessionId) as unknown as Promise<CyclesSessionResult>;
   },
 
+  async updateCyclesSession(
+    sessionId: string,
+    patch: RenderPreviewOptions & Record<string, unknown>,
+  ) {
+    const api = vp();
+    if (!api?.updateCyclesSession) {
+      return { ok: false, error: 'Cycles update API 不可用', sessionId };
+    }
+    return api.updateCyclesSession(sessionId, patch) as unknown as Promise<CyclesSessionResult>;
+  },
+
   async stopCyclesSession(sessionId: string) {
     const api = vp();
     if (!api?.stopCyclesSession) {

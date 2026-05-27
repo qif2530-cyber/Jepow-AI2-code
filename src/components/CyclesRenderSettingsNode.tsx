@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useEffect, useState } from "react";
 import { Handle, Position, useReactFlow } from "@xyflow/react";
 import { GripHorizontal, Sliders } from "lucide-react";
 
@@ -23,7 +23,22 @@ export function CyclesRenderSettingsNode({ id, data, selected }: CyclesRenderSet
   const height = data.height ?? 512;
   const device = data.device ?? "CPU";
   const denoise = data.denoise ?? true;
-  const metalAvailable = false;
+  const [metalAvailable, setMetalAvailable] = useState(false);
+
+  useEffect(() => {
+    let active = true;
+    window.jepowDesktop?.viewport?.getStatus?.()
+      .then((status) => {
+        const cycles = status.cycles as { metalKernelBundled?: boolean; available?: boolean } | undefined;
+        if (active) setMetalAvailable(!!cycles?.available && !!cycles?.metalKernelBundled);
+      })
+      .catch(() => {
+        if (active) setMetalAvailable(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
 
   const update = (patch: Partial<CyclesRenderSettingsNodeProps["data"]>) => {
     const next = { ...data, ...patch };
@@ -57,21 +72,27 @@ export function CyclesRenderSettingsNode({ id, data, selected }: CyclesRenderSet
             type="button"
             onClick={(e) => {
               e.stopPropagation();
-              update({ device: metalAvailable && device === "CPU" ? "METAL" : "CPU" });
+              update({ device: device === "CPU" ? "METAL" : "CPU" });
             }}
-            className="text-[8px] text-blue-300 border border-blue-900/60 bg-blue-950/30 rounded px-1.5 py-0.5"
+            className={`text-[8px] border rounded px-1.5 py-0.5 ${
+              device === "METAL"
+                ? "text-emerald-300 border-emerald-900/60 bg-emerald-950/30"
+                : "text-blue-300 border-blue-900/60 bg-blue-950/30"
+            }`}
             title={
               device === "METAL"
-                ? "GPU 需 standalone 打包 Metal 内核；未打包时请用 CPU"
-                : "当前 jepow-cycles 先稳定 CPU；Metal 内核打包完成后再开放"
+                ? "Metal GPU 渲染；第一次会编译 kernel，可能等待 1-2 分钟"
+                : metalAvailable
+                  ? "切换到 Metal GPU"
+                  : "未检测到已打包 Metal kernel，仍可切换但渲染时会给出错误提示"
             }
           >
-            {metalAvailable ? device : "CPU"}
+            {device}
           </button>
         </div>
-        {device === "METAL" || !metalAvailable ? (
+        {device === "METAL" && !metalAvailable ? (
           <p className="text-[8px] text-amber-400/90 leading-tight">
-            Metal 需 kernel.framework；当前先固定 CPU。
+            未检测到 Metal kernel；请重新构建或确认 CYCLES_KERNEL_PATH。
           </p>
         ) : null}
         <div className="grid grid-cols-2 gap-2 text-[9px]">

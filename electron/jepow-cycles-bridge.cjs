@@ -193,6 +193,30 @@ function getCyclesExecutable() {
   return null;
 }
 
+function getCyclesKernelPath() {
+  const root = path.join(__dirname, '..');
+  const standaloneExecutable = getCyclesStandaloneExecutable();
+  const appRoot = standaloneExecutable
+    ? path.join(path.dirname(standaloneExecutable), '..', '..')
+    : null;
+  const candidates = [
+    path.join(root, 'native', 'jepow-cycles', 'third_party', 'blender', 'intern', 'cycles'),
+    appRoot ? path.join(appRoot, 'Resources') : null,
+    app.isPackaged ? path.join(process.resourcesPath, 'native', 'jepow-cycles', 'Resources') : null,
+  ].filter(Boolean);
+  for (const p of candidates) {
+    if (fs.existsSync(path.join(p, 'kernel', 'device', 'metal', 'kernel.metal'))) return p;
+  }
+  return null;
+}
+
+function getCyclesSpawnEnv() {
+  const kernelPath = process.env.CYCLES_KERNEL_PATH || getCyclesKernelPath();
+  return kernelPath
+    ? { ...process.env, CYCLES_KERNEL_PATH: kernelPath }
+    : process.env;
+}
+
 function parseDaemonLine(line) {
   try {
     return JSON.parse(line);
@@ -226,7 +250,7 @@ async function ensureCyclesDaemon() {
   if (daemonProc && !daemonProc.killed) return daemonProc;
   const executable = getCyclesExecutable();
   if (!executable) return null;
-  daemonProc = spawn(executable, ['--stdio'], { windowsHide: true });
+  daemonProc = spawn(executable, ['--stdio'], { env: getCyclesSpawnEnv(), windowsHide: true });
   daemonBuf = '';
   daemonProc.stdout.on('data', (d) => {
     daemonBuf += d.toString();
@@ -340,7 +364,7 @@ async function getStatus() {
   }
 
   return new Promise((resolve) => {
-    const proc = spawn(executable, ['--version'], { windowsHide: true });
+    const proc = spawn(executable, ['--version'], { env: getCyclesSpawnEnv(), windowsHide: true });
     let out = '';
     proc.stdout.on('data', (d) => {
       out += d.toString();
@@ -559,7 +583,7 @@ async function renderFrame(opts = {}) {
 
   const started = Date.now();
   return new Promise((resolve) => {
-    const proc = spawn(executable, args, { windowsHide: true });
+    const proc = spawn(executable, args, { env: getCyclesSpawnEnv(), windowsHide: true });
     let stdout = '';
     let stderr = '';
     proc.stdout.on('data', (d) => {
@@ -686,6 +710,48 @@ async function renderFrameViaDaemon(opts = {}, prepared, outputPath) {
   };
 }
 
+async function readResidentFrameViaDaemon(session, outputPath) {
+  const started = Date.now();
+  const res = await runDaemonCommand(
+    'read_frame',
+    {
+      sessionId: session.id,
+      outputPath,
+    },
+    5000,
+  );
+  if (!res.ok) {
+    return { ok: false, error: res.error || 'resident Cycles frame unavailable' };
+  }
+  const brightness = fs.existsSync(outputPath) ? analyzePngBrightness(outputPath) : null;
+  const failure = parseCyclesRenderFailure({
+    code: fs.existsSync(outputPath) ? 0 : 1,
+    stderr: '',
+    stdout: '',
+    device: session.device,
+    outputPath,
+  });
+  let previewDataUrl = null;
+  if (!failure) {
+    previewDataUrl = `data:image/png;base64,${fs.readFileSync(outputPath).toString('base64')}`;
+  }
+  return {
+    ok: !failure,
+    error: failure,
+    license: LICENSE,
+    renderer: res.renderer || 'libcycles-resident',
+    outputPath,
+    previewDataUrl,
+    device: session.device,
+    frameVersion: Number(res.frameVersion) || 0,
+    luminanceMax: brightness?.max ?? null,
+    luminanceMin: brightness?.min ?? null,
+    luminanceMean: brightness?.mean ?? null,
+    luminanceSpan: brightness?.span ?? null,
+    renderSeconds: (Date.now() - started) / 1000,
+  };
+}
+
 function buildFramePayload(session, res, status, stage) {
   return {
     ok: !!res?.ok,
@@ -744,10 +810,6 @@ async function runProgressiveSession(session) {
   const finalWidth = clampNumber(opts.width || opts.renderSettings?.width, 64, 8192, 768);
   const finalHeight = clampNumber(opts.height || opts.renderSettings?.height, 64, 8192, 512);
   const finalSamples = clampNumber(opts.samples || opts.renderSettings?.samples, 1, 4096, 64);
-  const previewScale = Math.min(1, 384 / Math.max(finalWidth, finalHeight));
-  const previewWidth = Math.max(192, Math.round(finalWidth * previewScale));
-  const previewHeight = Math.max(128, Math.round(finalHeight * previewScale));
-  const previewSamples = Math.min(16, finalSamples);
 
   session.status = 'rendering';
   session.updatedAt = Date.now();
@@ -755,62 +817,75 @@ async function runProgressiveSession(session) {
   await runDaemonCommand('init_session', { sessionId: session.id }, 1500);
 
   if (session.stopped) return;
-  const previewPath = path.join(cacheDir, `cycles-preview-${id}.png`);
-  const preview = await renderFrameViaDaemon(
+  const loaded = await runDaemonCommand(
+    'load_scene',
     {
-      ...opts,
       sessionId: session.id,
-      width: previewWidth,
-      height: previewHeight,
-      samples: previewSamples,
-    },
-    prepared,
-    previewPath,
-  );
-  const previewFrame = preview.ok ? preview : await renderFrame({
-    ...opts,
-    width: previewWidth,
-    height: previewHeight,
-    samples: previewSamples,
-  });
-  if (session.stopped) return;
-  session.frameVersion += 1;
-  session.frame = buildFramePayload(
-    session,
-    previewFrame,
-    previewFrame.ok ? 'rendering' : 'error',
-    'preview',
-  );
-  session.status = session.frame.status;
-  session.updatedAt = Date.now();
-  if (!previewFrame.ok) return;
-
-  await runDaemonCommand('load_scene', { sessionId: session.id, scenePath: prepared.scenePath }, 1500);
-
-  if (session.stopped) return;
-  const finalPath = path.join(cacheDir, `cycles-final-${id}.png`);
-  const daemonFinal = await renderFrameViaDaemon(
-    {
-      ...opts,
-      sessionId: session.id,
+      scenePath: prepared.scenePath,
+      device: session.device,
       width: finalWidth,
       height: finalHeight,
       samples: finalSamples,
     },
-    prepared,
-    finalPath,
+    10000,
   );
-  const finalFrame = daemonFinal.ok ? daemonFinal : await renderFrame({
-    ...opts,
-    width: finalWidth,
-    height: finalHeight,
-    samples: finalSamples,
-  });
-  if (session.stopped) return;
-  session.frameVersion += 1;
-  session.frame = buildFramePayload(session, finalFrame, finalFrame.ok ? 'done' : 'error', 'final');
-  session.status = session.frame.status;
-  session.updatedAt = Date.now();
+  if (!loaded.ok) {
+    session.status = 'error';
+    session.frameVersion += 1;
+    session.frame = {
+      ok: false,
+      sessionId: session.id,
+      status: 'error',
+      stage: 'error',
+      frameVersion: session.frameVersion,
+      error: loaded.error || 'Cycles resident load_scene failed',
+    };
+    return;
+  }
+
+  await updateResidentCamera(session.id, opts, finalWidth, finalHeight, finalSamples);
+
+  let lastDaemonFrameVersion = -1;
+  const started = Date.now();
+  while (!session.stopped) {
+    const framePath = path.join(cacheDir, `cycles-resident-${id}-${Date.now()}.png`);
+    const frame = await readResidentFrameViaDaemon(session, framePath);
+    if (session.stopped) return;
+    if (frame.ok && frame.frameVersion !== lastDaemonFrameVersion) {
+      lastDaemonFrameVersion = frame.frameVersion;
+      session.frameVersion += 1;
+      session.frame = buildFramePayload(session, frame, 'rendering', 'preview');
+      session.status = 'rendering';
+      session.updatedAt = Date.now();
+    }
+    if (!frame.ok && Date.now() - started > 8000 && !session.frame) {
+      session.status = 'error';
+      session.frameVersion += 1;
+      session.frame = buildFramePayload(session, frame, 'error', 'error');
+      return;
+    }
+    await new Promise((resolve) => setTimeout(resolve, session.device === 'METAL' ? 240 : 320));
+  }
+}
+
+async function updateResidentCamera(sessionId, opts = {}, width, height, samples) {
+  const cam = opts.camera || {};
+  return runDaemonCommand(
+    'update_camera',
+    {
+      sessionId,
+      yaw: Number(cam.yaw ?? 0),
+      pitch: Number(cam.pitch ?? 0),
+      distance: Number(cam.distance ?? opts.cameraDistance ?? 4.2),
+      panX: Number(cam.panX ?? 0),
+      panY: Number(cam.panY ?? 0),
+      fov: Number(cam.fov ?? 0.72),
+      width,
+      height,
+      samples,
+    },
+    5000,
+  );
 }
 
 function startSession(opts = {}) {
@@ -864,6 +939,23 @@ function readSession(sessionId) {
   };
 }
 
+async function updateSession(sessionId, patch = {}) {
+  const session = cyclesSessions.get(sessionId);
+  if (!session) {
+    return { ok: false, error: 'Cycles session not found', sessionId };
+  }
+  session.opts = { ...session.opts, ...patch };
+  const width = clampNumber(session.opts.width || session.opts.renderSettings?.width, 64, 8192, 768);
+  const height = clampNumber(session.opts.height || session.opts.renderSettings?.height, 64, 8192, 512);
+  const samples = clampNumber(session.opts.samples || session.opts.renderSettings?.samples, 1, 4096, 64);
+  const res = await updateResidentCamera(session.id, session.opts, width, height, samples);
+  if (res.ok) {
+    session.status = 'rendering';
+    session.updatedAt = Date.now();
+  }
+  return { ...res, sessionId };
+}
+
 function stopSession(sessionId) {
   const session = cyclesSessions.get(sessionId);
   if (!session) return { ok: true, sessionId, stopped: true };
@@ -881,6 +973,7 @@ module.exports = {
   renderFrame,
   startSession,
   readSession,
+  updateSession,
   stopSession,
   stopCyclesDaemon,
 };

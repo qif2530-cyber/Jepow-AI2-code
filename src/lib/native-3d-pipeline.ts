@@ -31,6 +31,7 @@ export const NATIVE_3D_NODE_TYPES = new Set([
   "cyclesMapRangeNode",
   "cyclesRgbToBwNode",
   "cyclesLightNode",
+  "cyclesCameraNode",
   "cyclesRenderSettingsNode",
 ]);
 
@@ -47,6 +48,7 @@ export type Native3dSocket =
   | "prompt"
   | "renderedImage"
   | "cyclesLight"
+  | "cyclesCamera"
   | "cyclesSettings"
   | "cyclesRenderSettings"
   | "textureOut"
@@ -78,6 +80,7 @@ export interface Resolved3DSceneExport {
   lights: Record<string, unknown>;
   renderSettings: Record<string, unknown>;
   cyclesLight: Record<string, unknown> | null;
+  cyclesCamera?: Record<string, unknown> | null;
 }
 
 type Rule = {
@@ -209,6 +212,13 @@ const CONNECTION_RULES: Rule[] = [
     edgeColor: "#f59e0b",
   },
   {
+    sourceTypes: ["cyclesCameraNode"],
+    sourceHandles: ["cyclesCamera"],
+    targetTypes: ["threeDEditorNode"],
+    targetHandle: "cyclesCamera",
+    edgeColor: "#06b6d4",
+  },
+  {
     sourceTypes: ["cyclesRenderSettingsNode"],
     sourceHandles: ["cyclesRenderSettings"],
     targetTypes: ["threeDEditorNode"],
@@ -270,6 +280,8 @@ function inferSourceHandle(sourceType: string): string {
       return "colorOut";
     case "cyclesLightNode":
       return "cyclesLight";
+    case "cyclesCameraNode":
+      return "cyclesCamera";
     case "cyclesRenderSettingsNode":
       return "cyclesRenderSettings";
     case "threeDEditorNode":
@@ -291,6 +303,7 @@ function inferTargetHandle(targetType: string, sourceType: string): Native3dSock
   }
   if (targetType === "threeDEditorNode") {
     if (sourceType === "cyclesLightNode") return "cyclesLight";
+    if (sourceType === "cyclesCameraNode") return "cyclesCamera";
     if (sourceType === "cyclesRenderSettingsNode") return "cyclesSettings";
     if (["modelAssetNode", "imageTo3DNode", "materialReplaceNode"].includes(sourceType)) {
       return "modelInput";
@@ -594,6 +607,7 @@ export function resolveEditorInputs(
   materialPreview: Record<string, unknown> | null;
   cyclesMaterial: CyclesMaterial | null;
   cyclesLight: Record<string, unknown> | null;
+  cyclesCamera: Record<string, unknown> | null;
   cyclesRenderSettings: Record<string, unknown> | null;
 } {
   const modelEdge = edges.find(
@@ -605,6 +619,9 @@ export function resolveEditorInputs(
   const lightEdge = edges.find(
     (e) => e.target === editorNode.id && e.targetHandle === "cyclesLight",
   );
+  const cameraEdge = edges.find(
+    (e) => e.target === editorNode.id && e.targetHandle === "cyclesCamera",
+  );
   const settingsEdge = edges.find(
     (e) => e.target === editorNode.id && e.targetHandle === "cyclesSettings",
   );
@@ -612,6 +629,7 @@ export function resolveEditorInputs(
   const modelNode = modelEdge ? nodes.find((n) => n.id === modelEdge.source) : null;
   const materialNode = materialEdge ? nodes.find((n) => n.id === materialEdge.source) : null;
   const lightNode = lightEdge ? nodes.find((n) => n.id === lightEdge.source) : null;
+  const cameraNode = cameraEdge ? nodes.find((n) => n.id === cameraEdge.source) : null;
   const settingsNode = settingsEdge ? nodes.find((n) => n.id === settingsEdge.source) : null;
 
   const model = resolveModelFromSourceNode(modelNode, nodes, edges);
@@ -636,6 +654,8 @@ export function resolveEditorInputs(
     materialPreview,
     cyclesMaterial: resolveMaterialForEditor(materialNode, nodes, edges),
     cyclesLight: (lightNode?.data as { cyclesLight?: Record<string, unknown> })?.cyclesLight || null,
+    cyclesCamera:
+      (cameraNode?.data as { cyclesCamera?: Record<string, unknown> })?.cyclesCamera || null,
     cyclesRenderSettings:
       (settingsNode?.data as { cyclesRenderSettings?: Record<string, unknown> })
         ?.cyclesRenderSettings || null,
@@ -654,5 +674,6 @@ export function buildSceneExportFromEditor(
     lights: (sceneData?.lights as Record<string, unknown>) || {},
     renderSettings: (sceneData?.renderSettings as Record<string, unknown>) || {},
     cyclesLight: resolved.cyclesLight,
+    cyclesCamera: resolved.cyclesCamera,
   };
 }

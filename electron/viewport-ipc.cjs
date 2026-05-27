@@ -135,6 +135,10 @@ function registerViewportIpc(ipcMain) {
     return cyclesBridge.readSession(sessionId);
   });
 
+  ipcMain.handle('viewport:updateCyclesSession', async (_e, sessionId, patch) => {
+    return cyclesBridge.updateSession(sessionId, patch || {});
+  });
+
   ipcMain.handle('viewport:stopCyclesSession', async (_e, sessionId) => {
     return cyclesBridge.stopSession(sessionId);
   });
