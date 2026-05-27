@@ -52,6 +52,41 @@ function normalizeRenderHeight(value) {
   return !Number.isFinite(n) || n === 512 ? 1536 : n;
 }
 
+function hexToRgb01(raw, fallback = [1, 1, 1]) {
+  if (typeof raw !== 'string' || !/^#[0-9a-f]{6}$/i.test(raw)) return fallback;
+  return [
+    parseInt(raw.slice(1, 3), 16) / 255,
+    parseInt(raw.slice(3, 5), 16) / 255,
+    parseInt(raw.slice(5, 7), 16) / 255,
+  ];
+}
+
+function cyclesMaterialParams(opts = {}) {
+  const p = opts.cyclesMaterial?.principled || opts.material?.principled || opts.material || {};
+  const [r, g, b] = hexToRgb01(p.baseColor || p.tint, [1, 1, 1]);
+  return {
+    materialR: r,
+    materialG: g,
+    materialB: b,
+    materialRoughness: clampNumber(p.roughness, 0, 1, 0.5),
+    materialMetallic: clampNumber(p.metallic ?? p.metalness, 0, 1, 0),
+    materialEmissionStrength: clampNumber(p.emissionStrength, 0, 20, 0),
+  };
+}
+
+function cyclesTransformParams(opts = {}) {
+  const t = opts.transform || {};
+  return {
+    transformX: clampNumber(t.x, -100000, 100000, 0),
+    transformY: clampNumber(t.y, -100000, 100000, 0),
+    transformZ: clampNumber(t.z, -100000, 100000, 0),
+    transformRx: clampNumber(t.rx, -360000, 360000, 0),
+    transformRy: clampNumber(t.ry, -360000, 360000, 0),
+    transformRz: clampNumber(t.rz, -360000, 360000, 0),
+    transformScale: clampNumber(t.scale, 0.01, 100000, 1),
+  };
+}
+
 function isMetalKernelBundled(standaloneExecutable) {
   if (process.platform !== 'darwin' || !standaloneExecutable) return false;
   const appRoot = path.join(path.dirname(standaloneExecutable), '..');
@@ -962,6 +997,8 @@ async function runProgressiveSession(session) {
           width: finalWidth,
           height: finalHeight,
           samples: finalSamples,
+          ...cyclesMaterialParams(session.opts),
+          ...cyclesTransformParams(session.opts),
         },
         60000,
       )
@@ -1001,7 +1038,7 @@ async function runProgressiveSession(session) {
     session.opts = { ...session.opts, ...session.pendingPatch };
     session.pendingPatch = null;
   }
-  if (pendingPatch) {
+  if (useMeshCache || pendingPatch) {
     const initialCameraUpdate = await updateResidentCamera(
       session.id,
       session.opts,
@@ -1015,6 +1052,7 @@ async function runProgressiveSession(session) {
   let lastDaemonFrameVersion = -1;
   let lastFrameReadAttemptAt = 0;
   const started = Date.now();
+  let cameraRecoveryApplied = false;
   while (!session.stopped) {
     const status = await runDaemonCommand('status', { sessionId: session.id }, 1500);
     if (status.ok && status.resident === false) {
@@ -1049,6 +1087,43 @@ async function runProgressiveSession(session) {
     const frame = await readResidentFrameViaDaemon(session, framePath);
     if (session.stopped) return;
     if (frame.ok && frame.frameVersion !== lastDaemonFrameVersion) {
+      const lumMax = Number(frame.luminanceMax ?? 0);
+      const veryDarkFirstFrame =
+        !session.frame &&
+        lumMax < 2 &&
+        Number(status.meshTriangles || 0) > 0 &&
+        Number(status.meshCameraDistance || 0) > 0;
+      if (veryDarkFirstFrame && !cameraRecoveryApplied) {
+        cameraRecoveryApplied = true;
+        const recoveredDistance = Math.max(2.8, Number(status.meshCameraDistance || 3.5));
+        session.opts = {
+          ...session.opts,
+          camera: {
+            ...(session.opts?.camera || {}),
+            yaw: 0.55,
+            pitch: 0.38,
+            distance: recoveredDistance,
+            panX: 0,
+            panY: 0,
+            fov: Math.PI / 4,
+          },
+        };
+        session.debugStage = 'recover_camera';
+        session.debugMessage = `首帧过暗，自动回退安全相机姿态 distance=${recoveredDistance.toFixed(3)}`;
+        session.updatedAt = Date.now();
+        const recover = await updateResidentCamera(
+          session.id,
+          session.opts,
+          finalWidth,
+          finalHeight,
+          finalSamples,
+        );
+        if (recover.ok) {
+          scheduleNavigationSettle(session.id);
+          await new Promise((resolve) => setTimeout(resolve, session.device === 'METAL' ? 140 : 220));
+          continue;
+        }
+      }
       lastDaemonFrameVersion = frame.frameVersion;
       session.frameVersion += 1;
       session.frame = buildFramePayload(session, frame, 'converging', 'preview');

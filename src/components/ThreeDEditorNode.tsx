@@ -381,17 +381,27 @@ function getCyclesViewportTarget(
   finalSamples: number,
   device: unknown,
   quality: "interactive" | "final",
+  viewportSize?: { width: number; height: number },
 ) {
   const width = Math.max(64, Number(finalWidth) || 2048);
   const height = Math.max(64, Number(finalHeight) || 1536);
   const samples = Math.max(1, Number(finalSamples) || 32);
+  const viewportW = Math.max(1, Number(viewportSize?.width) || width);
+  const viewportH = Math.max(1, Number(viewportSize?.height) || height);
+  const viewportAspectH = viewportH / viewportW;
   if (quality === "final") {
-    return { width, height, samples };
+    let w = width;
+    let h = Math.round(w * viewportAspectH);
+    if (h > height) {
+      h = height;
+      w = Math.round(h / viewportAspectH);
+    }
+    return { width: w, height: h, samples };
   }
 
   const maxW = device === "METAL" ? 768 : 512;
   const w = Math.min(width, maxW);
-  const h = Math.max(64, Math.round((w * height) / width));
+  const h = Math.max(64, Math.round(w * viewportAspectH));
   return {
     width: w,
     height: Math.min(height, h),
@@ -568,6 +578,8 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
   const cyclesRenderSeqRef = useRef(0);
   const activeCyclesSessionRef = useRef<string | null>(null);
   const lastCyclesSessionPatchKeyRef = useRef("");
+  const viewportContainerRef = useRef<HTMLDivElement | null>(null);
+  const [viewportPixelSize, setViewportPixelSize] = useState({ width: 640, height: 360 });
 
   const connectedCyclesLight = editorPipeline.cyclesLight as {
     yaw?: number;
@@ -839,18 +851,6 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
           (res as { luminanceSpan?: number }).luminanceSpan ??
             lumMax - Number((res as { luminanceMin?: number }).luminanceMin ?? 0),
         );
-        const lowContrast = lumMax < 8 || (lumMax < 200 && lumSpan < 25);
-        if (lowContrast) {
-          setCyclesFrame((prev) => ({
-            ...prev,
-            status: "rendering",
-            previewDataUrl: prev.previewDataUrl,
-            renderSeconds: res.renderSeconds,
-            cameraVersion: frameCameraVersion,
-            error: "Cycles 已启动但当前帧只有背景，正在等待模型进入有效相机视图。",
-          }));
-          return true;
-        }
         setCyclesFrame({
           status: finalFrame ? "done" : "rendering",
           previewDataUrl: res.previewDataUrl,
@@ -913,6 +913,7 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
         finalSamples,
         stableRenderSettings.device || effectiveRenderSettings.device,
         "interactive",
+        viewportPixelSize,
       );
       const sessionCameraVersion = cameraVersionRef.current;
 
@@ -1028,6 +1029,7 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
     resolvedScenePath,
     glbToRender,
     nativeLightingKey,
+    viewportPixelSize,
   ]);
 
   useEffect(() => {
@@ -1040,6 +1042,7 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
       Math.max(16, Number(stableRenderSettings.samples) || 32),
       stableRenderSettings.device,
       !viewportInteracting && hasCyclesFrame ? "final" : "interactive",
+      viewportPixelSize,
     );
     const patchKey = JSON.stringify({
       camera: cyclesRenderCamera,
@@ -1073,7 +1076,25 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
     viewportInteracting,
     cyclesFrame.previewDataUrl,
     cyclesFrame.status,
+    viewportPixelSize,
   ]);
+
+  useEffect(() => {
+    const el = viewportContainerRef.current;
+    if (!el) return;
+    const update = () => {
+      const rect = el.getBoundingClientRect();
+      const width = Math.max(1, Math.round(rect.width));
+      const height = Math.max(1, Math.round(rect.height));
+      setViewportPixelSize((prev) =>
+        prev.width === width && prev.height === height ? prev : { width, height },
+      );
+    };
+    update();
+    const observer = new ResizeObserver(update);
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
 
   const handleResetTransforms = () => {
     setTransform({
@@ -1179,7 +1200,7 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
       </Handle>
  
       {/* Main Workspace (Full viewport width & height covering with perfect 1px inset to avoid border overlap & clipping bleed) */}
-      <div id={`canvas-container-${id}`} className="absolute inset-[1px] bg-neutral-950 rounded-[7px] overflow-hidden nodrag nowheel nopan z-0">
+      <div ref={viewportContainerRef} id={`canvas-container-${id}`} className="absolute inset-[1px] bg-neutral-950 rounded-[7px] overflow-hidden nodrag nowheel nopan z-0">
         <style dangerouslySetInnerHTML={{ __html: `
           #canvas-container-${id} canvas {
             width: 100% !important;
@@ -1403,7 +1424,7 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
             <img
               src={cyclesFrame.previewDataUrl}
               alt="Cycles Render"
-              className="w-full h-full object-contain opacity-100"
+              className={`w-full h-full object-cover ${viewportInteracting ? "opacity-45" : "opacity-100"}`}
               onError={() =>
                 setCyclesFrame({
                   status: "error",
