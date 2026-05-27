@@ -147,16 +147,15 @@ pub fn mesh_for_cycles(scene_path: &str) -> Result<serde_json::Value> {
             (v.pos[2] - center[2]) * scale,
         ];
         coords.push(n[0]);
+        coords.push(n[1]);
         coords.push(n[2]);
-        coords.push(-n[1]);
     }
 
-    // Match Blender export_cycles_xml: reversed loop-triangle winding for outward normals.
     let mut verts: Vec<u32> = Vec::with_capacity(triangle_count * 3);
     for tri in prepared.indices.chunks_exact(3) {
-        verts.push(tri[2]);
-        verts.push(tri[1]);
         verts.push(tri[0]);
+        verts.push(tri[1]);
+        verts.push(tri[2]);
     }
 
     let camera_distance = (extent * scale * 0.85 + 2.8).max(3.5);

@@ -53,7 +53,7 @@ function normalizeRenderHeight(value) {
 
 function isMetalKernelBundled(standaloneExecutable) {
   if (process.platform !== 'darwin' || !standaloneExecutable) return false;
-  const appRoot = path.join(path.dirname(standaloneExecutable), '..', '..');
+  const appRoot = path.join(path.dirname(standaloneExecutable), '..');
   const candidates = [
     path.join(appRoot, 'Frameworks', 'kernel.framework', 'Resources', 'kernel', 'device', 'metal', 'kernel.metal'),
     path.join(appRoot, 'Resources', 'kernel', 'device', 'metal', 'kernel.metal'),
@@ -208,7 +208,7 @@ function getCyclesKernelPath() {
   const root = path.join(__dirname, '..');
   const standaloneExecutable = getCyclesStandaloneExecutable();
   const appRoot = standaloneExecutable
-    ? path.join(path.dirname(standaloneExecutable), '..', '..')
+    ? path.join(path.dirname(standaloneExecutable), '..')
     : null;
   const candidates = [
     path.join(root, 'native', 'jepow-cycles', 'third_party', 'blender', 'intern', 'cycles'),
@@ -923,12 +923,23 @@ async function runProgressiveSession(session) {
   const started = Date.now();
   while (!session.stopped) {
     const status = await runDaemonCommand('status', { sessionId: session.id }, 1500);
+    if (status.ok && status.resident === false) {
+      session.status = 'error';
+      session.frameVersion += 1;
+      session.frame = buildFramePayload(session, { error: 'Cycles daemon restarted or session lost' }, 'error', 'error');
+      return;
+    }
     const currentDaemonFrameVersion = Number(status.frameVersion) || 0;
     if (
       status.ok &&
-      currentDaemonFrameVersion > 0 &&
-      currentDaemonFrameVersion === lastDaemonFrameVersion
+      (currentDaemonFrameVersion === 0 || currentDaemonFrameVersion === lastDaemonFrameVersion)
     ) {
+      if (currentDaemonFrameVersion === 0 && Date.now() - started > 45000 && !session.frame) {
+        session.status = 'error';
+        session.frameVersion += 1;
+        session.frame = buildFramePayload(session, { error: 'Cycles render timeout (no frames produced)' }, 'error', 'error');
+        return;
+      }
       await new Promise((resolve) => setTimeout(resolve, session.device === 'METAL' ? 160 : 220));
       continue;
     }
@@ -942,7 +953,7 @@ async function runProgressiveSession(session) {
       session.status = 'converging';
       session.updatedAt = Date.now();
     }
-    if (!frame.ok && Date.now() - started > 8000 && !session.frame) {
+    if (!frame.ok && Date.now() - started > 45000 && !session.frame) {
       session.status = 'error';
       session.frameVersion += 1;
       session.frame = buildFramePayload(session, frame, 'error', 'error');
