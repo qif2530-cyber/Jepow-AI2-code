@@ -73,6 +73,11 @@ fn decimate_to_target(mesh: &mut MeshData, target_tris: usize) {
 
 fn prepare_mesh_for_cycles(mesh: MeshData) -> (MeshData, f32, bool) {
     let extent = bbox_extent(&mesh);
+    let tri_count = mesh.indices.len() / 3;
+    if tri_count <= TARGET_CYCLES_TRIANGLES {
+        return (mesh, 0.0, false);
+    }
+
     let eps_factors = [1e-6_f32, 1e-5, 1e-4, 1e-3, 5e-3, 1e-2, 2e-2, 5e-2];
     let mut best = weld_mesh_eps(&mesh, extent * eps_factors[0]);
     let mut used_eps = extent * eps_factors[0];
