@@ -1,0 +1,5 @@
+
+target create "native/jepow-cycles/build-cycles-standalone/intern/cycles/app/Blender.app/Contents/MacOS/jepow-cycles-daemon"
+process launch -i test_daemon_input.txt
+bt
+quit

@@ -1,0 +1,1 @@
+{"cmd": "load_mesh_cache", "sessionId": "test", "meshCachePath": "/Users/liang/Library/Application Support/Electron/cycles-cache/cycles-mesh-cycles-1779916298985-1.jpcmesh", "width": 800, "height": 600, "samples": 1, "deviceName": "CPU"}
