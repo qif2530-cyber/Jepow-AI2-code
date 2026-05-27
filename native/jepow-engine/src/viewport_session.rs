@@ -185,8 +185,7 @@ impl ViewportSession {
             cache: None,
         });
 
-        let (vertex_buffer, index_buffer, index_count) =
-            Self::upload_mesh(&device, &demo_mesh())?;
+        let (vertex_buffer, index_buffer, index_count) = Self::upload_mesh(&device, &demo_mesh())?;
 
         let (frame_w, frame_h) = (640u32, 480u32);
         let (color_texture, color_view, depth_texture, depth_view) =
@@ -368,11 +367,8 @@ impl ViewportSession {
         let view = camera_mvp(width, height, self.camera);
         let mvp = view * self.model_matrix();
         let uniforms = build_uniforms(mvp, self.effective_light(), self.effective_material());
-        self.queue.write_buffer(
-            &self.uniform_buffer,
-            0,
-            bytemuck::bytes_of(&uniforms),
-        );
+        self.queue
+            .write_buffer(&self.uniform_buffer, 0, bytemuck::bytes_of(&uniforms));
 
         let mut encoder = self
             .device

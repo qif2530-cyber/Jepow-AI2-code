@@ -127,7 +127,10 @@ fn cmd_render_frame(payload: &serde_json::Value) {
         None => return emit_err("outputPath required"),
     };
     let width = payload.get("width").and_then(|v| v.as_u64()).unwrap_or(640) as u32;
-    let height = payload.get("height").and_then(|v| v.as_u64()).unwrap_or(480) as u32;
+    let height = payload
+        .get("height")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(480) as u32;
 
     let scene_path = payload.get("scenePath").and_then(|v| v.as_str());
 
@@ -152,4 +155,3 @@ fn cmd_render_frame(payload: &serde_json::Value) {
         Err(e) => emit_err(e),
     }
 }
-

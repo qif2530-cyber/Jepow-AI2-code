@@ -104,6 +104,7 @@ pub struct ViewCamera {
     pub distance: f32,
     pub pan_x: f32,
     pub pan_y: f32,
+    pub fov: f32,
 }
 
 impl Default for ViewCamera {
@@ -114,15 +115,17 @@ impl Default for ViewCamera {
             distance: 2.45,
             pan_x: 0.0,
             pan_y: 0.0,
+            fov: 45.0_f32.to_radians(),
         }
     }
 }
 
 pub fn camera_mvp(width: u32, height: u32, cam: ViewCamera) -> Mat4 {
     let aspect = width as f32 / height.max(1) as f32;
-    let proj = Mat4::perspective_rh_gl(45.0_f32.to_radians(), aspect, 0.05, 100.0);
+    let fov = cam.fov.clamp(0.05, 3.13);
+    let proj = Mat4::perspective_rh_gl(fov, aspect, 0.05, 100.0);
     let pitch = cam.pitch.clamp(-1.2, 1.2);
-    let dist = cam.distance.clamp(0.35, 12.0);
+    let dist = cam.distance.clamp(0.35, 48.0);
     let center = Vec3::new(cam.pan_x, cam.pan_y, 0.0);
     let eye = center
         + Vec3::new(
@@ -288,6 +291,9 @@ pub fn parse_camera(payload: &serde_json::Value) -> ViewCamera {
     }
     if let Some(v) = payload.get("cameraDistance").and_then(|v| v.as_f64()) {
         cam.distance = v as f32;
+    }
+    if let Some(v) = payload.get("cameraFov").and_then(|v| v.as_f64()) {
+        cam.fov = v as f32;
     }
     if let Some(v) = payload.get("panX").and_then(|v| v.as_f64()) {
         cam.pan_x = v as f32;

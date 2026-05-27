@@ -25,6 +25,7 @@ const DAEMON_RELATIVE = process.platform === 'darwin'
 const MESH_EXPORT_EXT = new Set(['.glb', '.gltf', '.fbx', '.obj']);
 const meshExportCache = new Map();
 const cyclesSessions = new Map();
+const navigationSettleTimers = new Map();
 let cyclesSessionSeq = 0;
 let daemonProc = null;
 let daemonBuf = '';
@@ -244,6 +245,18 @@ function stopCyclesDaemon() {
     pending.resolve({ ok: false, error: 'jepow-cycles daemon stopped' });
   }
   daemonPending.clear();
+  for (const timer of navigationSettleTimers.values()) clearTimeout(timer);
+  navigationSettleTimers.clear();
+}
+
+function scheduleNavigationSettle(sessionId) {
+  const existing = navigationSettleTimers.get(sessionId);
+  if (existing) clearTimeout(existing);
+  const timer = setTimeout(() => {
+    navigationSettleTimers.delete(sessionId);
+    runDaemonCommand('settle_navigation', { sessionId }, 1500).catch(() => {});
+  }, 700);
+  navigationSettleTimers.set(sessionId, timer);
 }
 
 async function ensureCyclesDaemon() {
@@ -446,9 +459,14 @@ async function exportMeshViaNativeEngine(scenePath) {
   if (cached) {
     return { ...cached, cached: true };
   }
-  const result = await nativeEngine.runEngineCommand('mesh_for_cycles', { scenePath }, 120000);
+  const result = nativeEngine.meshForCycles
+    ? await nativeEngine.meshForCycles(scenePath)
+    : await nativeEngine.runEngineCommand('mesh_for_cycles', { scenePath }, 120000);
   if (result?.ok !== false) {
-    meshExportCache.clear();
+    if (meshExportCache.size > 8) {
+      const oldest = meshExportCache.keys().next().value;
+      if (oldest) meshExportCache.delete(oldest);
+    }
     meshExportCache.set(key, result);
   }
   return result;
@@ -672,7 +690,8 @@ async function renderFrameViaDaemon(opts = {}, prepared, outputPath) {
   if (!res.ok) {
     return { ok: false, error: res.error || 'jepow-cycles daemon render failed' };
   }
-  const brightness = fs.existsSync(outputPath) ? analyzePngBrightness(outputPath) : null;
+  const brightness =
+    !session.frame && fs.existsSync(outputPath) ? analyzePngBrightness(outputPath) : null;
   const failure = parseCyclesRenderFailure({
     code: fs.existsSync(outputPath) ? 0 : 1,
     stderr: '',
@@ -739,6 +758,11 @@ async function readResidentFrameViaDaemon(session, outputPath) {
   let previewDataUrl = null;
   if (!failure) {
     previewDataUrl = `data:image/png;base64,${fs.readFileSync(outputPath).toString('base64')}`;
+    try {
+      fs.unlinkSync(outputPath);
+    } catch {
+      /* cache cleanup best effort */
+    }
   }
   return {
     ok: !failure,
@@ -764,6 +788,8 @@ function buildFramePayload(session, res, status, stage) {
     status,
     stage,
     frameVersion: session.frameVersion,
+    daemonFrameVersion: Number(res?.frameVersion) || 0,
+    cameraVersion: Number(session.opts?.cameraVersion) || 0,
     previewDataUrl: res?.previewDataUrl || null,
     renderSeconds: res?.renderSeconds || 0,
     renderer: res?.renderer || 'cycles-standalone',
@@ -816,7 +842,7 @@ async function runProgressiveSession(session) {
   const finalHeight = clampNumber(opts.height || opts.renderSettings?.height, 64, 8192, 512);
   const finalSamples = clampNumber(opts.samples || opts.renderSettings?.samples, 1, 4096, 64);
 
-  session.status = 'rendering';
+  session.status = 'starting';
   session.updatedAt = Date.now();
 
   await runDaemonCommand('init_session', { sessionId: session.id }, 1500);
@@ -848,7 +874,21 @@ async function runProgressiveSession(session) {
     return;
   }
 
-  await updateResidentCamera(session.id, opts, finalWidth, finalHeight, finalSamples);
+  session.loaded = true;
+  session.status = 'ready';
+  session.updatedAt = Date.now();
+  if (session.pendingPatch) {
+    session.opts = { ...session.opts, ...session.pendingPatch };
+    session.pendingPatch = null;
+  }
+  const initialCameraUpdate = await updateResidentCamera(
+    session.id,
+    session.opts,
+    finalWidth,
+    finalHeight,
+    finalSamples,
+  );
+  if (initialCameraUpdate.ok) scheduleNavigationSettle(session.id);
 
   let lastDaemonFrameVersion = -1;
   const started = Date.now();
@@ -869,8 +909,8 @@ async function runProgressiveSession(session) {
     if (frame.ok && frame.frameVersion !== lastDaemonFrameVersion) {
       lastDaemonFrameVersion = frame.frameVersion;
       session.frameVersion += 1;
-      session.frame = buildFramePayload(session, frame, 'rendering', 'preview');
-      session.status = 'rendering';
+      session.frame = buildFramePayload(session, frame, 'converging', 'preview');
+      session.status = 'converging';
       session.updatedAt = Date.now();
     }
     if (!frame.ok && Date.now() - started > 8000 && !session.frame) {
@@ -894,7 +934,7 @@ async function updateResidentCamera(sessionId, opts = {}, width, height, samples
       distance: Number(cam.distance ?? opts.cameraDistance ?? 4.2),
       panX: Number(cam.panX ?? 0),
       panY: Number(cam.panY ?? 0),
-      fov: Number(cam.fov ?? 0.72),
+      fov: Number(cam.fov ?? Math.PI / 4),
       width,
       height,
       samples,
@@ -913,6 +953,7 @@ function startSession(opts = {}) {
     frame: null,
     frameVersion: 0,
     stopped: false,
+    loaded: false,
     createdAt: Date.now(),
     updatedAt: Date.now(),
   };
@@ -949,6 +990,8 @@ function readSession(sessionId) {
     sessionId,
     status: session.status,
     frameVersion: session.frameVersion,
+    cameraVersion: Number(session.opts?.cameraVersion) || 0,
+    loaded: !!session.loaded,
     frame: session.frame,
     updatedAt: session.updatedAt,
   };
@@ -960,22 +1003,49 @@ async function updateSession(sessionId, patch = {}) {
     return { ok: false, error: 'Cycles session not found', sessionId };
   }
   session.opts = { ...session.opts, ...patch };
+  session.updatedAt = Date.now();
+  if (!session.loaded) {
+    session.pendingPatch = { ...(session.pendingPatch || {}), ...patch };
+    return {
+      ok: true,
+      queued: true,
+      sessionId,
+      status: session.status,
+      cameraVersion: Number(session.opts.cameraVersion) || 0,
+    };
+  }
   const width = clampNumber(session.opts.width || session.opts.renderSettings?.width, 64, 8192, 768);
   const height = clampNumber(session.opts.height || session.opts.renderSettings?.height, 64, 8192, 512);
   const samples = clampNumber(session.opts.samples || session.opts.renderSettings?.samples, 1, 4096, 64);
   const res = await updateResidentCamera(session.id, session.opts, width, height, samples);
   if (res.ok) {
-    session.status = 'rendering';
+    session.status = 'navigating';
     session.updatedAt = Date.now();
+    scheduleNavigationSettle(session.id);
   }
-  return { ...res, sessionId };
+  return {
+    ...res,
+    sessionId,
+    status: session.status,
+    cameraVersion: Number(session.opts.cameraVersion) || 0,
+  };
 }
 
-function stopSession(sessionId) {
+async function stopSession(sessionId) {
   const session = cyclesSessions.get(sessionId);
   if (!session) return { ok: true, sessionId, stopped: true };
   session.stopped = true;
   session.status = 'stopped';
+  const timer = navigationSettleTimers.get(sessionId);
+  if (timer) {
+    clearTimeout(timer);
+    navigationSettleTimers.delete(sessionId);
+  }
+  try {
+    await runDaemonCommand('stop_render', { sessionId }, 1500);
+  } catch {
+    /* best effort */
+  }
   cyclesSessions.delete(sessionId);
   return { ok: true, sessionId, stopped: true };
 }

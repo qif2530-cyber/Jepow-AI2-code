@@ -192,12 +192,7 @@ export function getCyclesNodeDefaultData(
     case "cyclesCameraNode":
       return {
         type: "perspective",
-        fov: 0.72,
-        distance: 2.45,
-        yaw: 0.55,
-        pitch: 0.38,
-        panX: 0,
-        panY: 0,
+        fov: Math.PI / 4,
         aperturesize: 0,
         focaldistance: 10,
         blades: 0,
@@ -206,12 +201,7 @@ export function getCyclesNodeDefaultData(
         farclip: 100000,
         cyclesCamera: {
           type: "perspective",
-          fov: 0.72,
-          distance: 2.45,
-          yaw: 0.55,
-          pitch: 0.38,
-          panX: 0,
-          panY: 0,
+          fov: Math.PI / 4,
           aperturesize: 0,
           focaldistance: 10,
           blades: 0,

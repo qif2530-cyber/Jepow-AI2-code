@@ -117,11 +117,7 @@ pub fn run_daemon_loop() {
         let line = match line {
             Ok(l) => l,
             Err(e) => {
-                let _ = writeln!(
-                    stdout,
-                    "{}",
-                    err_response(None, format!("stdin: {}", e))
-                );
+                let _ = writeln!(stdout, "{}", err_response(None, format!("stdin: {}", e)));
                 let _ = stdout.flush();
                 break;
             }
@@ -186,12 +182,7 @@ pub fn run_daemon_loop() {
                     },
                 },
             },
-            "viewport_frame" => handle_viewport_frame(
-                &mut session,
-                &mut loaded_path,
-                id,
-                &req,
-            ),
+            "viewport_frame" => handle_viewport_frame(&mut session, &mut loaded_path, id, &req),
             "close_scene" => {
                 loaded_path = None;
                 ok_response(id, json!({ "closed": true }))

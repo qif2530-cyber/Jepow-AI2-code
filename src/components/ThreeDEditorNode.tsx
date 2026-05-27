@@ -422,15 +422,18 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
     "";
   const activeMaterial = editorPipeline.materialPreview;
   const activeCyclesMaterial = editorPipeline.cyclesMaterial;
+  const effectiveCyclesMaterialForRender = useMemo(
+    () => activeCyclesMaterial || createCyclesMaterial(activeMaterial || {}),
+    [activeCyclesMaterial, activeMaterial],
+  );
   const cyclesMaterialRenderKey = useMemo(() => {
-    if (!activeCyclesMaterial) return "";
-    const { shaderGraph, ...rest } = activeCyclesMaterial;
+    const { shaderGraph, ...rest } = effectiveCyclesMaterialForRender;
     return JSON.stringify({ rest, graph: shaderGraph });
-  }, [activeCyclesMaterial]);
+  }, [effectiveCyclesMaterialForRender]);
   const activeViewportMaterial = useMemo(
     () =>
-      activeCyclesMaterial
-        ? cyclesToViewportMaterial({ cyclesMaterial: activeCyclesMaterial })
+      effectiveCyclesMaterialForRender
+        ? cyclesToViewportMaterial({ cyclesMaterial: effectiveCyclesMaterialForRender })
         : null,
     [cyclesMaterialRenderKey],
   );
@@ -484,8 +487,8 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
   }, [hasNativeScene, modelNode, id, data.renderActive, updateNodeData]);
 
   const highPerfDynamic = perfProfile === "high";
-  /** Cycles 模式下先保留自研实时视口，离线路径追踪结果出来后再叠加。 */
-  const showLiveViewport = hasNativeScene && renderActive;
+  /** The native viewport is the single interactive surface; pause only stops Cycles. */
+  const showLiveViewport = hasNativeScene;
   const showPausedOverlay = hasNativeScene && !renderActive;
 
   // Position, Rotation, Scale configurations
@@ -524,13 +527,20 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
     distance: 2.45,
     panX: 0,
     panY: 0,
+    fov: Math.PI / 4,
   });
+  const viewportCameraRef = useRef<ViewportCamera>(viewportCamera);
+  const cameraVersionRef = useRef(0);
+  const [cameraVersion, setCameraVersion] = useState(0);
   const [cyclesFrame, setCyclesFrame] = useState<{
     status: "idle" | "rendering" | "done" | "error";
     previewDataUrl?: string;
     error?: string;
     renderSeconds?: number;
+    cameraVersion?: number;
   }>({ status: "idle" });
+  const [viewportInteracting, setViewportInteracting] = useState(false);
+  const viewportInteractionTimerRef = useRef<number | null>(null);
   const cyclesRenderSeqRef = useRef(0);
   const activeCyclesSessionRef = useRef<string | null>(null);
 
@@ -583,30 +593,104 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
       distance: viewportCamera.distance,
       panX: viewportCamera.panX,
       panY: viewportCamera.panY,
+      fov: connectedCyclesCamera?.fov ?? viewportCamera.fov ?? Math.PI / 4,
     }),
     [viewportCamera, connectedCyclesCamera],
   );
+  const effectiveViewportCamera = useMemo(
+    () => ({
+      ...viewportCamera,
+      fov: connectedCyclesCamera?.fov ?? viewportCamera.fov ?? Math.PI / 4,
+    }),
+    [viewportCamera, connectedCyclesCamera?.fov],
+  );
   const [cyclesRenderCamera, setCyclesRenderCamera] =
     useState<ViewportCamera>(effectiveCyclesCamera);
+  const cyclesRenderCameraRef = useRef<ViewportCamera>(effectiveCyclesCamera);
 
   useEffect(() => {
     const delay = viewportMode === "render" ? 180 : 0;
     const timer = window.setTimeout(() => {
+      cyclesRenderCameraRef.current = effectiveCyclesCamera;
       setCyclesRenderCamera(effectiveCyclesCamera);
     }, delay);
     return () => window.clearTimeout(timer);
   }, [effectiveCyclesCamera, viewportMode]);
 
   const handleViewportCameraChange = (next: ViewportCamera) => {
+    const current = viewportCameraRef.current;
+    const changed =
+      Math.abs((current.yaw ?? 0) - (next.yaw ?? 0)) > 0.0001 ||
+      Math.abs((current.pitch ?? 0) - (next.pitch ?? 0)) > 0.0001 ||
+      Math.abs((current.distance ?? 0) - (next.distance ?? 0)) > 0.0001 ||
+      Math.abs((current.panX ?? 0) - (next.panX ?? 0)) > 0.0001 ||
+      Math.abs((current.panY ?? 0) - (next.panY ?? 0)) > 0.0001 ||
+      Math.abs((current.fov ?? Math.PI / 4) - (next.fov ?? Math.PI / 4)) > 0.0001;
+    viewportCameraRef.current = next;
     setViewportCamera(next);
+    const nextCyclesCamera = {
+      ...(connectedCyclesCamera || {}),
+      yaw: next.yaw,
+      pitch: next.pitch,
+      distance: next.distance,
+      panX: next.panX,
+      panY: next.panY,
+      fov: connectedCyclesCamera?.fov ?? next.fov ?? Math.PI / 4,
+    };
+    cyclesRenderCameraRef.current = nextCyclesCamera;
+    setCyclesRenderCamera(nextCyclesCamera);
+    const nextCameraVersion = changed ? cameraVersionRef.current + 1 : cameraVersionRef.current;
+    if (changed) {
+      cameraVersionRef.current = nextCameraVersion;
+      setCameraVersion(nextCameraVersion);
+    }
     if (viewportMode === "render") {
       setCyclesFrame((prev) =>
         prev.previewDataUrl
-          ? { ...prev, previewDataUrl: undefined, status: "rendering", error: undefined }
+          ? {
+              ...prev,
+              previewDataUrl: undefined,
+              status: "rendering",
+              error: undefined,
+              cameraVersion: nextCameraVersion,
+            }
           : prev,
       );
     }
   };
+  const handleViewportInteractingChange = (interacting: boolean) => {
+    if (viewportInteractionTimerRef.current != null) {
+      window.clearTimeout(viewportInteractionTimerRef.current);
+      viewportInteractionTimerRef.current = null;
+    }
+    setViewportInteracting(interacting);
+    if (interacting && viewportMode === "render") {
+      setCyclesFrame((prev) =>
+        prev.previewDataUrl
+          ? {
+              ...prev,
+              previewDataUrl: undefined,
+              status: "rendering",
+              error: undefined,
+              cameraVersion: cameraVersionRef.current,
+            }
+          : prev,
+      );
+      viewportInteractionTimerRef.current = window.setTimeout(() => {
+        viewportInteractionTimerRef.current = null;
+        setViewportInteracting(false);
+      }, 900);
+    }
+  };
+
+  useEffect(
+    () => () => {
+      if (viewportInteractionTimerRef.current != null) {
+        window.clearTimeout(viewportInteractionTimerRef.current);
+      }
+    },
+    [],
+  );
 
   const nativeLighting = useMemo(
     () => ({
@@ -686,14 +770,19 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
   }, [viewportMode]);
 
   useEffect(() => {
-    if (viewportMode !== "render" || !renderActive || !activeCyclesMaterial) return;
+    if (viewportMode !== "render" || !renderActive || !effectiveCyclesMaterialForRender) return;
     let cancelled = false;
     let pollTimer: number | null = null;
     const seq = cyclesRenderSeqRef.current + 1;
     cyclesRenderSeqRef.current = seq;
 
-    const applyCyclesResult = (res: any, finalFrame: boolean) => {
+    const applyCyclesResult = (
+      res: any,
+      finalFrame: boolean,
+      frameCameraVersion = cameraVersionRef.current,
+    ) => {
       if (cancelled || cyclesRenderSeqRef.current !== seq) return false;
+      if (frameCameraVersion !== cameraVersionRef.current) return false;
       const triCount = Number((res as { triangleCount?: number }).triangleCount ?? 0);
       if (res.ok && res.previewDataUrl) {
         if ((res as { convertedScene?: boolean }).convertedScene && triCount <= 0) {
@@ -713,6 +802,7 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
           status: finalFrame ? "done" : "rendering",
           previewDataUrl: res.previewDataUrl,
           renderSeconds: res.renderSeconds,
+          cameraVersion: frameCameraVersion,
           error: lowContrast
             ? "Cycles 已出图但对比度偏低，可提高 Key/Env 或换深色材质便于辨认轮廓。"
             : undefined,
@@ -721,6 +811,7 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
       }
       setCyclesFrame({
         status: "error",
+        cameraVersion: frameCameraVersion,
         error:
           res.error ||
           (res as { stderr?: string }).stderr?.slice(-200) ||
@@ -748,11 +839,11 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
 
       const baseRequest = {
         scenePath,
-        material: activeCyclesMaterial as any,
-        cyclesMaterial: activeCyclesMaterial,
+        material: effectiveCyclesMaterialForRender as any,
+        cyclesMaterial: effectiveCyclesMaterialForRender,
         renderSettings: effectiveRenderSettings,
         cyclesLight: effectiveCyclesLight,
-        camera: cyclesRenderCamera,
+        camera: cyclesRenderCameraRef.current,
         lighting: nativeLighting,
         transform,
         device: effectiveRenderSettings.device || "CPU",
@@ -760,14 +851,18 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
       const finalWidth = Number(effectiveRenderSettings.width) || 768;
       const finalHeight = Number(effectiveRenderSettings.height) || 512;
       const finalSamples = Math.max(16, Number(effectiveRenderSettings.samples) || 32);
+      const sessionCameraVersion = cameraVersionRef.current;
 
       try {
         if (engine.startCyclesSession && engine.readCyclesSession) {
+          const currentCamera = cyclesRenderCameraRef.current;
           const start = await engine.startCyclesSession({
             ...baseRequest,
+            camera: currentCamera,
             width: finalWidth,
             height: finalHeight,
             samples: finalSamples,
+            cameraVersion: sessionCameraVersion,
           } as any);
           if (cancelled || cyclesRenderSeqRef.current !== seq) return;
           const sessionId = String((start as { sessionId?: string }).sessionId || "");
@@ -776,6 +871,14 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
             return;
           }
           activeCyclesSessionRef.current = sessionId;
+          void engine.updateCyclesSession?.(sessionId, {
+            camera: currentCamera,
+            width: finalWidth,
+            height: finalHeight,
+            samples: finalSamples,
+            renderSettings: effectiveRenderSettings,
+            cameraVersion: sessionCameraVersion,
+          } as any);
           let lastFrameVersion = -1;
           const poll = async () => {
             if (cancelled || cyclesRenderSeqRef.current !== seq || !activeCyclesSessionRef.current) return;
@@ -784,7 +887,11 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
             const frame = (state as { frame?: any }).frame;
             if (frame && Number(frame.frameVersion ?? 0) !== lastFrameVersion) {
               lastFrameVersion = Number(frame.frameVersion ?? 0);
-              applyCyclesResult(frame, frame.status === "done" || frame.stage === "final");
+              applyCyclesResult(
+                frame,
+                frame.status === "done" || frame.stage === "final",
+                Number(frame.cameraVersion ?? sessionCameraVersion),
+              );
             }
             if (state.status === "done" || state.status === "error") return;
             pollTimer = window.setTimeout(poll, 280);
@@ -799,8 +906,9 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
           width: Math.max(192, Math.round(finalWidth * previewScale)),
           height: Math.max(128, Math.round(finalHeight * previewScale)),
           samples: Math.min(16, finalSamples),
+          cameraVersion: sessionCameraVersion,
         } as any);
-        const previewOk = applyCyclesResult(previewRes, false);
+        const previewOk = applyCyclesResult(previewRes, false, sessionCameraVersion);
         if (!previewOk || cancelled || cyclesRenderSeqRef.current !== seq) return;
 
         const finalRes = await engine.renderCyclesFrame!({
@@ -808,8 +916,9 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
           width: finalWidth,
           height: finalHeight,
           samples: finalSamples,
+          cameraVersion: sessionCameraVersion,
         } as any);
-        applyCyclesResult(finalRes, true);
+        applyCyclesResult(finalRes, true, sessionCameraVersion);
       } catch (err: unknown) {
         if (cancelled || cyclesRenderSeqRef.current !== seq) return;
         setCyclesFrame({
@@ -837,6 +946,7 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
     resolvedScenePath,
     glbToRender,
     nativeLighting,
+    effectiveCyclesMaterialForRender,
   ]);
 
   useEffect(() => {
@@ -847,12 +957,14 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
       const finalWidth = Number(effectiveRenderSettings.width) || 768;
       const finalHeight = Number(effectiveRenderSettings.height) || 512;
       const finalSamples = Math.max(16, Number(effectiveRenderSettings.samples) || 32);
+      cyclesRenderCameraRef.current = cyclesRenderCamera;
       void getViewportEngine().updateCyclesSession?.(sessionId, {
         camera: cyclesRenderCamera,
         width: finalWidth,
         height: finalHeight,
         samples: finalSamples,
         renderSettings: effectiveRenderSettings,
+        cameraVersion: cameraVersionRef.current,
       } as any);
     }, 30);
     return () => window.clearTimeout(timer);
@@ -1058,7 +1170,7 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
             liveRender
             lockRenderSize
             highPerformanceMode={highPerfDynamic}
-            shading={viewportMode === "render" ? "render" : "clay"}
+            shading="clay"
             transform={{
               x: transform.x,
               y: transform.y,
@@ -1069,14 +1181,11 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
               scale: transform.scale,
             }}
             lighting={nativeLighting}
-            material={
-              viewportMode === "render" && activeViewportMaterial
-                ? activeViewportMaterial
-                : null
-            }
+            material={null}
             resetViewToken={viewportResetToken}
-            defaultCamera={connectedCyclesCamera || undefined}
+            viewCamera={effectiveViewportCamera}
             onCameraChange={handleViewportCameraChange}
+            onInteractingChange={handleViewportInteractingChange}
           />
         ) : showPausedOverlay ? (
           <>
@@ -1085,16 +1194,13 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
               fill
               mode="turntable"
               liveRender={false}
-              shading={viewportMode === "render" ? "render" : "clay"}
+              shading="clay"
               lighting={nativeLighting}
-              material={
-                viewportMode === "render" && activeViewportMaterial
-                  ? activeViewportMaterial
-                  : null
-              }
+              material={null}
               resetViewToken={viewportResetToken}
-              defaultCamera={connectedCyclesCamera || undefined}
+              viewCamera={effectiveViewportCamera}
               onCameraChange={handleViewportCameraChange}
+              onInteractingChange={handleViewportInteractingChange}
             />
             <div className="absolute inset-0 z-10 flex flex-col items-center justify-center bg-black/55 pointer-events-none">
               <Pause className="w-8 h-8 text-purple-400/90 mb-2" />
@@ -1188,6 +1294,8 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
         )}
 
         {viewportMode === "render" &&
+          !viewportInteracting &&
+          cyclesFrame.cameraVersion === cameraVersion &&
           cyclesFrame.previewDataUrl && (
           <div className="absolute inset-0 z-[8] bg-neutral-950 pointer-events-none">
             <img

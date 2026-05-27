@@ -24,7 +24,15 @@ fn mesh_cache_key(path: &str) -> String {
         .unwrap_or_else(|_| PathBuf::from(path))
         .to_string_lossy()
         .into_owned();
-    format!("v2-normals:{base}")
+    let meta = std::fs::metadata(path).ok();
+    let modified = meta
+        .as_ref()
+        .and_then(|m| m.modified().ok())
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|d| d.as_millis())
+        .unwrap_or(0);
+    let size = meta.map(|m| m.len()).unwrap_or(0);
+    format!("v3-normals:{base}:{modified}:{size}")
 }
 
 /// Cached mesh load (parse FBX once per path per process).
@@ -90,11 +98,7 @@ fn load_gltf_mesh(path: &str) -> Result<MeshData> {
             if prim.mode() != gltf::mesh::Mode::Triangles {
                 continue;
             }
-            let reader = prim.reader(|buf| {
-                buffers
-                    .get(buf.index())
-                    .map(|data| data.0.as_slice())
-            });
+            let reader = prim.reader(|buf| buffers.get(buf.index()).map(|data| data.0.as_slice()));
             let positions: Vec<[f32; 3]> = reader
                 .read_positions()
                 .context("missing positions")?
@@ -150,12 +154,7 @@ fn append_fbx_mesh_triangles(
         if face.num_indices < 3 {
             continue;
         }
-        if mesh
-            .face_hole
-            .get(face_ix)
-            .map(|h| *h)
-            .unwrap_or(false)
-        {
+        if mesh.face_hole.get(face_ix).map(|h| *h).unwrap_or(false) {
             continue;
         }
         let mut tri_corners = Vec::new();
@@ -285,11 +284,7 @@ fn normalize_mesh(mesh: &mut MeshData) {
         (min[1] + max[1]) * 0.5,
         (min[2] + max[2]) * 0.5,
     ];
-    let size = [
-        max[0] - min[0],
-        max[1] - min[1],
-        max[2] - min[2],
-    ];
+    let size = [max[0] - min[0], max[1] - min[1], max[2] - min[2]];
     let max_dim = size[0].max(size[1]).max(size[2]).max(1e-6);
     let scale = 1.6 / max_dim;
 

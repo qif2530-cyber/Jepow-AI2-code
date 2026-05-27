@@ -79,11 +79,8 @@ fn load_gltf_stats(path: &str, ext: &str) -> Result<SceneStats> {
     for mesh in doc.meshes() {
         for prim in mesh.primitives() {
             if prim.mode() == gltf::mesh::Mode::Triangles {
-                let reader = prim.reader(|buf| {
-                    buffers
-                        .get(buf.index())
-                        .map(|data| data.0.as_slice())
-                });
+                let reader =
+                    prim.reader(|buf| buffers.get(buf.index()).map(|data| data.0.as_slice()));
                 let n = if let Some(indices) = reader.read_indices() {
                     indices.into_u32().count()
                 } else if let Some(positions) = reader.read_positions() {

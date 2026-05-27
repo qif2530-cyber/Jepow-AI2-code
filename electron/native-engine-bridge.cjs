@@ -70,6 +70,7 @@ let daemonReqId = 0;
 /** @type {Map<number, { resolve: Function, reject: Function, timer: NodeJS.Timeout }>} */
 const daemonPending = new Map();
 let daemonSessionPath = null;
+let daemonSessionInfo = null;
 let daemonStarting = null;
 
 function killDaemon() {
@@ -84,6 +85,7 @@ function killDaemon() {
   daemonProc = null;
   daemonBuf = '';
   daemonSessionPath = null;
+  daemonSessionInfo = null;
   for (const [, p] of daemonPending) {
     clearTimeout(p.timer);
     p.reject(new Error('daemon stopped'));
@@ -313,10 +315,13 @@ async function openScene(scenePath) {
   try {
     if (daemonSessionPath !== p) {
       const loaded = await daemonRequest({ cmd: 'load_scene', scenePath: p }, 300000);
-      if (loaded.ok) daemonSessionPath = p;
+      if (loaded.ok) {
+        daemonSessionPath = p;
+        daemonSessionInfo = loaded;
+      }
       return loaded;
     }
-    return daemonRequest({ cmd: 'load_scene', scenePath: p }, 120000);
+    return daemonSessionInfo || { ok: true, scenePath: p, cached: true };
   } catch {
     return runEngineCommand('open_scene', { scenePath: p });
   }
@@ -330,6 +335,7 @@ async function renderPreview(opts = {}) {
     cameraYaw,
     cameraPitch,
     cameraDistance,
+    cameraFov,
     panX,
     panY,
     lightYaw,
@@ -368,6 +374,7 @@ async function renderPreview(opts = {}) {
     cameraYaw,
     cameraPitch,
     cameraDistance,
+    cameraFov,
     panX,
     panY,
     lightYaw,
@@ -413,6 +420,7 @@ async function renderPreview(opts = {}) {
       cameraYaw,
       cameraPitch,
       cameraDistance,
+      cameraFov,
       panX,
       panY,
       lightYaw,
@@ -447,6 +455,15 @@ async function renderPreview(opts = {}) {
   }
 }
 
+async function meshForCycles(scenePath) {
+  const p = normalizeScenePath(scenePath);
+  try {
+    return await daemonRequest({ cmd: 'mesh_for_cycles', scenePath: p }, 120000);
+  } catch {
+    return runEngineCommand('mesh_for_cycles', { scenePath: p }, 120000);
+  }
+}
+
 function readCachedImageByName(fileName) {
   const safe = path.basename(fileName.split('?')[0]);
   const full = path.join(getViewportCacheDir(), safe);
@@ -463,6 +480,7 @@ module.exports = {
   getStatus,
   openScene,
   renderPreview,
+  meshForCycles,
   readCachedImageByName,
   ensureDaemon,
   killDaemon,

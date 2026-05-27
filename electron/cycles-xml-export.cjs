@@ -23,7 +23,7 @@ function buildBackgroundBlockXml(strength, colorRgb) {
 }
 
 /** Camera matrix on <camera> is overwritten by identity; wrap in <transform>. */
-function buildCameraBlockXml(width, height, fov = 0.72, distance = 4.2, camera = {}) {
+function buildCameraBlockXml(width, height, fov = Math.PI / 4, distance = 4.2, camera = {}) {
   const yaw = clampNumber(camera.yaw, -Math.PI * 4, Math.PI * 4, 0);
   const pitch = clampNumber(camera.pitch, -1.2, 1.2, 0);
   const dist = clampNumber(camera.distance ?? distance, 0.35, 48, distance);
@@ -135,8 +135,8 @@ function buildCyclesSceneXml(opts) {
   const camera = opts.cyclesCamera || opts.camera || {};
   const cameraDistance = clampNumber(
     camera.distance ?? opts.cameraDistance ?? opts.meshMeta?.cameraDistance,
-    2.5,
-    24,
+    0.35,
+    48,
     4.2,
   );
 
@@ -151,7 +151,7 @@ function buildCyclesSceneXml(opts) {
 <cycles>
   <film exposure="${filmExposure}" />
   <integrator use_adaptive_sampling="0" max_bounce="${clampNumber(renderSettings.bounces, 1, 64, 8)}" diffuse_bounces="4" glossy_bounces="4" transparent_max_bounce="8" />
-${buildCameraBlockXml(width, height, clampNumber(camera.fov, 0.05, 3.13, 0.72), cameraDistance, camera)}
+${buildCameraBlockXml(width, height, clampNumber(camera.fov, 0.05, 3.13, Math.PI / 4), cameraDistance, camera)}
 ${buildBackgroundBlockXml(environmentStrength, backgroundColor)}
 ${shaderBlock}
   <transform translate="${lx} ${ly} ${lz}">

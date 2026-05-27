@@ -39,6 +39,8 @@ export interface ViewportCamera {
   distance?: number;
   panX?: number;
   panY?: number;
+  /** Vertical field of view in radians; matches Cycles camera fov. */
+  fov?: number;
 }
 
 /** 原生 wgpu 白膜光照（与 3D 编辑器光源面板联动） */
@@ -103,9 +105,12 @@ export interface RenderPreviewResult {
 
 export interface CyclesSessionResult extends RenderPreviewResult {
   sessionId?: string;
-  status?: 'starting' | 'rendering' | 'done' | 'error' | 'stopped';
+  status?: 'starting' | 'ready' | 'navigating' | 'converging' | 'rendering' | 'done' | 'error' | 'stopped';
   stage?: 'preview' | 'final' | 'error';
   frameVersion?: number;
+  cameraVersion?: number;
+  daemonFrameVersion?: number;
+  loaded?: boolean;
   frame?: CyclesSessionResult | null;
   mode?: string;
 }

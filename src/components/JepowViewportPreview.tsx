@@ -36,10 +36,13 @@ interface JepowViewportPreviewProps {
   orbitOnly?: boolean;
   /** 初始相机；未指定时用 DEFAULT_CAM */
   defaultCamera?: ViewportCamera;
+  /** 由父组件持有的当前视口相机；用于跨预览/Cycles 模式保持同一视窗。 */
+  viewCamera?: ViewportCamera;
   /** 锁定首次测量分辨率，避免无限画布缩放触发反复重渲 */
   lockRenderSize?: boolean;
   /** Orbit 相机变化时同步给父组件，供 Cycles 使用同一视角。 */
   onCameraChange?: (camera: ViewportCamera) => void;
+  onInteractingChange?: (interacting: boolean) => void;
   onSceneInfo?: (info: {
     meshCount?: number;
     nodeCount?: number;
@@ -54,6 +57,7 @@ const DEFAULT_CAM: ViewportCamera = {
   distance: 2.45,
   panX: 0,
   panY: 0,
+  fov: Math.PI / 4,
 };
 
 /** 素材节点默认 45° 展示（弧度） */
@@ -129,12 +133,17 @@ export function JepowViewportPreview({
   highPerformanceMode = false,
   orbitOnly = false,
   defaultCamera,
+  viewCamera,
   lockRenderSize = false,
   onCameraChange,
+  onInteractingChange,
   onSceneInfo,
 }: JepowViewportPreviewProps) {
+  const initialCameraRef = useRef<ViewportCamera>({
+    ...(viewCamera ?? defaultCamera ?? DEFAULT_CAM),
+  });
   const initialCam = useMemo(
-    () => ({ ...(defaultCamera ?? DEFAULT_CAM) }),
+    () => ({ ...(defaultCamera ?? initialCameraRef.current) }),
     [
       defaultCamera?.yaw,
       defaultCamera?.pitch,
@@ -160,6 +169,7 @@ export function JepowViewportPreview({
   const [capsLine, setCapsLine] = useState<string | null>(null);
   const [camera, setCamera] = useState<ViewportCamera>({ ...initialCam });
   const cameraRef = useRef(camera);
+  const viewCameraRef = useRef<ViewportCamera | undefined>(viewCamera);
   const parentCameraRaf = useRef(0);
   const pendingParentCamera = useRef<ViewportCamera | null>(null);
   const transformRef = useRef(transform);
@@ -182,6 +192,21 @@ export function JepowViewportPreview({
     [onCameraChange],
   );
 
+  useEffect(() => {
+    if (!viewCamera || dragging.current) return;
+    const current = cameraRef.current;
+    const same =
+      Math.abs((current.yaw ?? 0) - (viewCamera.yaw ?? 0)) < 0.0001 &&
+      Math.abs((current.pitch ?? 0) - (viewCamera.pitch ?? 0)) < 0.0001 &&
+      Math.abs((current.distance ?? 0) - (viewCamera.distance ?? 0)) < 0.0001 &&
+      Math.abs((current.panX ?? 0) - (viewCamera.panX ?? 0)) < 0.0001 &&
+      Math.abs((current.panY ?? 0) - (viewCamera.panY ?? 0)) < 0.0001 &&
+      Math.abs((current.fov ?? Math.PI / 4) - (viewCamera.fov ?? Math.PI / 4)) < 0.0001;
+    if (same) return;
+    cameraRef.current = { ...viewCamera };
+    setCamera({ ...viewCamera });
+  }, [viewCamera]);
+
   useEffect(
     () => () => {
       if (parentCameraRaf.current) cancelAnimationFrame(parentCameraRaf.current);
@@ -192,6 +217,7 @@ export function JepowViewportPreview({
   transformRef.current = transform;
   lightingRef.current = lighting;
   materialRef.current = material;
+  viewCameraRef.current = viewCamera;
 
   const turntableYaw = useRef(0);
   const animRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -413,7 +439,7 @@ export function JepowViewportPreview({
     setEngineReady(null);
     setEngineError(null);
     lockedRenderSize.current = null;
-    syncCamera({ ...initialCam });
+    syncCamera({ ...(viewCameraRef.current ?? initialCam) });
     turntableYaw.current = 0;
 
     getViewportCapabilities(true)
@@ -477,7 +503,7 @@ export function JepowViewportPreview({
     if (!liveRender) {
       if (staticRendered.current) return;
       staticRendered.current = true;
-      void renderWithCamera({ ...initialCam }, false, "final");
+      void renderWithCamera({ ...cameraRef.current }, false, "final");
       return undefined;
     }
 
@@ -510,7 +536,7 @@ export function JepowViewportPreview({
       };
     }
 
-    void renderWithCameraRef.current({ ...initialCam }, liveRender, "final");
+    void renderWithCameraRef.current({ ...cameraRef.current }, liveRender, "final");
     return undefined;
     // Keep this as an initial scene/mode draw only. Lighting and transform changes
     // render through their own effect without resetting the camera.
@@ -565,6 +591,7 @@ export function JepowViewportPreview({
     e.stopPropagation();
     e.currentTarget.setPointerCapture(e.pointerId);
     setIsDragging(true);
+    onInteractingChange?.(true);
     dragging.current = {
       kind:
         orbitOnly || !(e.button === 2 || e.shiftKey) ? "orbit" : "pan",
@@ -599,6 +626,7 @@ export function JepowViewportPreview({
     e.stopPropagation();
     dragging.current = null;
     setIsDragging(false);
+    onInteractingChange?.(false);
     try {
       e.currentTarget.releasePointerCapture(e.pointerId);
     } catch {
@@ -617,11 +645,13 @@ export function JepowViewportPreview({
       ...cameraRef.current,
       distance: Math.max(
         0.4,
-        Math.min(10, (cameraRef.current.distance ?? 2.45) + e.deltaY * 0.004),
+        Math.min(48, (cameraRef.current.distance ?? 2.45) + e.deltaY * 0.004),
       ),
     };
+    onInteractingChange?.(true);
     syncCamera(next);
-      void renderWithCamera(next, true, "draft");
+    window.setTimeout(() => onInteractingChange?.(false), 160);
+    void renderWithCamera(next, true, "draft");
   };
 
   const modeHint = orbitOnly
@@ -661,14 +691,16 @@ export function JepowViewportPreview({
   return (
     <div
       ref={containerRef}
-      className={`${shellClass} bg-neutral-950 border ${
+      className={`${shellClass} nodrag nopan nowheel bg-neutral-950 border ${
         fill ? "border-0" : mode === "orbit" ? "border-purple-500/50" : "border-emerald-500/40"
       } ${(liveRender || orbitOnly) && mode === "orbit" ? "cursor-grab active:cursor-grabbing" : ""}`}
       style={shellStyle}
       onPointerDown={onPointerDown}
       onPointerMove={onPointerMove}
       onPointerUp={onPointerUp}
+      onPointerCancel={onPointerUp}
       onPointerLeave={onPointerUp}
+      onLostPointerCapture={onPointerUp}
       onWheel={onWheel}
       onContextMenu={(e) => e.preventDefault()}
     >
@@ -745,8 +777,7 @@ export function JepowViewportPreview({
             e.stopPropagation();
             renderGen.current += 1;
             const cam = { ...initialCam };
-            setCamera(cam);
-            cameraRef.current = cam;
+            syncCamera(cam);
             if (mode === "turntable") turntableYaw.current = 0;
             void renderWithCamera(cam, liveRender || orbitOnly);
           }}

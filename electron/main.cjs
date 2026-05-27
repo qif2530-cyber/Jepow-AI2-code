@@ -303,6 +303,12 @@ function shutdownChildren() {
   } catch {
     /* ignore */
   }
+  try {
+    const cyclesBridge = require('./jepow-cycles-bridge.cjs');
+    if (cyclesBridge.stopCyclesDaemon) cyclesBridge.stopCyclesDaemon();
+  } catch {
+    /* ignore */
+  }
   if (frontendProcess && !frontendProcess.killed) {
     frontendProcess.kill();
     frontendProcess = null;

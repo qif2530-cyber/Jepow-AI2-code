@@ -70,6 +70,7 @@ export const jepowNativeViewportEngine: ViewportEngine = {
       cameraYaw: cam?.yaw,
       cameraPitch: cam?.pitch,
       cameraDistance: cam?.distance,
+      cameraFov: cam?.fov,
       panX: cam?.panX,
       panY: cam?.panY,
       lightYaw: lit?.yaw,

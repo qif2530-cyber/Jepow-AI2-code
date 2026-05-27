@@ -7,11 +7,6 @@ interface CyclesCameraNodeProps {
   data: {
     type?: "perspective" | "orthograph" | "panorama";
     fov?: number;
-    distance?: number;
-    yaw?: number;
-    pitch?: number;
-    panX?: number;
-    panY?: number;
     aperturesize?: number;
     focaldistance?: number;
     blades?: number;
@@ -25,10 +20,7 @@ interface CyclesCameraNodeProps {
 export function CyclesCameraNode({ id, data, selected }: CyclesCameraNodeProps) {
   const { updateNodeData } = useReactFlow();
   const type = data.type ?? "perspective";
-  const fov = data.fov ?? 0.72;
-  const distance = data.distance ?? 2.45;
-  const yaw = data.yaw ?? 0.55;
-  const pitch = data.pitch ?? 0.38;
+  const fov = data.fov ?? Math.PI / 4;
   const aperturesize = data.aperturesize ?? 0;
   const focaldistance = data.focaldistance ?? 10;
 
@@ -38,12 +30,7 @@ export function CyclesCameraNode({ id, data, selected }: CyclesCameraNodeProps) 
       ...patch,
       cyclesCamera: {
         type: next.type ?? "perspective",
-        fov: next.fov ?? 0.72,
-        distance: next.distance ?? 2.45,
-        yaw: next.yaw ?? 0.55,
-        pitch: next.pitch ?? 0.38,
-        panX: next.panX ?? 0,
-        panY: next.panY ?? 0,
+        fov: next.fov ?? Math.PI / 4,
         aperturesize: next.aperturesize ?? 0,
         focaldistance: next.focaldistance ?? 10,
         blades: next.blades ?? 0,
@@ -79,24 +66,12 @@ export function CyclesCameraNode({ id, data, selected }: CyclesCameraNodeProps) 
           </button>
         </div>
         <p className="text-[8px] text-neutral-500 leading-tight">
-          对齐 Cycles Camera sockets: FOV / Aperture Size / Focal Distance / Clip。
+          对齐 Cycles Camera sockets: FOV / Aperture Size / Focal Distance / Clip。视窗角度由 3D 视口统一控制。
         </p>
         <div className="grid grid-cols-2 gap-2 text-[9px]">
           <label className="flex flex-col gap-1 bg-neutral-900/60 rounded p-2">
             FOV {fov.toFixed(2)}
             <input type="range" min="0.25" max="1.5" step="0.01" value={fov} onChange={(e) => update({ fov: parseFloat(e.target.value) })} className="h-1 accent-cyan-500" />
-          </label>
-          <label className="flex flex-col gap-1 bg-neutral-900/60 rounded p-2">
-            Distance {distance.toFixed(2)}
-            <input type="range" min="0.5" max="12" step="0.05" value={distance} onChange={(e) => update({ distance: parseFloat(e.target.value) })} className="h-1 accent-cyan-500" />
-          </label>
-          <label className="flex flex-col gap-1 bg-neutral-900/60 rounded p-2">
-            Yaw {yaw.toFixed(2)}
-            <input type="range" min="-3.14" max="3.14" step="0.01" value={yaw} onChange={(e) => update({ yaw: parseFloat(e.target.value) })} className="h-1 accent-blue-500" />
-          </label>
-          <label className="flex flex-col gap-1 bg-neutral-900/60 rounded p-2">
-            Pitch {pitch.toFixed(2)}
-            <input type="range" min="-1.2" max="1.2" step="0.01" value={pitch} onChange={(e) => update({ pitch: parseFloat(e.target.value) })} className="h-1 accent-blue-500" />
           </label>
           <label className="flex flex-col gap-1 bg-neutral-900/60 rounded p-2">
             Aperture {aperturesize.toFixed(2)}
