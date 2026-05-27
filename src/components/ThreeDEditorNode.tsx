@@ -817,14 +817,23 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
             lumMax - Number((res as { luminanceMin?: number }).luminanceMin ?? 0),
         );
         const lowContrast = lumMax > 0 && lumMax < 200 && lumSpan < 25;
+        if (lowContrast) {
+          setCyclesFrame((prev) => ({
+            ...prev,
+            status: "rendering",
+            previewDataUrl: prev.previewDataUrl,
+            renderSeconds: res.renderSeconds,
+            cameraVersion: frameCameraVersion,
+            error: "Cycles 已启动但当前帧只有背景，正在等待模型进入有效相机视图。",
+          }));
+          return true;
+        }
         setCyclesFrame({
           status: finalFrame ? "done" : "rendering",
           previewDataUrl: res.previewDataUrl,
           renderSeconds: res.renderSeconds,
           cameraVersion: frameCameraVersion,
-          error: lowContrast
-            ? "Cycles 已出图但对比度偏低，可提高 Key/Env 或换深色材质便于辨认轮廓。"
-            : undefined,
+          error: undefined,
         });
         return true;
       }
