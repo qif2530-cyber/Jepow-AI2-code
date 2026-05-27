@@ -26,7 +26,7 @@ const MESH_EXPORT_EXT = new Set(['.glb', '.gltf', '.fbx', '.obj']);
 const meshExportCache = new Map();
 const cyclesSessions = new Map();
 const navigationSettleTimers = new Map();
-const CYCLES_MESH_EXPORT_VERSION = 'cycles-mesh-v7-raw-faces-fit-matrix';
+const CYCLES_MESH_EXPORT_VERSION = 'cycles-mesh-v8-oneshot-raw-faces-fit-matrix';
 let cyclesSessionSeq = 0;
 let daemonProc = null;
 let daemonBuf = '';
@@ -470,9 +470,9 @@ async function exportMeshViaNativeEngine(scenePath) {
   if (cached) {
     return { ...cached, cached: true };
   }
-  const result = nativeEngine.meshForCycles
-    ? await nativeEngine.meshForCycles(scenePath)
-    : await nativeEngine.runEngineCommand('mesh_for_cycles', { scenePath }, 120000);
+  // Do not use the long-lived viewport daemon here. It is busy serving clay viewport
+  // frames, so Cycles XML preparation can sit behind an endless interactive queue.
+  const result = await nativeEngine.runEngineCommand('mesh_for_cycles', { scenePath }, 45000);
   if (result?.ok !== false) {
     if (meshExportCache.size > 8) {
       const oldest = meshExportCache.keys().next().value;
