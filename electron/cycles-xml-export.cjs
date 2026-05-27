@@ -41,11 +41,15 @@ function buildCameraBlockXml(width, height, fov = Math.PI / 4, distance = 4.2, c
   const z_axis = [-forward[0], -forward[1], -forward[2]];
   const right = normalize3(cross3([0, 1, 0], z_axis));
   const up = cross3(z_axis, right);
+  
+  // Cycles XML transform expects column-major matrix (or transposed row-major).
+  // We construct the inverse of the view matrix (i.e. the camera to world matrix).
+  // The camera's local axes are right, up, z_axis, and its position is eye.
   const matrix = [
-    ...right, 0,
-    ...up, 0,
-    ...z_axis, 0,
-    ...eye, 1,
+    right[0], right[1], right[2], 0,
+    up[0], up[1], up[2], 0,
+    z_axis[0], z_axis[1], z_axis[2], 0,
+    eye[0], eye[1], eye[2], 1,
   ].map((v) => Number(v).toFixed(6)).join(' ');
   const type = camera.type === 'panorama' || camera.type === 'orthograph' ? camera.type : 'perspective';
   const apertureSize = clampNumber(camera.aperturesize ?? camera.apertureSize, 0, 10, 0);

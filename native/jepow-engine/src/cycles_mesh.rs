@@ -137,7 +137,7 @@ pub fn mesh_for_cycles(scene_path: &str) -> Result<serde_json::Value> {
         .max(max[1] - min[1])
         .max(max[2] - min[2])
         .max(0.001);
-    let scale = 2.0 / extent;
+    let scale = 1.6 / extent;
 
     let mut coords: Vec<f32> = Vec::with_capacity(prepared.vertices.len() * 3);
     for v in &prepared.vertices {
