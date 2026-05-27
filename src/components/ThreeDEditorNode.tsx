@@ -839,7 +839,7 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
           (res as { luminanceSpan?: number }).luminanceSpan ??
             lumMax - Number((res as { luminanceMin?: number }).luminanceMin ?? 0),
         );
-        const lowContrast = lumMax > 0 && lumMax < 200 && lumSpan < 25;
+        const lowContrast = lumMax < 8 || (lumMax < 200 && lumSpan < 25);
         if (lowContrast) {
           setCyclesFrame((prev) => ({
             ...prev,
