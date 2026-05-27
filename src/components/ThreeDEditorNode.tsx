@@ -575,8 +575,14 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
 
   const effectiveCyclesCamera = useMemo(
     () => ({
-      ...viewportCamera,
       ...(connectedCyclesCamera || {}),
+      // Cycles viewport must follow the interactive 3D preview camera exactly.
+      // Camera nodes only contribute optical parameters such as fov/aperture.
+      yaw: viewportCamera.yaw,
+      pitch: viewportCamera.pitch,
+      distance: viewportCamera.distance,
+      panX: viewportCamera.panX,
+      panY: viewportCamera.panY,
     }),
     [viewportCamera, connectedCyclesCamera],
   );
@@ -584,23 +590,19 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
     useState<ViewportCamera>(effectiveCyclesCamera);
 
   useEffect(() => {
-    if (connectedCyclesCamera) {
-      setCyclesRenderCamera(effectiveCyclesCamera);
-      return undefined;
-    }
-    const delay = viewportMode === "render" ? 520 : 0;
+    const delay = viewportMode === "render" ? 180 : 0;
     const timer = window.setTimeout(() => {
       setCyclesRenderCamera(effectiveCyclesCamera);
     }, delay);
     return () => window.clearTimeout(timer);
-  }, [effectiveCyclesCamera, connectedCyclesCamera, viewportMode]);
+  }, [effectiveCyclesCamera, viewportMode]);
 
   const handleViewportCameraChange = (next: ViewportCamera) => {
     setViewportCamera(next);
     if (viewportMode === "render") {
       setCyclesFrame((prev) =>
-        prev.previewDataUrl && prev.status !== "rendering"
-          ? { ...prev, status: "rendering", error: undefined }
+        prev.previewDataUrl
+          ? { ...prev, previewDataUrl: undefined, status: "rendering", error: undefined }
           : prev,
       );
     }
@@ -1191,9 +1193,7 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
             <img
               src={cyclesFrame.previewDataUrl}
               alt="Cycles Render"
-              className={`w-full h-full object-contain transition-opacity ${
-                cyclesFrame.status === "rendering" && showLiveViewport ? "opacity-55" : "opacity-100"
-              }`}
+              className="w-full h-full object-contain opacity-100"
               onError={() =>
                 setCyclesFrame({
                   status: "error",
@@ -1207,7 +1207,7 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
         {viewportMode === "render" &&
           cyclesFrame.status === "rendering" &&
           showLiveViewport && (
-          <div className="absolute inset-0 z-[6] bg-black/40 pointer-events-none flex items-center justify-center">
+          <div className="absolute left-3 bottom-10 z-[6] pointer-events-none">
             <span className="text-[10px] text-emerald-200/90 font-medium animate-pulse">
               Cycles 路径追踪中…
             </span>

@@ -15,6 +15,7 @@ export function buildCyclesLightPayload(
   const dirMul = Number(panelLights.directional ?? 2);
   const envMul = Number(panelLights.environment ?? 1);
   const ambientMul = Number(panelLights.ambient ?? 1);
+  const exposureMul = Number(panelLights.exposure ?? 1);
 
   return {
     backgroundColor: (connected?.backgroundColor as string) || "#1c1e24",
@@ -25,6 +26,6 @@ export function buildCyclesLightPayload(
     keySize: Number(connected?.keySize ?? 3),
     yaw,
     pitch,
-    exposure: Number(connected?.exposure ?? panelLights.exposure ?? 1),
+    exposure: Number(connected?.exposure ?? Math.max(3.5, exposureMul * 4)),
   };
 }

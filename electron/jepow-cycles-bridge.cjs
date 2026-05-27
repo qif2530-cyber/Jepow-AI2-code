@@ -683,6 +683,11 @@ async function renderFrameViaDaemon(opts = {}, prepared, outputPath) {
   let previewDataUrl = null;
   if (!failure) {
     previewDataUrl = `data:image/png;base64,${fs.readFileSync(outputPath).toString('base64')}`;
+    try {
+      fs.unlinkSync(outputPath);
+    } catch {
+      /* cache cleanup best effort */
+    }
   }
   return {
     ok: !failure,
@@ -848,6 +853,16 @@ async function runProgressiveSession(session) {
   let lastDaemonFrameVersion = -1;
   const started = Date.now();
   while (!session.stopped) {
+    const status = await runDaemonCommand('status', { sessionId: session.id }, 1500);
+    const currentDaemonFrameVersion = Number(status.frameVersion) || 0;
+    if (
+      status.ok &&
+      currentDaemonFrameVersion > 0 &&
+      currentDaemonFrameVersion === lastDaemonFrameVersion
+    ) {
+      await new Promise((resolve) => setTimeout(resolve, session.device === 'METAL' ? 160 : 220));
+      continue;
+    }
     const framePath = path.join(cacheDir, `cycles-resident-${id}-${Date.now()}.png`);
     const frame = await readResidentFrameViaDaemon(session, framePath);
     if (session.stopped) return;
@@ -864,7 +879,7 @@ async function runProgressiveSession(session) {
       session.frame = buildFramePayload(session, frame, 'error', 'error');
       return;
     }
-    await new Promise((resolve) => setTimeout(resolve, session.device === 'METAL' ? 240 : 320));
+    await new Promise((resolve) => setTimeout(resolve, session.device === 'METAL' ? 360 : 600));
   }
 }
 
