@@ -375,6 +375,30 @@ function ErrorPlaceholder() {
   );
 }
 
+function getCyclesViewportTarget(
+  finalWidth: number,
+  finalHeight: number,
+  finalSamples: number,
+  device: unknown,
+  quality: "interactive" | "final",
+) {
+  const width = Math.max(64, Number(finalWidth) || 2048);
+  const height = Math.max(64, Number(finalHeight) || 1536);
+  const samples = Math.max(1, Number(finalSamples) || 32);
+  if (quality === "final") {
+    return { width, height, samples };
+  }
+
+  const maxW = device === "METAL" ? 960 : 640;
+  const w = Math.min(width, maxW);
+  const h = Math.max(64, Math.round((w * height) / width));
+  return {
+    width: w,
+    height: Math.min(height, h),
+    samples: Math.min(samples, device === "METAL" ? 32 : 16),
+  };
+}
+
 export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) {
   const { getNodes, getEdges, updateNodeData } = useReactFlow();
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -542,6 +566,7 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
   const viewportInteractionTimerRef = useRef<number | null>(null);
   const cyclesRenderSeqRef = useRef(0);
   const activeCyclesSessionRef = useRef<string | null>(null);
+  const lastCyclesSessionPatchKeyRef = useRef("");
 
   const connectedCyclesLight = editorPipeline.cyclesLight as {
     yaw?: number;
@@ -880,6 +905,13 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
       const finalWidth = Number(stableRenderSettings.width) || 2048;
       const finalHeight = Number(stableRenderSettings.height) || 1536;
       const finalSamples = Math.max(16, Number(stableRenderSettings.samples) || 32);
+      const interactiveTarget = getCyclesViewportTarget(
+        finalWidth,
+        finalHeight,
+        finalSamples,
+        stableRenderSettings.device || effectiveRenderSettings.device,
+        "interactive",
+      );
       const sessionCameraVersion = cameraVersionRef.current;
 
       try {
@@ -888,9 +920,9 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
           const start = await engine.startCyclesSession({
             ...baseRequest,
             camera: currentCamera,
-            width: finalWidth,
-            height: finalHeight,
-            samples: finalSamples,
+            width: interactiveTarget.width,
+            height: interactiveTarget.height,
+            samples: interactiveTarget.samples,
             cameraVersion: sessionCameraVersion,
           } as any);
           if (cancelled || cyclesRenderSeqRef.current !== seq) return;
@@ -900,14 +932,13 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
             return;
           }
           activeCyclesSessionRef.current = sessionId;
-          void engine.updateCyclesSession?.(sessionId, {
+          lastCyclesSessionPatchKeyRef.current = JSON.stringify({
             camera: currentCamera,
-            width: finalWidth,
-            height: finalHeight,
-            samples: finalSamples,
-            renderSettings: stableRenderSettings,
+            width: interactiveTarget.width,
+            height: interactiveTarget.height,
+            samples: interactiveTarget.samples,
             cameraVersion: sessionCameraVersion,
-          } as any);
+          });
           let lastFrameVersion = -1;
           const poll = async () => {
             if (cancelled || cyclesRenderSeqRef.current !== seq || !activeCyclesSessionRef.current) return;
@@ -922,7 +953,17 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
                 Number(frame.cameraVersion ?? sessionCameraVersion),
               );
             }
-            if (state.status === "done" || state.status === "error") return;
+            if (state.status === "error") {
+              if (!frame) {
+                setCyclesFrame({
+                  status: "error",
+                  cameraVersion: sessionCameraVersion,
+                  error: (state as { error?: string }).error || "Cycles 渲染失败，未返回有效帧",
+                });
+              }
+              return;
+            }
+            if (state.status === "done") return;
             pollTimer = window.setTimeout(poll, 280);
           };
           pollTimer = window.setTimeout(poll, 120);
@@ -963,6 +1004,7 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
         void getViewportEngine().stopCyclesSession?.(activeCyclesSessionRef.current);
         activeCyclesSessionRef.current = null;
       }
+      lastCyclesSessionPatchKeyRef.current = "";
       window.clearTimeout(timer);
     };
   }, [
@@ -979,24 +1021,48 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
 
   useEffect(() => {
     if (viewportMode !== "render" || !renderActive || !activeCyclesSessionRef.current) return;
+    const stableRenderSettings = JSON.parse(renderSettingsKey);
+    const hasCyclesFrame = !!cyclesFrame.previewDataUrl && cyclesFrame.status !== "error";
+    const target = getCyclesViewportTarget(
+      Number(stableRenderSettings.width) || 2048,
+      Number(stableRenderSettings.height) || 1536,
+      Math.max(16, Number(stableRenderSettings.samples) || 32),
+      stableRenderSettings.device,
+      !viewportInteracting && hasCyclesFrame ? "final" : "interactive",
+    );
+    const patchKey = JSON.stringify({
+      camera: cyclesRenderCamera,
+      width: target.width,
+      height: target.height,
+      samples: target.samples,
+      cameraVersion: cameraVersionRef.current,
+    });
+    if (lastCyclesSessionPatchKeyRef.current === patchKey) return;
     const timer = window.setTimeout(() => {
       const sessionId = activeCyclesSessionRef.current;
       if (!sessionId) return;
-      const finalWidth = Number(effectiveRenderSettings.width) || 2048;
-      const finalHeight = Number(effectiveRenderSettings.height) || 1536;
-      const finalSamples = Math.max(16, Number(effectiveRenderSettings.samples) || 32);
+      if (lastCyclesSessionPatchKeyRef.current === patchKey) return;
+      lastCyclesSessionPatchKeyRef.current = patchKey;
       cyclesRenderCameraRef.current = cyclesRenderCamera;
       void getViewportEngine().updateCyclesSession?.(sessionId, {
         camera: cyclesRenderCamera,
-        width: finalWidth,
-        height: finalHeight,
-        samples: finalSamples,
-        renderSettings: effectiveRenderSettings,
+        width: target.width,
+        height: target.height,
+        samples: target.samples,
+        renderSettings: stableRenderSettings,
         cameraVersion: cameraVersionRef.current,
       } as any);
-    }, 30);
+    }, !viewportInteracting && hasCyclesFrame ? 1200 : 40);
     return () => window.clearTimeout(timer);
-  }, [viewportMode, renderActive, cyclesRenderCamera, effectiveRenderSettings]);
+  }, [
+    viewportMode,
+    renderActive,
+    cyclesRenderCamera,
+    renderSettingsKey,
+    viewportInteracting,
+    cyclesFrame.previewDataUrl,
+    cyclesFrame.status,
+  ]);
 
   const handleResetTransforms = () => {
     setTransform({

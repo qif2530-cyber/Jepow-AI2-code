@@ -888,7 +888,7 @@ async function runProgressiveSession(session) {
       height: finalHeight,
       samples: finalSamples,
     },
-    10000,
+    60000,
   );
   if (!loaded.ok) {
     session.status = 'error';
@@ -921,6 +921,7 @@ async function runProgressiveSession(session) {
   if (initialCameraUpdate.ok) scheduleNavigationSettle(session.id);
 
   let lastDaemonFrameVersion = -1;
+  let lastFrameReadAttemptAt = 0;
   const started = Date.now();
   while (!session.stopped) {
     const status = await runDaemonCommand('status', { sessionId: session.id }, 1500);
@@ -931,18 +932,23 @@ async function runProgressiveSession(session) {
       return;
     }
     const currentDaemonFrameVersion = Number(status.frameVersion) || 0;
-    if (
-      status.ok &&
-      (currentDaemonFrameVersion === 0 || currentDaemonFrameVersion === lastDaemonFrameVersion)
-    ) {
+    const noNewDaemonFrame = status.ok && currentDaemonFrameVersion === lastDaemonFrameVersion;
+    const waitingForFirstDaemonFrame = status.ok && currentDaemonFrameVersion === 0 && !session.frame;
+    if (noNewDaemonFrame || waitingForFirstDaemonFrame) {
+      const now = Date.now();
+      const shouldProbeFrame =
+        waitingForFirstDaemonFrame && now - lastFrameReadAttemptAt > 1400;
       if (currentDaemonFrameVersion === 0 && Date.now() - started > 45000 && !session.frame) {
         session.status = 'error';
         session.frameVersion += 1;
         session.frame = buildFramePayload(session, { error: 'Cycles render timeout (no frames produced)' }, 'error', 'error');
         return;
       }
-      await new Promise((resolve) => setTimeout(resolve, session.device === 'METAL' ? 160 : 220));
-      continue;
+      if (!shouldProbeFrame) {
+        await new Promise((resolve) => setTimeout(resolve, session.device === 'METAL' ? 160 : 220));
+        continue;
+      }
+      lastFrameReadAttemptAt = now;
     }
     const framePath = path.join(cacheDir, `cycles-resident-${id}-${Date.now()}.png`);
     const frame = await readResidentFrameViaDaemon(session, framePath);
