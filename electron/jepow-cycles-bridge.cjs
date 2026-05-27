@@ -830,6 +830,9 @@ async function runProgressiveSession(session) {
   const opts = session.opts;
   const id = session.id;
   const cacheDir = getCyclesCacheDir();
+  session.debugStage = 'prepare_xml';
+  session.debugMessage = '导出模型并生成 Cycles XML';
+  session.updatedAt = Date.now();
   const prepared = await prepareCyclesSceneXml(opts, cacheDir, id);
   if (!prepared.ok) {
     session.status = 'error';
@@ -873,6 +876,8 @@ async function runProgressiveSession(session) {
   const finalSamples = clampNumber(opts.samples || opts.renderSettings?.samples, 1, 4096, 64);
 
   session.status = 'starting';
+  session.debugStage = 'load_scene';
+  session.debugMessage = `加载 Cycles 场景 ${(Number(prepared.xmlBytes || 0) / 1024 / 1024).toFixed(2)}MB，面数 ${prepared.triangleCount || 0}`;
   session.updatedAt = Date.now();
 
   await runDaemonCommand('init_session', { sessionId: session.id }, 1500);
@@ -906,19 +911,24 @@ async function runProgressiveSession(session) {
 
   session.loaded = true;
   session.status = 'ready';
+  session.debugStage = 'wait_first_frame';
+  session.debugMessage = `等待首帧 ${finalWidth}x${finalHeight} / ${finalSamples} sample`;
   session.updatedAt = Date.now();
+  const pendingPatch = session.pendingPatch;
   if (session.pendingPatch) {
     session.opts = { ...session.opts, ...session.pendingPatch };
     session.pendingPatch = null;
   }
-  const initialCameraUpdate = await updateResidentCamera(
-    session.id,
-    session.opts,
-    finalWidth,
-    finalHeight,
-    finalSamples,
-  );
-  if (initialCameraUpdate.ok) scheduleNavigationSettle(session.id);
+  if (pendingPatch) {
+    const initialCameraUpdate = await updateResidentCamera(
+      session.id,
+      session.opts,
+      finalWidth,
+      finalHeight,
+      finalSamples,
+    );
+    if (initialCameraUpdate.ok) scheduleNavigationSettle(session.id);
+  }
 
   let lastDaemonFrameVersion = -1;
   let lastFrameReadAttemptAt = 0;
@@ -932,6 +942,9 @@ async function runProgressiveSession(session) {
       return;
     }
     const currentDaemonFrameVersion = Number(status.frameVersion) || 0;
+    session.debugStage = 'trace';
+    session.debugMessage = `daemon frame=${currentDaemonFrameVersion}, display=${status.displayTransport || 'unknown'}, ${status.width || finalWidth}x${status.height || finalHeight}`;
+    session.updatedAt = Date.now();
     const noNewDaemonFrame = status.ok && currentDaemonFrameVersion === lastDaemonFrameVersion;
     const waitingForFirstDaemonFrame = status.ok && currentDaemonFrameVersion === 0 && !session.frame;
     if (noNewDaemonFrame || waitingForFirstDaemonFrame) {
@@ -1039,6 +1052,8 @@ function readSession(sessionId) {
     frameVersion: session.frameVersion,
     cameraVersion: Number(session.opts?.cameraVersion) || 0,
     loaded: !!session.loaded,
+    debugStage: session.debugStage || session.status,
+    debugMessage: session.debugMessage || '',
     frame: session.frame,
     updatedAt: session.updatedAt,
   };

@@ -389,13 +389,13 @@ function getCyclesViewportTarget(
     return { width, height, samples };
   }
 
-  const maxW = device === "METAL" ? 960 : 640;
+  const maxW = device === "METAL" ? 768 : 512;
   const w = Math.min(width, maxW);
   const h = Math.max(64, Math.round((w * height) / width));
   return {
     width: w,
     height: Math.min(height, h),
-    samples: Math.min(samples, device === "METAL" ? 32 : 16),
+    samples: 1,
   };
 }
 
@@ -559,6 +559,7 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
     status: "idle" | "rendering" | "done" | "error";
     previewDataUrl?: string;
     error?: string;
+    detail?: string;
     renderSeconds?: number;
     cameraVersion?: number;
   }>({ status: "idle" });
@@ -875,6 +876,7 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
         ...prev,
         status: "rendering",
         error: undefined,
+        detail: "启动 Cycles session...",
       }));
       const engine = getViewportEngine();
       if (!engine.renderCyclesFrame && !engine.startCyclesSession) {
@@ -945,6 +947,15 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
             const state = await engine.readCyclesSession!(activeCyclesSessionRef.current);
             if (cancelled || cyclesRenderSeqRef.current !== seq) return;
             const frame = (state as { frame?: any }).frame;
+            if (!frame) {
+              const debugStage = String((state as { debugStage?: string }).debugStage || state.status || "starting");
+              const debugMessage = String((state as { debugMessage?: string }).debugMessage || "");
+              setCyclesFrame((prev) => ({
+                ...prev,
+                status: "rendering",
+                detail: debugMessage ? `${debugStage}: ${debugMessage}` : `Cycles ${debugStage}`,
+              }));
+            }
             if (frame && Number(frame.frameVersion ?? 0) !== lastFrameVersion) {
               lastFrameVersion = Number(frame.frameVersion ?? 0);
               applyCyclesResult(
@@ -1438,6 +1449,11 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
             {cyclesFrame.error && (
               <div className="mt-1 max-w-[300px] text-[8px] text-red-300 leading-snug break-words line-clamp-5">
                 {cyclesFrame.error}
+              </div>
+            )}
+            {!cyclesFrame.error && cyclesFrame.detail && (
+              <div className="mt-1 max-w-[300px] text-[8px] text-emerald-200/70 leading-snug break-words line-clamp-5">
+                {cyclesFrame.detail}
               </div>
             )}
           </div>
