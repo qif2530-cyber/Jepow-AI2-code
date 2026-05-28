@@ -173,10 +173,9 @@ export function JepowViewportPreview({
   const [isDragging, setIsDragging] = useState(false);
   const [previewSrc, setPreviewSrc] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
-  const [sceneLabel, setSceneLabel] = useState<string | null>(null);
+  const [, setSceneLabel] = useState<string | null>(null);
   const [engineReady, setEngineReady] = useState<boolean | null>(null);
   const [engineError, setEngineError] = useState<string | null>(null);
-  const [capsLine, setCapsLine] = useState<string | null>(null);
   const [camera, setCamera] = useState<ViewportCamera>({ ...initialCam });
   const cameraRef = useRef(camera);
   const viewCameraRef = useRef<ViewportCamera | undefined>(viewCamera);
@@ -439,7 +438,6 @@ export function JepowViewportPreview({
     getViewportCapabilities(true)
       .then((caps) => {
         setEngineReady(caps.nativeAvailable);
-        setCapsLine(caps.message || null);
         if (!caps.nativeAvailable) {
           setEngineError(
             caps.message ||
@@ -660,16 +658,6 @@ export function JepowViewportPreview({
     void renderWithCamera(next, true, "draft");
   };
 
-  const modeHint = orbitOnly
-    ? "白膜 · 45° · 拖拽旋转"
-    : !liveRender
-      ? "预览缩略图"
-      : mode === "turntable"
-        ? "白膜 · 居中慢速旋转"
-        : shading === "render"
-          ? "渲染视口 · 常驻 GPU"
-          : "白膜视口 · 左拖旋转 / 滚轮缩放 / 右键平移";
-
   if (engineReady !== true) {
     return (
       <div
@@ -736,30 +724,6 @@ export function JepowViewportPreview({
           <span className="text-[10px]">{loading ? "渲染白膜…" : engineError || "…"}</span>
         </div>
       )}
-
-      <div
-        className={`absolute top-2 left-2 flex flex-col gap-1 pointer-events-none max-w-[85%] ${
-          ghostOverlay ? "opacity-0" : ""
-        }`}
-      >
-        <span
-          className={`text-[8px] font-bold uppercase px-1.5 py-0.5 rounded border ${
-            mode === "turntable"
-              ? "bg-black/80 text-emerald-300 border-emerald-900/50"
-              : "bg-black/80 text-purple-300 border-purple-900/50"
-          }`}
-        >
-          JEPOW 白膜
-        </span>
-        <span className="bg-black/70 text-neutral-400 text-[7px] px-1.5 py-0.5 rounded">
-          {modeHint}
-        </span>
-        {sceneLabel && (
-          <span className="bg-black/60 text-neutral-500 text-[7px] px-1.5 py-0.5 rounded truncate">
-            {sceneLabel}
-          </span>
-        )}
-      </div>
 
       {loading && mode === "orbit" && !liveRender && (
         <div className="absolute top-14 right-2 pointer-events-none">

@@ -38,6 +38,34 @@ export function AuthModal({ onClose, onSuccess }: AuthModalProps) {
     return () => clearInterval(timer);
   }, [countdown]);
 
+  useEffect(() => {
+    if (!isDesktopLoginOnWeb()) return;
+    const existingToken = localStorage.getItem("ais-token");
+    if (!existingToken) return;
+
+    let cancelled = false;
+    const returnExistingSession = async () => {
+      setLoading(true);
+      try {
+        const res = await api.get("/user/profile");
+        if (cancelled) return;
+        toast.success("已检测到网页登录状态，正在返回桌面软件…");
+        redirectDesktopAuthCallback(existingToken, res.data);
+      } catch {
+        if (!cancelled) {
+          localStorage.removeItem("ais-token");
+          localStorage.removeItem("ais-user");
+          setLoading(false);
+        }
+      }
+    };
+
+    returnExistingSession();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   const handleSendCode = async () => {
     if (!phone || !/^1[3-9]\d{9}$/.test(phone)) {
       return toast.error("请输入正确的11位手机号");

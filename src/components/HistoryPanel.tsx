@@ -36,7 +36,7 @@ export const HistoryPanel: React.FC<HistoryPanelProps> = (props) => {
   });
 
   return (
-    <div className="fixed top-4 right-4 bottom-4 w-80 bg-neutral-900 shadow-2xl border border-neutral-800 rounded-lg overflow-hidden z-[100] flex flex-col animate-in slide-in-from-right duration-300">
+    <div className="fixed top-12 left-14 bottom-2 w-80 bg-neutral-900 shadow-2xl border border-neutral-800 overflow-hidden z-[100] flex flex-col animate-in slide-in-from-left duration-300">
       <div className="flex items-center justify-between px-6 py-5 border-b border-neutral-800 bg-neutral-900/50">
         <h2 className="text-lg font-semibold text-white flex items-center">
           <History className="w-5 h-5 mr-2 text-neutral-400" />

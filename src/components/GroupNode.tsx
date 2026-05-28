@@ -22,52 +22,28 @@ import { useCtrlPressed } from "@/src/hooks/useCtrlPressed";
 
 const COLORS = [
   {
-    id: "neutral",
-    bg: "bg-white/40",
-    border: "border-black/20",
-    active: "border-black/30 bg-white/60 ring-white/20/10",
-    text: "text-neutral-700",
-    accent: "text-neutral-700",
+    id: "blue",
+    bg: "bg-[#4f8cff]/10",
+    border: "border-[#78a7ff]/55",
+    active: "border-[#9bbdff]",
+    text: "text-[#c8dcff]",
+    accent: "text-[#9bbdff]",
   },
   {
-    id: "indigo",
-    bg: "bg-black/5",
-    border: "border-black/20",
-    active: "border-black/30 bg-black/10 ring-white/20/10",
-    text: "text-neutral-600",
-    accent: "text-neutral-700",
+    id: "purple",
+    bg: "bg-[#9b7cff]/10",
+    border: "border-[#aa96ff]/55",
+    active: "border-[#c3b4ff]",
+    text: "text-[#ded8ff]",
+    accent: "text-[#c3b4ff]",
   },
   {
-    id: "green",
-    bg: "bg-green-900/40",
-    border: "border-green-700",
-    active: "border-green-500 bg-green-900/60 ring-green-500/10",
-    text: "text-green-300",
-    accent: "text-green-400",
-  },
-  {
-    id: "amber",
-    bg: "bg-amber-900/40",
-    border: "border-amber-700",
-    active: "border-amber-500 bg-amber-900/60 ring-amber-500/10",
-    text: "text-amber-300",
-    accent: "text-amber-400",
-  },
-  {
-    id: "red",
-    bg: "bg-red-900/40",
-    border: "border-red-700",
-    active: "border-red-500 bg-red-900/60 ring-red-500/10",
-    text: "text-red-300",
-    accent: "text-red-400",
-  },
-  {
-    id: "cyan",
-    bg: "bg-cyan-900/40",
-    border: "border-cyan-700",
-    active: "border-cyan-500 bg-cyan-900/60 ring-cyan-500/10",
-    text: "text-cyan-300",
-    accent: "text-cyan-400",
+    id: "pink",
+    bg: "bg-[#ff7fbe]/10",
+    border: "border-[#ff9acb]/55",
+    active: "border-[#ffb6d9]",
+    text: "text-[#ffd9e9]",
+    accent: "text-[#ffb6d9]",
   },
 ];
 
@@ -81,7 +57,7 @@ export function GroupNode({ id, data, selected, style }: NodeProps | any) {
       ).length === 1,
   );
   const showPanel = selected && isOnlySelected;
-  const currentColorId = data.color || "neutral";
+  const currentColorId = data.color || "blue";
   const colorConfig = COLORS.find((c) => c.id === currentColorId) || COLORS[0];
 
   const handleColorCycle = (e: React.MouseEvent) => {
@@ -102,9 +78,9 @@ export function GroupNode({ id, data, selected, style }: NodeProps | any) {
 
   return (
     <div
-      className={`w-full h-full rounded-md border-2 border-dashed transition-all duration-300 ${colorConfig.bg} ${
+      className={`w-full h-full rounded-[10px] border transition-all duration-200 ${colorConfig.bg} ${
         selected
-          ? `${colorConfig.active} border-solid ring-4`
+          ? `${colorConfig.active} border-solid`
           : colorConfig.border
       }`}
       style={{
@@ -115,63 +91,68 @@ export function GroupNode({ id, data, selected, style }: NodeProps | any) {
       {!isCollapsed && (
         <div
           className="absolute top-full left-1/2 -translate-x-1/2 z-20"
-          style={{ marginTop: "24px" }}
+          style={{ marginTop: "8px" }}
         >
           <div
-            className={`flex items-center p-2 gap-2 bg-[#1A1A1A] rounded-md shadow-2xl border border-neutral-800 transition-all duration-300 ${showPanel ? "opacity-100 pointer-events-auto scale-100" : "opacity-0 pointer-events-none scale-95"}`}
+            className={`flex items-center gap-1 rounded-[6px] border border-[#34363a] bg-[#252629]/95 p-1 shadow-xl transition-all duration-200 ${showPanel ? "opacity-100 pointer-events-auto scale-100" : "opacity-0 pointer-events-none scale-95"}`}
           >
-            <div className="flex items-center gap-2 px-4 py-2 rounded-md bg-orange-500/10 border border-orange-500/20 mr-2 shadow-inner">
-              <Group className="w-4 h-4 text-orange-400" />
+            <div className="flex items-center gap-1 rounded-[4px] border border-[#3f4145] bg-white/[0.04] px-1.5 py-1">
+              <Group className="w-3 h-3 text-orange-300/80" />
               <input
                 type="text"
-                value={data.title || "NEW GROUP"}
-                onChange={(e) => updateNodeData(id, { title: e.target.value })}
-                placeholder="NEW GROUP"
-                className="bg-transparent border-none focus:outline-none text-[12px] font-black uppercase text-orange-400 tracking-widest whitespace-nowrap w-24 focus:w-32 transition-all"
+                value={data.title || "组"}
+                onChange={(e) =>
+                  updateNodeData(id, {
+                    title: e.target.value,
+                    label: e.target.value,
+                  })
+                }
+                placeholder="组"
+                className="w-14 bg-transparent text-[10px] font-bold text-neutral-200 outline-none transition-all focus:w-20"
                 onClick={(e) => e.stopPropagation()}
                 onKeyDown={(e) => e.stopPropagation()}
               />
             </div>
 
-            <div className="flex items-center gap-1">
+            <div className="flex items-center gap-0.5">
               <button
                 onClick={handleLayoutChange("horizontal")}
-                className={`p-2.5 rounded-md transition-all ${data.layoutMode === "horizontal" ? "bg-[#2A2A2A] text-white shadow-xl" : "text-neutral-500 hover:text-white hover:bg-[#333333]"}`}
+                className={`p-1.5 rounded-[4px] transition-all ${data.layoutMode === "horizontal" ? "bg-[#4772b3] text-white" : "text-neutral-500 hover:text-white hover:bg-[#34363a]"}`}
                 title="水平布局"
               >
-                <Columns className="w-4 h-4" />
+                <Columns className="w-3 h-3" />
               </button>
               <button
                 onClick={handleLayoutChange("vertical")}
-                className={`p-2.5 rounded-md transition-all ${data.layoutMode === "vertical" ? "bg-[#2A2A2A] text-white shadow-xl" : "text-neutral-500 hover:text-white hover:bg-[#333333]"}`}
+                className={`p-1.5 rounded-[4px] transition-all ${data.layoutMode === "vertical" ? "bg-[#4772b3] text-white" : "text-neutral-500 hover:text-white hover:bg-[#34363a]"}`}
                 title="垂直布局"
               >
-                <Rows className="w-4 h-4" />
+                <Rows className="w-3 h-3" />
               </button>
               <button
                 onClick={handleLayoutChange("grid")}
-                className={`p-2.5 rounded-md transition-all ${data.layoutMode === "grid" || !data.layoutMode ? "bg-[#2A2A2A] text-white shadow-xl" : "text-neutral-500 hover:text-white hover:bg-[#333333]"}`}
+                className={`p-1.5 rounded-[4px] transition-all ${data.layoutMode === "grid" || !data.layoutMode ? "bg-[#4772b3] text-white" : "text-neutral-500 hover:text-white hover:bg-[#34363a]"}`}
                 title="网格布局"
               >
-                <LayoutGrid className="w-4 h-4" />
+                <LayoutGrid className="w-3 h-3" />
               </button>
               <button
                 onClick={handleLayoutChange("free")}
-                className={`p-2.5 rounded-md transition-all ${data.layoutMode === "free" ? "bg-[#2A2A2A] text-white shadow-xl" : "text-neutral-500 hover:text-white hover:bg-[#333333]"}`}
+                className={`p-1.5 rounded-[4px] transition-all ${data.layoutMode === "free" ? "bg-[#4772b3] text-white" : "text-neutral-500 hover:text-white hover:bg-[#34363a]"}`}
                 title="自由布局 (可叠加)"
               >
-                <MousePointer2 className="w-4 h-4" />
+                <MousePointer2 className="w-3 h-3" />
               </button>
             </div>
 
-            <div className="w-px h-6 bg-neutral-800 mx-2" />
+            <div className="w-px h-4 bg-[#34363a] mx-0.5" />
 
             <button
               onClick={handleColorCycle}
-              className="p-2.5 rounded-md transition-all text-neutral-500 hover:bg-[#333333] hover:text-white"
+              className="p-1.5 rounded-[4px] transition-all text-neutral-500 hover:bg-[#34363a] hover:text-white"
               title="切换颜色"
             >
-              <Palette className="w-4 h-4" />
+              <Palette className="w-3 h-3" />
             </button>
           </div>
         </div>

@@ -222,7 +222,6 @@ export function ModelAssetNode({ id, data, selected }: ModelAssetNodeProps) {
     (nativeScenePath
       ? nativeScenePath.split(/[/\\]/).pop() || "scene.glb"
       : "unnamed_asset.glb");
-  const fileExtension = modelName.substring(modelName.lastIndexOf(".")).toLowerCase();
   const desktop3d = isDesktopApp();
 
   const {
@@ -595,12 +594,6 @@ export function ModelAssetNode({ id, data, selected }: ModelAssetNodeProps) {
                 <div className="w-10 h-10 rounded-full bg-neutral-900 border border-neutral-800 flex items-center justify-center mb-2.5 shadow-inner">
                   <Box className="w-5 h-5 text-neutral-400" />
                 </div>
-                <span className="text-[10px] font-bold text-neutral-400 uppercase tracking-widest mb-1.5 font-mono">
-                  3D 渲染控制已暂停
-                </span>
-                <p className="text-[9px] text-zinc-500 max-w-[210px] leading-relaxed mb-3">
-                  加载自C4D的模型过大可能占用大量内容而导致浏览器卡死，已自动或手动为您挂起。
-                </p>
                 <Button
                   type="button"
                   size="sm"
@@ -611,7 +604,7 @@ export function ModelAssetNode({ id, data, selected }: ModelAssetNodeProps) {
                     toggleRenderActive();
                   }}
                 >
-                  点击启动 3D 实时渲染
+                  启动
                 </Button>
               </div>
             )
@@ -630,48 +623,9 @@ export function ModelAssetNode({ id, data, selected }: ModelAssetNodeProps) {
             </p>
           </div>
         )}
-        {/* Display tag mimicking MaterialGenNode's indicators */}
-        <div className="absolute bottom-2.5 left-2.5 z-10 flex gap-1 pointer-events-none select-none select-none">
-          <span className="bg-black/85 text-emerald-400 text-[8px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded border border-emerald-950/50">
-            3D MODEL
-          </span>
-          <span className="bg-black/60 text-neutral-300 text-[8px] tracking-wider px-1.5 py-0.5 rounded border border-neutral-900/60 max-w-[150px] truncate">
-            {modelName}
-          </span>
-        </div>
       </div>
 
-      {fileExtension === ".gltf" && (
-        <div className="mt-2 bg-amber-500/10 border border-amber-500/30 rounded p-2 text-[10px] text-amber-300 select-none leading-relaxed text-left">
-          <p className="font-bold flex items-center gap-1 mb-1 text-[11px] text-amber-400">
-            ⚠️ .GLTF 需外部依赖
-          </p>
-          <span>
-            .gltf 常依赖同级 .bin 与贴图，单文件上传后刷新可能丢模。建议导出为自包含的 <strong>.glb</strong>。
-          </span>
-        </div>
-      )}
-      {!desktop3d &&
-        fileExtension &&
-        (fileExtension === ".fbx" || fileExtension === ".obj") && (
-          <div className="mt-2 bg-amber-500/10 border border-amber-500/30 rounded p-2 text-[10px] text-amber-300 select-none leading-relaxed text-left">
-            <p className="font-bold text-[11px] text-amber-400 mb-1">
-              网页端提示
-            </p>
-            <span>
-              浏览器环境对 {fileExtension.toUpperCase()} 支持有限，建议转为 <strong>.glb</strong> 上传。
-            </span>
-          </div>
-        )}
-      {desktop3d && (
-          <div className="mt-2 bg-emerald-500/10 border border-emerald-500/25 rounded p-2 text-[10px] text-emerald-200/90 select-none leading-relaxed text-left">
-            <span>
-              桌面端 3D：<strong>jepow-engine</strong> 视口 + <strong>jepow-cycles</strong> 渲染（架构参考 Blender，不调用 blender.exe）。导入 .blend 时仅用 Blender 解析一次。
-            </span>
-          </div>
-        )}
-
-      <div className="mt-2 flex flex-col gap-1.5">
+      <div className="mt-1.5 flex gap-1.5">
         <input
           id={fileInputId}
           type="file"
@@ -681,51 +635,42 @@ export function ModelAssetNode({ id, data, selected }: ModelAssetNodeProps) {
         />
         <Button
           size="sm"
-          className="w-full text-[11px] h-8 bg-neutral-900 border border-neutral-800 hover:bg-neutral-800 text-neutral-300 font-bold rounded shadow-sm transition-all flex items-center justify-center gap-1.5"
+          className="flex-1 text-[11px] h-7 bg-neutral-900 border border-neutral-800 hover:bg-neutral-800 text-neutral-300 font-bold rounded shadow-sm transition-all flex items-center justify-center"
           disabled={isUploading}
+          title={shouldUseLocalCanvasAssets() ? "本地导入 3D 模型" : "上传/替换 3D 模型"}
           onClick={() => document.getElementById(fileInputId)?.click()}
         >
           {isUploading ? (
-            <>
-              <RefreshCw className="w-3.5 h-3.5 animate-spin text-emerald-400" />
-              <span>正在导入三维资产...</span>
-            </>
+            <RefreshCw className="w-3.5 h-3.5 animate-spin text-emerald-400" />
           ) : (
-            <>
-              <Upload className="w-3.5 h-3.5 text-emerald-400" />
-              <span>
-                {shouldUseLocalCanvasAssets()
-                  ? "本地导入 3D 模型"
-                  : "上传/替换 3D 模型"}
-              </span>
-            </>
+            <Upload className="w-3.5 h-3.5 text-emerald-400" />
           )}
         </Button>
         {desktop3d && (
           <Button
             size="sm"
-            className="w-full text-[11px] h-8 bg-emerald-950/50 border border-emerald-800/80 hover:bg-emerald-900/60 text-emerald-300 font-bold rounded shadow-sm flex items-center justify-center gap-1.5"
+            className="flex-1 text-[11px] h-7 bg-emerald-950/50 border border-emerald-800/80 hover:bg-emerald-900/60 text-emerald-300 font-bold rounded shadow-sm flex items-center justify-center"
+            title="从磁盘选择大场景"
             onClick={(e) => {
               e.stopPropagation();
               handleImportNativeScene();
             }}
           >
             <Layers className="w-3.5 h-3.5" />
-            <span>从磁盘选择大场景</span>
           </Button>
         )}
         {shouldUseLocalCanvasAssets() && (
           <Button
             size="sm"
-            className="w-full text-[11px] h-8 bg-orange-950/40 border border-orange-800/70 hover:bg-orange-900/50 text-orange-200 font-bold rounded shadow-sm flex items-center justify-center gap-1.5"
+            className="flex-1 text-[11px] h-7 bg-orange-950/40 border border-orange-800/70 hover:bg-orange-900/50 text-orange-200 font-bold rounded shadow-sm flex items-center justify-center"
             disabled={isUploading}
+            title="导入 Blender 工程"
             onClick={(e) => {
               e.stopPropagation();
               void handleImportBlendProject();
             }}
           >
             <Box className="w-3.5 h-3.5" />
-            <span>导入 Blender 工程 (.blend)</span>
           </Button>
         )}
       </div>

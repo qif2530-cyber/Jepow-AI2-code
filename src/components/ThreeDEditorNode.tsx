@@ -1476,14 +1476,7 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
           }
         `}} />
 
-        {/* Header Overlay - Safely tucked inside overflow-hidden to clip at rounded corners */}
-        <div className="absolute top-0 inset-x-0 h-16 bg-gradient-to-b from-black/85 via-black/40 to-transparent flex items-center justify-between px-3.5 pt-3 z-10 pointer-events-none select-none">
-          <div className="flex items-center gap-2 pointer-events-auto">
-            <div className="bg-purple-950/60 p-1.5 rounded border border-purple-900/40 backdrop-blur-sm animate-pulse">
-              <Compass className="w-4 h-4 text-purple-400" />
-            </div>
-          </div>
-          <div className="flex gap-1.5 pointer-events-auto">
+        <div className="absolute top-2 right-2 z-10 flex gap-1.5 pointer-events-auto select-none">
             <div className="h-7 p-0.5 rounded bg-black/60 border border-neutral-800/80 backdrop-blur-sm flex items-center gap-0.5">
               <button
                 type="button"
@@ -1496,9 +1489,9 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
                     ? "bg-purple-500/25 text-purple-200"
                     : "text-neutral-500 hover:text-neutral-200"
                 }`}
-                title="预览模式：轻量白膜，只检查模型、构图和视角"
+                title="预览"
               >
-                预览
+                <Eye className="h-3.5 w-3.5" />
               </button>
               <button
                 type="button"
@@ -1512,9 +1505,9 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
                     ? "bg-emerald-500/25 text-emerald-200"
                     : "text-neutral-500 hover:text-neutral-200"
                 }`}
-                title="渲染模式：读取 Cycles Principled BSDF 材质参数并进行实时预览"
+                title="Cycles"
               >
-                Cycles
+                CL
               </button>
             </div>
             <Button
@@ -1542,19 +1535,12 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
             >
               <RefreshCw className="w-3.5 h-3.5" />
             </Button>
-          </div>
         </div>
 
         {isDesktopApp() && (modelNode || glbToRender) && !resolvedScenePath && !scenePathResolving ? (
           <div className="absolute inset-0 z-20 flex flex-col items-center justify-center p-6 text-center bg-neutral-950">
             <Compass className="w-10 h-10 text-amber-400 mb-3" />
-            <span className="text-[11px] font-bold text-amber-300 mb-2">
-              3D 视口：找不到模型文件
-            </span>
-            <p className="text-[10px] text-amber-100/80 leading-relaxed max-w-[320px]">
-              {scenePathError ||
-                "请在左侧模型节点用「从磁盘选择大场景」重新导入 FBX/GLB。"}
-            </p>
+            <span className="text-[10px] font-bold text-amber-300">{scenePathError || "未找到模型"}</span>
           </div>
         ) : showLiveViewport ? (
           <div
@@ -1621,12 +1607,6 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
             />
             <div className="absolute inset-0 z-10 flex flex-col items-center justify-center bg-black/55 pointer-events-none">
               <Pause className="w-8 h-8 text-purple-400/90 mb-2" />
-              <span className="text-[11px] font-bold text-neutral-200">
-                预览模式 · 渲染器已暂停
-              </span>
-              <span className="text-[9px] text-neutral-400 mt-1">
-                点击右上角 ▶ 启动实时渲染与交互
-              </span>
             </div>
           </>
         ) : canvasMounted && renderActive && glbToRender ? (
@@ -1686,14 +1666,6 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
                   <Box className="w-6 h-6 text-purple-400 animate-pulse" />
                 )}
               </div>
-              <span className="text-[11px] font-black text-neutral-300 uppercase tracking-widest mb-1.5 font-mono">
-                {!glbToRender ? "3D 渲染就绪 · 无模型输入" : "3D 渲染控制已暂停"}
-              </span>
-              <p className="text-[10px] text-zinc-400 max-w-[280px] leading-relaxed mb-4">
-                {!glbToRender 
-                  ? "当前编辑器尚未关联三维模型。请使用左侧的紫色 modelInput 插槽，连线并接入 [3D 图像转模型] 或 [三维素材] 节点的输出，即可触发真实的物理模型渲染。"
-                  : "由于从 C4D 导出的高分辨率模型含复杂材质时可能引起卡顿，已为您自动或手动挂起此节点渲染。请点击下方按钮重新恢复。"}
-              </p>
               {glbToRender && (
                 <Button
                   type="button"
@@ -1703,7 +1675,7 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
                   }}
                   className="h-8 px-4 text-xs font-bold bg-purple-950/40 hover:bg-purple-900 border border-purple-800/80 text-purple-400 hover:text-white transition-all cursor-pointer shadow-md"
                 >
-                  点击启动 3D 实时渲染
+                  启动
                 </Button>
               )}
             </div>
@@ -1726,19 +1698,6 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
                 })
               }
             />
-          </div>
-        )}
-
-        {viewportMode === "render" && showLiveViewport && (
-          <div className="absolute left-3 top-14 z-[20] pointer-events-none flex flex-col gap-1">
-            <span className="text-[8px] font-bold uppercase px-1.5 py-0.5 rounded bg-cyan-950/80 text-cyan-200 border border-cyan-900/60">
-              CL 相机视窗
-            </span>
-            {cyclesFrame.status === "rendering" && !cyclesFrameMatchesCamera && (
-              <span className="text-[9px] text-amber-200/90 font-medium animate-pulse">
-                路径追踪跟拍中…
-              </span>
-            )}
           </div>
         )}
 

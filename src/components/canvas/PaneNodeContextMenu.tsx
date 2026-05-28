@@ -42,17 +42,58 @@ export function PaneNodeContextMenu({ x, y, children }: PaneNodeContextMenuProps
   return (
     <div
       ref={shellRef}
-      className="fixed z-[200] flex flex-col rounded-md border border-black/20 bg-white/95 shadow-xl backdrop-blur-sm animate-in fade-in zoom-in-95 duration-100"
+      className="pane-node-context-menu fixed z-[200] flex flex-col rounded-[8px] border border-[#34363a] bg-[#252629]/98 shadow-2xl backdrop-blur-sm animate-in fade-in zoom-in-95 duration-100"
       style={{
         left: position.left,
         top: position.top,
         minWidth: 168,
-        maxWidth: 240,
-        maxHeight: `min(72vh, calc(100vh - ${VIEWPORT_MARGIN * 2}px))`,
+        maxWidth: 220,
+        maxHeight: `min(56vh, 440px, calc(100vh - ${VIEWPORT_MARGIN * 2}px))`,
       }}
       onContextMenu={(e) => e.preventDefault()}
     >
-      <div className="overflow-y-auto overscroll-contain p-1.5 flex flex-col items-stretch gap-0.5 scrollbar-thin">
+      <style
+        dangerouslySetInnerHTML={{
+          __html: `
+            .pane-node-context-menu button {
+              min-height: 28px !important;
+              height: 28px !important;
+              padding: 0 8px !important;
+              border-radius: 5px !important;
+              color: #d3d3d3 !important;
+              background: transparent !important;
+              font-size: 11px !important;
+              font-weight: 500 !important;
+              line-height: 1 !important;
+            }
+            .pane-node-context-menu button:hover {
+              background: #34363a !important;
+              color: #ffffff !important;
+            }
+            .pane-node-context-menu svg {
+              width: 13px !important;
+              height: 13px !important;
+              margin-right: 7px !important;
+              color: #a8a8a8 !important;
+              flex-shrink: 0 !important;
+            }
+            .pane-node-context-menu div.h-px {
+              background: #34363a !important;
+              margin: 2px 0 !important;
+            }
+            .pane-node-context-menu [data-menu-scroll] {
+              scrollbar-width: none;
+              -ms-overflow-style: none;
+            }
+            .pane-node-context-menu [data-menu-scroll]::-webkit-scrollbar {
+              width: 0;
+              height: 0;
+              display: none;
+            }
+          `,
+        }}
+      />
+      <div data-menu-scroll className="overflow-y-auto overscroll-contain p-1 flex flex-col items-stretch gap-px">
         {children}
       </div>
     </div>

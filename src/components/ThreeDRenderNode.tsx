@@ -155,9 +155,6 @@ export function ThreeDRenderNode({ id, data, selected }: ThreeDRenderNodeProps) 
               referrerPolicy="no-referrer"
             />
             {/* Resolution badges overlay */}
-            <div className="absolute bottom-2.5 left-2.5 z-10 px-2.5 py-1 bg-black/80 backdrop-blur-sm rounded-md border border-white/10 text-[9px] font-mono font-black text-pink-400 tracking-wider shadow-lg">
-              1024 × 1024 PNG • OCTANE HQ
-            </div>
           </div>
         ) : (
           <div className="w-full h-full flex flex-col items-center justify-center bg-[#1A1A1A]">
@@ -168,7 +165,7 @@ export function ThreeDRenderNode({ id, data, selected }: ThreeDRenderNodeProps) 
               <div className="absolute inset-0 bg-[#000000]/80 flex flex-col items-center justify-center gap-4 z-10 animate-in fade-in duration-300">
                 <Loader2 className="w-10 h-10 text-pink-500 animate-spin" />
                 <div className="flex flex-col items-center gap-1">
-                  <span className="text-[10px] font-black text-neutral-200 tracking-wider">正在启动光电渲染进程...</span>
+                  <span className="text-[10px] font-black text-neutral-200 tracking-wider">渲染中</span>
                   <span className="text-[11px] font-mono font-bold text-pink-400">{progress}%</span>
                 </div>
               </div>

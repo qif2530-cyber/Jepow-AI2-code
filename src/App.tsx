@@ -22,7 +22,6 @@ import {
   Video,
   CheckCircle2,
   AlertCircle,
-  Download,
   Maximize2,
   X,
   ZoomIn,
@@ -31,16 +30,11 @@ import {
   MousePointer2,
   Upload,
   LayoutGrid,
-  Settings,
   FileText,
   Play,
   Type as TypeIcon,
-  Group,
-  Ungroup,
-  Grid,
   AlignHorizontalSpaceAround,
   AlignVerticalSpaceAround,
-  History,
   Sparkles,
   Send,
   Bot,
@@ -54,7 +48,6 @@ import {
   Zap,
   Layers,
   Plus,
-  User,
   LogOut,
   CreditCard,
   Clock,
@@ -76,6 +69,7 @@ import {
   ChevronDown,
   ChevronLeft,
   ChevronRight,
+  Move,
 } from "lucide-react";
 import api from "./lib/api";
 import {
@@ -161,14 +155,16 @@ import {
 } from "./components/cycles/CyclesColorAdjustNodes";
 import { CyclesPaletteMenu } from "./components/cycles/CyclesPaletteMenu";
 import { PaneNodeContextMenu } from "./components/canvas/PaneNodeContextMenu";
-import { getCyclesNodeDefaultData } from "./lib/cycles-node-registry";
+import {
+  CYCLES_NODE_PALETTE,
+  getCyclesNodeDefaultData,
+} from "./lib/cycles-node-registry";
 import {
   edgeStyleForNative3dConnection,
   normalizeNative3dConnection,
   validateNative3dConnection,
 } from "./lib/native-3d-pipeline";
 import { DeletableEdge } from "./components/DeletableEdge";
-import { HistoryPanel } from "./components/HistoryPanel";
 import { ShotContext } from "./ShotContext";
 import { useHistory } from "./hooks/useHistory";
 import { KLING_MODELS, KlingModelId } from "./lib/kling-models";
@@ -297,7 +293,7 @@ export default function App() {
   const [fullscreenVideo, setFullscreenVideo] = useState<string | null>(null);
   const [zoomLevel, setZoomLevel] = useState(1);
   const [isCollapsed, setIsCollapsed] = useState(false);
-  const [canvasColor, setCanvasColor] = useState<string>("#ffffff");
+  const [canvasColor, setCanvasColor] = useState<string>("#3b3d40");
   const [showMessagesPanel, setShowMessagesPanel] = useState(false);
   const [showEditProfileModal, setShowEditProfileModal] = useState(false);
   const [showAccountManagementModal, setShowAccountManagementModal] =
@@ -1371,7 +1367,11 @@ export default function App() {
       if (project && project.data) {
         setNodes((project.data.nodes || []) as Node[]);
         setEdges((project.data.edges || []) as Edge[]);
-        setCanvasColor(project.data.canvasColor || "#ffffff");
+        setCanvasColor(
+          project.data.canvasColor && project.data.canvasColor !== "#ffffff"
+            ? project.data.canvasColor
+            : "#3b3d40",
+        );
         setCurrentProjectId(project.id);
         currentProjectRef.current = project.id;
         setProjectName(project.name);
@@ -1545,7 +1545,9 @@ export default function App() {
           if (project.nodes && project.edges) {
             setNodes(project.nodes);
             setEdges(project.edges);
-            if (project.canvasColor) setCanvasColor(project.canvasColor);
+            if (project.canvasColor) {
+              setCanvasColor(project.canvasColor === "#ffffff" ? "#3b3d40" : project.canvasColor);
+            }
 
             toast.success("项目已恢复稳定", {
               description: `RESTORED: ${project.nodes.length} NODES | ${project.edges.length} LINKS`,
@@ -1594,7 +1596,7 @@ export default function App() {
         }
         setNodes([]);
         setEdges([]);
-        setCanvasColor("#ffffff");
+        setCanvasColor("#3b3d40");
         setCurrentProjectId(result.record.id);
         currentProjectRef.current = result.record.id;
         setProjectName(result.record.name);
@@ -1662,7 +1664,7 @@ export default function App() {
 
     setNodes([]);
     setEdges([]);
-    setCanvasColor("#ffffff");
+    setCanvasColor("#3b3d40");
     currentProjectRef.current = null;
     setCurrentProjectId(null);
     setProjectName("未命名原型");
@@ -1698,14 +1700,12 @@ export default function App() {
     flowY: number;
   } | null>(null);
   const [lastPaneClickTime, setLastPaneClickTime] = useState(0);
-  const [radialMenu, setRadialMenu] = useState<{
+  const [, setRadialMenu] = useState<{
     x: number;
     y: number;
     flowX: number;
     flowY: number;
   } | null>(null);
-  const [isRadialRotating, setIsRadialRotating] = useState(false);
-  const lastCPressTimeRef = useRef<number>(0);
   const [history, setHistory] = useState<HistoryItem[]>([]);
 
   const fetchHistory = useCallback(async () => {
@@ -1911,7 +1911,23 @@ export default function App() {
     [nodes, history, addToHistory],
   );
 
-  const [showHistory, setShowHistory] = useState(false);
+  const [rightPanelMode, setRightPanelMode] = useState<"properties" | "ai">("properties");
+  const [rightPanelWidth, setRightPanelWidth] = useState(304);
+  const [rightPanelOutlinerHeight, setRightPanelOutlinerHeight] = useState(320);
+  const [renamingNodeId, setRenamingNodeId] = useState<string | null>(null);
+  const [renamingNodeLabel, setRenamingNodeLabel] = useState("");
+  const [sceneRenameMenu, setSceneRenameMenu] = useState<{
+    x: number;
+    y: number;
+    nodeId: string;
+    label: string;
+  } | null>(null);
+  const [collapsedSceneGroupIds, setCollapsedSceneGroupIds] = useState<Set<string>>(
+    () => new Set(),
+  );
+  const [activeTopMenu, setActiveTopMenu] = useState<
+    "file" | "edit" | "window" | "help" | null
+  >(null);
   const [aiInput, setAiInput] = useState("");
   const [aiMode, setAiMode] = useState("自动识别");
   const [aiModelSelect, setAiModelSelect] = useState("自动分配");
@@ -1921,6 +1937,17 @@ export default function App() {
   const [isAiLoading, setIsAiLoading] = useState(false);
   const [showAiChat, setShowAiChat] = useState(false);
   const aiPanelRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!sceneRenameMenu) return;
+    const closeMenu = () => setSceneRenameMenu(null);
+    window.addEventListener("mousedown", closeMenu);
+    window.addEventListener("wheel", closeMenu, { passive: true });
+    return () => {
+      window.removeEventListener("mousedown", closeMenu);
+      window.removeEventListener("wheel", closeMenu);
+    };
+  }, [sceneRenameMenu]);
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
@@ -1959,11 +1986,55 @@ export default function App() {
     }
   }, [aiMessages, isAiLoading]);
 
-  useEffect(() => {
-    if (showHistory) {
-      handleSyncFromCanvas(true);
-    }
-  }, [showHistory, handleSyncFromCanvas]);
+  const handleRightPanelResizeStart = useCallback(
+    (event: React.MouseEvent<HTMLDivElement>) => {
+      event.preventDefault();
+      const startX = event.clientX;
+      const startWidth = rightPanelWidth;
+      document.body.style.cursor = "col-resize";
+      document.body.style.userSelect = "none";
+
+      const handleMouseMove = (moveEvent: MouseEvent) => {
+        const nextWidth = startWidth - (moveEvent.clientX - startX);
+        setRightPanelWidth(Math.min(560, Math.max(286, nextWidth)));
+      };
+      const handleMouseUp = () => {
+        document.body.style.cursor = "";
+        document.body.style.userSelect = "";
+        window.removeEventListener("mousemove", handleMouseMove);
+        window.removeEventListener("mouseup", handleMouseUp);
+      };
+
+      window.addEventListener("mousemove", handleMouseMove);
+      window.addEventListener("mouseup", handleMouseUp);
+    },
+    [rightPanelWidth],
+  );
+
+  const handleOutlinerResizeStart = useCallback(
+    (event: React.MouseEvent<HTMLDivElement>) => {
+      event.preventDefault();
+      const startY = event.clientY;
+      const startHeight = rightPanelOutlinerHeight;
+      document.body.style.cursor = "row-resize";
+      document.body.style.userSelect = "none";
+
+      const handleMouseMove = (moveEvent: MouseEvent) => {
+        const nextHeight = startHeight + (moveEvent.clientY - startY);
+        setRightPanelOutlinerHeight(Math.min(460, Math.max(160, nextHeight)));
+      };
+      const handleMouseUp = () => {
+        document.body.style.cursor = "";
+        document.body.style.userSelect = "";
+        window.removeEventListener("mousemove", handleMouseMove);
+        window.removeEventListener("mouseup", handleMouseUp);
+      };
+
+      window.addEventListener("mousemove", handleMouseMove);
+      window.addEventListener("mouseup", handleMouseUp);
+    },
+    [rightPanelOutlinerHeight],
+  );
 
   useEffect(() => {
     const handleAddToHistory = (
@@ -2597,24 +2668,27 @@ export default function App() {
       maxX = -Infinity,
       maxY = -Infinity;
     nodesToGroup.forEach((node) => {
-      // Use card dimensions instead of measured dimensions to avoid handle offsets
-      let cardWidth = 300;
-      let cardHeight = 200;
+      const liveNode = nodes.find((item) => item.id === node.id) || node;
+      let cardWidth =
+        Number(liveNode.measured?.width || liveNode.width || liveNode.style?.width) ||
+        300;
+      let cardHeight =
+        Number(liveNode.measured?.height || liveNode.height || liveNode.style?.height) ||
+        200;
 
-      if (node.type === "imageShotNode" || node.type === "videoShotNode") {
-        cardWidth = 420;
-        cardHeight = node.measured?.height || 750;
-      } else if (node.type === "textNode" || node.type === "mediaNode") {
-        cardWidth = 300;
-        cardHeight =
-          node.measured?.height || (node.type === "mediaNode" ? 300 : 200);
-      } else {
-        cardWidth = node.measured?.width || 300;
-        cardHeight = node.measured?.height || 200;
+      if (liveNode.type === "imageShotNode" || liveNode.type === "videoShotNode") {
+        cardWidth = Math.max(cardWidth, 420);
+        cardHeight = Math.max(cardHeight, 260);
+      } else if (liveNode.type === "mediaNode") {
+        cardWidth = Math.max(cardWidth, 420);
+        cardHeight = Math.max(cardHeight, 260);
+      } else if (liveNode.type === "threeDEditorNode") {
+        cardWidth = Math.max(cardWidth, 420);
+        cardHeight = Math.max(cardHeight, 260);
       }
 
       // Get absolute position for bounding box calculation
-      const absPos = getAbsolutePosition(node, nodes);
+      const absPos = getAbsolutePosition(liveNode, nodes);
       const absX = absPos.x;
       const absY = absPos.y;
 
@@ -2624,20 +2698,23 @@ export default function App() {
       maxY = Math.max(maxY, absY + cardHeight);
     });
 
-    const padding = 50;
+    const padding = 32;
     const groupX = minX - padding;
     const groupY = minY - padding;
     const groupWidth = Math.max(300, maxX - minX + padding * 2);
     const groupHeight = Math.max(300, maxY - minY + padding * 2);
 
     const groupId = `group-${Date.now()}`;
+    const groupName = `组${nodes.filter((node) => node.type === "groupNode").length + 1}`;
     const newGroupNode: Node = {
       id: groupId,
       type: "groupNode",
       position: { x: groupX, y: groupY },
       style: { width: groupWidth, height: groupHeight, zIndex: 0 },
+      selected: true,
       data: {
-        title: "New Group",
+        label: groupName,
+        title: groupName,
         layoutMode: "free",
         onChangeTitle: (id: string, title: string) => {
           setNodes((nds) =>
@@ -2684,12 +2761,12 @@ export default function App() {
             },
           };
         }
-        return node;
+        return { ...node, selected: false };
       });
       return [newGroupNode, ...updatedNodes];
     });
 
-    setSelectedNodes([]);
+    setSelectedNodes([newGroupNode]);
   }, [selectedNodes, nodes, setNodes, getAbsolutePosition]);
 
   const handleUngroupNodes = useCallback(() => {
@@ -2908,36 +2985,39 @@ export default function App() {
       }
 
       if (
-        e.key.toLowerCase() === "c" &&
+        e.key.toLowerCase() === "s" &&
         !e.ctrlKey &&
         !e.metaKey &&
         !e.shiftKey &&
         !e.altKey
       ) {
-        if (e.repeat) return;
-
-        const now = Date.now();
-        if (now - lastCPressTimeRef.current < 300) {
-          setIsRadialRotating(true);
-          setTimeout(() => {
-            setIsRadialRotating(false);
-            setRadialMenu(null);
-          }, 3000);
+        const nodeToCenter =
+          selectedNodes[0] || nodes.find((node) => node.selected);
+        if (nodeToCenter && reactFlowInstance) {
+          e.preventDefault();
+          const absolute = getAbsolutePosition(nodeToCenter, nodes);
+          const width =
+            nodeToCenter.measured?.width || nodeToCenter.width || 300;
+          const height =
+            nodeToCenter.measured?.height || nodeToCenter.height || 220;
+          reactFlowInstance.setCenter(
+            absolute.x + Number(width) / 2,
+            absolute.y + Number(height) / 2,
+            { zoom: 1, duration: 500 },
+          );
         }
-        lastCPressTimeRef.current = now;
+      }
 
-        if (!radialMenu && reactFlowInstance) {
-          const flowPos = reactFlowInstance.screenToFlowPosition({
-            x: lastMousePos.current.x,
-            y: lastMousePos.current.y,
-          });
-          setRadialMenu({
-            x: lastMousePos.current.x,
-            y: lastMousePos.current.y,
-            flowX: flowPos.x,
-            flowY: flowPos.y,
-          });
-        }
+      if (
+        e.altKey &&
+        !e.ctrlKey &&
+        !e.metaKey &&
+        !e.shiftKey &&
+        e.key.toLowerCase() === "g"
+      ) {
+        e.preventDefault();
+        handleGroupNodes();
+        return;
       }
 
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "z") {
@@ -2984,26 +3064,17 @@ export default function App() {
       }
     };
 
-    const handleKeyUp = (e: KeyboardEvent) => {
-      if (e.key.toLowerCase() === "c") {
-        if (!isRadialRotating) {
-          setRadialMenu(null);
-        }
-      }
-    };
-
     window.addEventListener("keydown", handleKeyDown);
-    window.addEventListener("keyup", handleKeyUp);
     return () => {
       window.removeEventListener("keydown", handleKeyDown);
-      window.removeEventListener("keyup", handleKeyUp);
     };
   }, [
     undo,
     redo,
-    radialMenu,
-    isRadialRotating,
     reactFlowInstance,
+    selectedNodes,
+    nodes,
+    getAbsolutePosition,
     handleGroupNodes,
     handleUngroupNodes,
     handleCopy,
@@ -3057,8 +3128,10 @@ export default function App() {
       if (child.width) return child.width;
       if (child.type === "groupNode")
         return groupLayouts?.get(child.id)?.width || 300;
-      if (child.type === "imageShotNode") return 1024;
-      if (child.type === "videoShotNode") return 1024;
+      if (child.type === "imageShotNode") return 420;
+      if (child.type === "videoShotNode") return 420;
+      if (child.type === "mediaNode") return 420;
+      if (child.type === "threeDEditorNode") return 420;
       if (child.type === "scriptNode") return 720;
       if (child.type === "textNode") return 720;
       if (child.type === "photoEditorNode")
@@ -3075,8 +3148,10 @@ export default function App() {
       if (child.height) return child.height;
       if (child.type === "groupNode")
         return groupLayouts?.get(child.id)?.height || 200;
-      if (child.type === "imageShotNode") return 600;
-      if (child.type === "videoShotNode") return 600;
+      if (child.type === "imageShotNode") return 260;
+      if (child.type === "videoShotNode") return 260;
+      if (child.type === "mediaNode") return 260;
+      if (child.type === "threeDEditorNode") return 260;
       if (child.type === "scriptNode") return 405;
       if (child.type === "textNode") return 405;
       if (child.type === "photoEditorNode")
@@ -3973,8 +4048,7 @@ export default function App() {
             maxY = Math.max(maxY, child.position.y + cardHeight);
           });
 
-          const padding = 50;
-          const bottomPadding = 100;
+          const padding = 32;
 
           // If minX or minY is not at the padding offset, we move the group and adjust children
           const offsetX = minX - padding;
@@ -3992,7 +4066,7 @@ export default function App() {
                   style: {
                     ...(node as any).style,
                     width: maxX - minX + padding * 2,
-                    height: maxY - minY + padding + bottomPadding,
+                    height: maxY - minY + padding * 2,
                   },
                 };
               }
@@ -4016,7 +4090,7 @@ export default function App() {
                   style: {
                     ...(node as any).style,
                     width: maxX - minX + padding * 2,
-                    height: maxY - minY + padding + bottomPadding,
+                    height: maxY - minY + padding * 2,
                   },
                 };
               }
@@ -6631,7 +6705,7 @@ export default function App() {
           x: Math.random() * 200 + 100,
           y: Math.random() * 200 + 100,
         },
-        data: { shot: newShot },
+        data: { label: "图片生成", shot: newShot },
       },
     ]);
     setRadialMenu(null);
@@ -6671,7 +6745,7 @@ export default function App() {
           x: Math.random() * 200 + 100,
           y: Math.random() * 200 + 100,
         },
-        data: { shot: newShot },
+        data: { label: "视频生成", shot: newShot },
       },
     ]);
     setRadialMenu(null);
@@ -6683,6 +6757,17 @@ export default function App() {
     flowPos?: { x: number; y: number },
   ) => {
     const id = `${type}-${Date.now()}`;
+    const manualNodeLabels: Record<string, string> = {
+      imageTo3DNode: "3D 图像转模型",
+      materialGenNode: "3D PBR材质生成",
+      materialReplaceNode: "3D 材质贴附重贴",
+      threeDEditorNode: "3D 场景编辑器",
+      threeDRenderNode: "3D AI场景渲染",
+    };
+    const nodeLabel =
+      manualNodeLabels[type] ||
+      CYCLES_NODE_PALETTE.find((item) => item.type === type)?.label ||
+      "节点";
     const defaultData = getCyclesNodeDefaultData(type) ?? {};
     let centerPos = flowPos;
     if (!centerPos && reactFlowInstance) {
@@ -6701,7 +6786,7 @@ export default function App() {
           x: Math.random() * 200 + 100,
           y: Math.random() * 200 + 100,
         },
-        data: defaultData,
+        data: { ...defaultData, label: nodeLabel },
       },
     ]);
     setRadialMenu(null);
@@ -6727,7 +6812,7 @@ export default function App() {
           x: Math.random() * 200 + 100,
           y: Math.random() * 200 + 100,
         },
-        data: { text: "" },
+        data: { label: "文本", text: "" },
       },
     ]);
     setRadialMenu(null);
@@ -6754,6 +6839,7 @@ export default function App() {
           y: Math.random() * 200 + 100,
         },
         data: {
+          label: "脚本",
           script: "",
           apiKey: jepowKey,
         },
@@ -7073,7 +7159,6 @@ export default function App() {
     showEditProfileModal ||
     showAccountManagementModal ||
     showInvitationModal ||
-    showHistory ||
     showAiChat ||
     showSettings ||
     showScriptModal ||
@@ -7085,6 +7170,372 @@ export default function App() {
     !!fullscreenVideo ||
     !!selectedRechargePkg ||
     showMessagesPanel;
+
+  const selectedPrimaryNode =
+    (selectedNodes[0] && nodes.find((n) => n.id === selectedNodes[0].id)) ||
+    nodes.find((n) => n.selected) ||
+    selectedNodes[0];
+  const selectedTypeLabel = selectedPrimaryNode?.type
+    ? String(selectedPrimaryNode.type)
+        .replace(/Node$/, "")
+        .replace(/([a-z])([A-Z])/g, "$1 $2")
+    : "未选择对象";
+  const formatNodeTreeLabel = useCallback((node: Node) => {
+    const typeLabels: Record<string, string> = {
+      modelAssetNode: "模型资产",
+      threeDEditorNode: "3D 场景编辑器",
+      imageTo3DNode: "3D 图像转模型",
+      materialGenNode: "3D PBR材质生成",
+      materialReplaceNode: "3D 材质贴附重贴",
+      threeDRenderNode: "3D AI场景渲染",
+      imageShotNode: "图片生成",
+      videoShotNode: "视频生成",
+      scriptNode: "脚本",
+      groupNode: "分组",
+      textNode: "文本",
+    };
+    return (
+      (node.data as any)?.label ||
+      (node.data as any)?.title ||
+      (node.data as any)?.shot?.title ||
+      typeLabels[String(node.type || "")] ||
+      "节点"
+    );
+  }, []);
+  const renameNodeInTree = useCallback(
+    (nodeId: string, label: string) => {
+      const nextLabel = label.trim();
+      setRenamingNodeId(null);
+      if (!nextLabel) return;
+      setNodes((currentNodes) =>
+        currentNodes.map((node) =>
+          node.id === nodeId
+            ? {
+                ...node,
+                data: {
+                  ...(node.data as Record<string, unknown>),
+                  label: nextLabel,
+                  ...((node.data as any)?.title ? { title: nextLabel } : {}),
+                  ...((node.data as any)?.shot
+                    ? {
+                        shot: {
+                          ...(node.data as any).shot,
+                          title: nextLabel,
+                        },
+                      }
+                    : {}),
+                },
+              }
+            : node,
+        ),
+      );
+    },
+    [setNodes],
+  );
+  const focusCanvasNode = useCallback(
+    (node: Node) => {
+      const absolute = getAbsolutePosition(node, nodes);
+      const width = node.measured?.width || node.width || 300;
+      const height = node.measured?.height || node.height || 220;
+      reactFlowInstance?.setCenter(
+        absolute.x + Number(width) / 2,
+        absolute.y + Number(height) / 2,
+        { zoom: 1, duration: 500 },
+      );
+    },
+    [getAbsolutePosition, nodes, reactFlowInstance],
+  );
+  const desktopStartupLocked = canvasOnly && (!user || desktopScreen === "home");
+  const sceneChildrenByParentId = useMemo(() => {
+    const childrenByParentId = new Map<string, Node[]>();
+    for (const node of desktopStartupLocked ? [] : nodes) {
+      if (!node.parentId) continue;
+      const siblings = childrenByParentId.get(node.parentId) || [];
+      siblings.push(node);
+      childrenByParentId.set(node.parentId, siblings);
+    }
+    return childrenByParentId;
+  }, [desktopStartupLocked, nodes]);
+  const sceneRootNodes = useMemo(() => {
+    if (desktopStartupLocked) return [];
+    return nodes.filter((node) => {
+      if (!node.parentId) return true;
+      return !nodes.some((parent) => parent.id === node.parentId);
+    });
+  }, [desktopStartupLocked, nodes]);
+  const renderSceneTreeNode = (node: Node, depth = 0): React.ReactNode => {
+    const children = sceneChildrenByParentId.get(node.id) || [];
+    const isGroup = node.type === "groupNode";
+    const isCollapsed = collapsedSceneGroupIds.has(node.id);
+    const isSelected =
+      node.id === selectedPrimaryNode?.id ||
+      selectedNodes.some((selected) => selected.id === node.id);
+    const nodeLabel = formatNodeTreeLabel(node);
+
+    return (
+      <React.Fragment key={node.id}>
+        <div
+          role="button"
+          tabIndex={0}
+          onClick={() => {
+            setSelectedNodes([node]);
+            setNodes((currentNodes) =>
+              currentNodes.map((item) => ({
+                ...item,
+                selected: item.id === node.id,
+              })),
+            );
+          }}
+          onKeyDown={(event) => {
+            if (event.key === "Enter" || event.key === " ") {
+              event.preventDefault();
+              setSelectedNodes([node]);
+              setNodes((currentNodes) =>
+                currentNodes.map((item) => ({
+                  ...item,
+                  selected: item.id === node.id,
+                })),
+              );
+            }
+          }}
+          onContextMenu={(event) => {
+            event.preventDefault();
+            setSelectedNodes([node]);
+            setNodes((currentNodes) =>
+              currentNodes.map((item) => ({
+                ...item,
+                selected: item.id === node.id,
+              })),
+            );
+            setSceneRenameMenu({
+              x: event.clientX,
+              y: event.clientY,
+              nodeId: node.id,
+              label: String(nodeLabel),
+            });
+          }}
+          className={`flex h-6 w-full items-center gap-1 px-2 text-left text-[10px] transition-colors outline-none ${
+            isSelected
+              ? "bg-blue-500/20 text-blue-100"
+              : "text-neutral-400 hover:bg-white/[0.06] hover:text-neutral-200"
+          }`}
+          style={{ paddingLeft: 8 + depth * 12 }}
+        >
+          {isGroup ? (
+            <button
+              type="button"
+              aria-label={isCollapsed ? "展开组" : "收起组"}
+              onClick={(event) => {
+                event.stopPropagation();
+                setCollapsedSceneGroupIds((current) => {
+                  const next = new Set(current);
+                  if (next.has(node.id)) next.delete(node.id);
+                  else next.add(node.id);
+                  return next;
+                });
+              }}
+              className="flex h-4 w-4 shrink-0 items-center justify-center rounded-[3px] text-neutral-500 hover:bg-white/[0.08] hover:text-neutral-200"
+            >
+              {isCollapsed ? (
+                <ChevronRight className="h-3 w-3" />
+              ) : (
+                <ChevronDown className="h-3 w-3" />
+              )}
+            </button>
+          ) : (
+            <span className="h-4 w-4 shrink-0" />
+          )}
+          <Box className="h-3.5 w-3.5 shrink-0 text-orange-300/80" />
+          {renamingNodeId === node.id ? (
+            <input
+              autoFocus
+              value={renamingNodeLabel}
+              onChange={(e) => setRenamingNodeLabel(e.target.value)}
+              onClick={(e) => e.stopPropagation()}
+              onDoubleClick={(e) => e.stopPropagation()}
+              onBlur={() => renameNodeInTree(node.id, renamingNodeLabel)}
+              onKeyDown={(e) => {
+                e.stopPropagation();
+                if (e.key === "Enter") {
+                  renameNodeInTree(node.id, renamingNodeLabel);
+                } else if (e.key === "Escape") {
+                  setRenamingNodeId(null);
+                }
+              }}
+              className="min-w-0 flex-1 rounded-[3px] border border-[#4772b3]/60 bg-[#111214] px-1 py-0.5 text-[10px] text-white outline-none"
+            />
+          ) : (
+            <span className="min-w-0 flex-1 truncate">
+              {String(nodeLabel)}
+            </span>
+          )}
+        </div>
+        {!isCollapsed &&
+          children.map((child) => renderSceneTreeNode(child, depth + 1))}
+      </React.Fragment>
+    );
+  };
+  const professionalModes = [
+    { id: "node", label: "无限画布", active: true },
+    { id: "3d", label: "三维视窗", active: false },
+    { id: "reference", label: "参考修图", active: false },
+    { id: "compose", label: "剪辑合成", active: false },
+  ];
+  const hiddenNodePropertyPattern =
+    /(url|uri|href|path|preview|thumbnail|dataurl|base64|blob|output|result|error|status|local|remote|cache|file|image|video|glb|fbx|obj)$/i;
+  const editableNestedPropertyKeys = new Set([
+    "shot",
+    "transform",
+    "lights",
+    "renderSettings",
+    "cyclesLight",
+    "cyclesCamera",
+    "cyclesMaterial",
+    "material",
+    "viewportCamera",
+    "cyclesViewportCamera",
+    "previewCamera",
+    "settings",
+  ]);
+  const formatPropertyLabel = (key: string) => {
+    const labels: Record<string, string> = {
+      label: "名称",
+      title: "标题",
+      layoutMode: "布局模式",
+      text: "文本",
+      script: "脚本",
+      apiKey: "接口密钥",
+      width: "宽度",
+      height: "高度",
+      x: "横向位置",
+      y: "纵向位置",
+      transform: "变换",
+      settings: "设置",
+      previewCamera: "预览相机",
+      viewportCamera: "视口相机",
+      cyclesViewportCamera: "Cycles 视口相机",
+    };
+    return (
+      labels[key] ||
+      key
+        .replace(/([a-z])([A-Z])/g, "$1 $2")
+        .replace(/_/g, " ")
+    );
+  };
+  const formatPropertyValue = (value: unknown) => {
+    const values: Record<string, string> = {
+      free: "自由",
+      horizontal: "水平",
+      vertical: "垂直",
+      grid: "网格",
+    };
+    return typeof value === "string" ? values[value] || value : String(value ?? "");
+  };
+  const parsePropertyValue = (value: string) => {
+    const values: Record<string, string> = {
+      自由: "free",
+      水平: "horizontal",
+      垂直: "vertical",
+      网格: "grid",
+    };
+    return values[value] || value;
+  };
+  const updateSelectedNodeDataPath = useCallback(
+    (path: string[], value: unknown) => {
+      if (!selectedPrimaryNode) return;
+      setNodes((nds) =>
+        nds.map((node) => {
+          if (node.id !== selectedPrimaryNode.id) return node;
+          const nextData = { ...(node.data as Record<string, unknown>) };
+          let cursor: Record<string, unknown> = nextData;
+          path.slice(0, -1).forEach((segment) => {
+            const nextValue = cursor[segment];
+            const nextObject =
+              nextValue && typeof nextValue === "object" && !Array.isArray(nextValue)
+                ? { ...(nextValue as Record<string, unknown>) }
+                : {};
+            cursor[segment] = nextObject;
+            cursor = nextObject;
+          });
+          cursor[path[path.length - 1]] = value;
+          return { ...node, data: nextData };
+        }),
+      );
+    },
+    [selectedPrimaryNode?.id, setNodes],
+  );
+  const updateSelectedNodeLayout = useCallback(
+    (key: "x" | "y", value: number) => {
+      if (!selectedPrimaryNode) return;
+      setNodes((nds) =>
+        nds.map((node) =>
+          node.id === selectedPrimaryNode.id
+            ? { ...node, position: { ...node.position, [key]: value } }
+            : node,
+        ),
+      );
+    },
+    [selectedPrimaryNode?.id, setNodes],
+  );
+  const selectedNodePropertyGroups = useMemo(() => {
+    if (!selectedPrimaryNode) return [];
+    const groups: {
+      title: string;
+      items: {
+        key: string;
+        label: string;
+        value: unknown;
+        path: string[];
+        type: "string" | "number" | "boolean";
+      }[];
+    }[] = [];
+    const addPrimitiveProperties = (
+      title: string,
+      source: Record<string, unknown>,
+      basePath: string[] = [],
+    ) => {
+      const items = Object.entries(source)
+        .filter(([key, value]) => {
+          if (typeof value === "function" || key.startsWith("on") || key === "id") return false;
+          if (hiddenNodePropertyPattern.test(key)) return false;
+          return (
+            typeof value === "string" ||
+            typeof value === "number" ||
+            typeof value === "boolean"
+          );
+        })
+        .map(([key, value]) => ({
+          key: [...basePath, key].join("."),
+          label: formatPropertyLabel(key),
+          value,
+          path: [...basePath, key],
+          type: typeof value as "string" | "number" | "boolean",
+        }));
+      if (items.length) groups.push({ title, items });
+    };
+
+    const data = (selectedPrimaryNode.data || {}) as Record<string, unknown>;
+    addPrimitiveProperties("基础参数", data);
+    Object.entries(data).forEach(([key, value]) => {
+      if (
+        key === "shot" &&
+        (selectedPrimaryNode.type === "imageShotNode" ||
+          selectedPrimaryNode.type === "videoShotNode")
+      ) {
+        return;
+      }
+      if (
+        !editableNestedPropertyKeys.has(key) ||
+        !value ||
+        typeof value !== "object" ||
+        Array.isArray(value)
+      ) {
+        return;
+      }
+      addPrimitiveProperties(formatPropertyLabel(key), value as Record<string, unknown>, [key]);
+    });
+    return groups;
+  }, [selectedPrimaryNode, hiddenNodePropertyPattern]);
 
   useEffect(() => {
     if (isAnyModalOpen) {
@@ -7099,68 +7550,6 @@ export default function App() {
       document.documentElement.style.overflow = "";
     };
   }, [isAnyModalOpen]);
-
-  if (canvasOnly && !user) {
-    return (
-      <DesktopLoginGate
-        waiting={desktopAuthPending || !!token}
-        onOpenLogin={async () => {
-          setDesktopAuthPending(true);
-          await startDesktopBrowserLogin();
-        }}
-      />
-    );
-  }
-
-  if (canvasOnly && user && desktopScreen === "home") {
-    return (
-      <>
-        <DesktopHomeScreen
-          user={user}
-          projects={cloudProjects}
-          onNewProject={() => setShowNewProjectSaveDialog(true)}
-          onOpenProject={handleLoadCloudProject}
-          onDeleteProject={handleDeleteCloudProject}
-          onLogout={() => {
-            setToken(null);
-            setUser(null);
-            setNodes([]);
-            setEdges([]);
-            setCurrentProjectId(null);
-            setDesktopScreen("home");
-            localStorage.removeItem("ais-user");
-            localStorage.removeItem("ais-token");
-            toast.info("已退出登录");
-          }}
-        />
-        <NewProjectSaveDialog
-          userId={String(user.id)}
-          open={showNewProjectSaveDialog}
-          onClose={() => setShowNewProjectSaveDialog(false)}
-          onCreated={handleConfirmNewProjectSave}
-        />
-        {projectToDelete && (
-          <div className="fixed inset-0 z-[40000] flex items-center justify-center bg-black/40 p-4">
-            <div className="bg-white rounded-2xl p-6 max-w-sm w-full shadow-xl">
-              <p className="font-semibold text-neutral-900 mb-4">确认删除该工程？</p>
-              <div className="flex gap-2 justify-end">
-                <Button variant="ghost" onClick={() => setProjectToDelete(null)}>
-                  取消
-                </Button>
-                <Button
-                  variant="destructive"
-                  onClick={confirmDeleteProject}
-                  disabled={isDeleting}
-                >
-                  删除
-                </Button>
-              </div>
-            </div>
-          </div>
-        )}
-      </>
-    );
-  }
 
   return (
     <div
@@ -7296,8 +7685,273 @@ export default function App() {
               </div>
             </div>
           ))}
-          <div className="w-full h-full flex flex-col relative">
-            <div className="flex-1 w-full h-full bg-white relative">
+          <div className="w-full h-full flex flex-col relative overflow-hidden bg-[#101113] text-neutral-100">
+            <style
+              dangerouslySetInnerHTML={{
+                __html: `
+                  .react-flow__node [id*="floating-panel"],
+                  .react-flow__node [class*="z-[9999]"][class*="top-full"],
+                  .react-flow__node [class*="z-[9999]"][class*="slide-in-from-top-4"] {
+                    display: none !important;
+                  }
+                  .react-flow__node.selected {
+                    filter: drop-shadow(0 0 12px rgba(59, 130, 246, 0.85)) drop-shadow(0 0 28px rgba(59, 130, 246, 0.48));
+                  }
+                  .react-flow__node.selected > div:first-child {
+                    outline: none !important;
+                    border-color: rgba(38, 38, 38, 0.9) !important;
+                  }
+                  .react-flow__node.selected [class*="border-blue"],
+                  .react-flow__node.selected [class*="border-purple"],
+                  .react-flow__node.selected [class*="border-emerald"],
+                  .react-flow__node.selected [class*="border-cyan"],
+                  .react-flow__node.selected [class*="border-amber"] {
+                    border-color: rgba(38, 38, 38, 0.9) !important;
+                  }
+                `,
+              }}
+            />
+            <header className="h-8 shrink-0 border-b border-[#151619] bg-[#1f2023] flex items-center px-1.5 select-none z-[120]">
+              <div className="flex items-center gap-1 min-w-0 h-full">
+                <button
+                  className="h-7 w-7 rounded bg-transparent flex items-center justify-center hover:bg-white/10 transition-colors"
+                  onClick={async () => {
+                    if (canvasOnly) {
+                      if (currentProjectId) await handleCloudSave(false);
+                      setDesktopScreen("home");
+                      fetchProjects();
+                    } else {
+                      setView("landing");
+                    }
+                  }}
+                  title={canvasOnly ? "返回工程首页" : "返回首页"}
+                  type="button"
+                >
+                  <Logo className="w-5 h-5 drop-shadow-md" />
+                </button>
+
+                {[
+                  {
+                    id: "file" as const,
+                    label: "文件",
+                    items: [
+                      { label: "新建", shortcut: "⌘ N", action: handleNewProject },
+                      { label: "打开...", shortcut: "⌘ O", action: () => document.getElementById("project-load-input")?.click() },
+                      { label: "保存", shortcut: "⌘ S", action: handleSaveProject },
+                      { label: "导出", action: handleSaveProject },
+                      { label: "导入工程", action: () => document.getElementById("project-load-input")?.click() },
+                      { label: "退出", shortcut: "⌘ Q", action: () => canvasOnly ? setDesktopScreen("home") : setView("landing") },
+                    ],
+                  },
+                  {
+                    id: "edit" as const,
+                    label: "编辑",
+                    items: [
+                      {
+                        label: "撤销",
+                        shortcut: "⌘ Z",
+                        disabled: !canUndo,
+                        action: () => {
+                          const prevState = undo();
+                          if (prevState) {
+                            setNodes(prevState.nodes);
+                            setEdges(prevState.edges);
+                          }
+                        },
+                      },
+                      {
+                        label: "重做",
+                        shortcut: "⇧ ⌘ Z",
+                        disabled: !canRedo,
+                        action: () => {
+                          const nextState = redo();
+                          if (nextState) {
+                            setNodes(nextState.nodes);
+                            setEdges(nextState.edges);
+                          }
+                        },
+                      },
+                      {
+                        label: "历史工程",
+                        shortcut: "⇧ ⌘ O",
+                        historyProjects: true,
+                        action: fetchProjects,
+                      },
+                      { label: snapToGrid ? "关闭吸附" : "开启吸附", action: () => setSnapToGrid(!snapToGrid) },
+                      { label: "画布颜色...", action: () => document.getElementById("canvas-color-input")?.click() },
+                      { label: "菜单搜索...", shortcut: "F3", action: () => toast.info("搜索功能即将接入") },
+                      { label: "偏好设置...", shortcut: "⌘ ,", action: () => setShowSettings(true) },
+                    ],
+                  },
+                  {
+                    id: "window" as const,
+                    label: "窗口",
+                    items: [
+                      {
+                        label: user ? "用户档案" : "登录/注册",
+                        action: () => {
+                          if (user) setShowUserMenu(!showUserMenu);
+                          else setShowAuthModal(true);
+                        },
+                      },
+                      { label: "显示属性面板", action: () => setRightPanelMode("properties") },
+                      { label: "显示 AI 助手", action: () => setRightPanelMode("ai") },
+                      { label: "设置", action: () => setShowSettings(true) },
+                      { label: "保存屏幕截图...", action: () => toast.info("截图功能即将接入") },
+                    ],
+                  },
+                  {
+                    id: "help" as const,
+                    label: "帮助",
+                    items: [
+                      { label: "手册", action: () => openJepowWeb("/") },
+                      { label: "支持", action: () => openJepowWeb("/") },
+                      { label: "报告问题", action: () => openJepowWeb("/") },
+                      { label: "保存系统信息...", action: () => toast.info("系统信息导出即将接入") },
+                    ],
+                  },
+                ].map((menu) => (
+                  <div key={menu.id} className="relative h-full flex items-center">
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setActiveTopMenu(activeTopMenu === menu.id ? null : menu.id)
+                      }
+                      className={`h-6 px-2 rounded text-[12px] font-medium transition-colors ${
+                        activeTopMenu === menu.id
+                          ? "bg-white/12 text-white"
+                          : "text-neutral-300 hover:text-white hover:bg-white/[0.08]"
+                      }`}
+                    >
+                      {menu.label}
+                    </button>
+                    {activeTopMenu === menu.id && (
+                      <div className="absolute left-0 top-full mt-1 min-w-[230px] rounded-[4px] border border-[#151619] bg-[#252629]/98 p-1 shadow-2xl backdrop-blur-xl z-[200]">
+                        {menu.items.map((item, index) => {
+                          const isHistoryProjects = "historyProjects" in item;
+                          return (
+                            <div
+                              key={`${item.label}-${index}`}
+                              className="group/menuitem relative"
+                              onMouseEnter={() => {
+                                if (isHistoryProjects) void fetchProjects();
+                              }}
+                            >
+                              <button
+                                type="button"
+                                disabled={item.disabled}
+                                onClick={() => {
+                                  if (item.disabled) return;
+                                  void item.action();
+                                  if (!isHistoryProjects) setActiveTopMenu(null);
+                                }}
+                                className="w-full h-7 rounded-[3px] px-2.5 text-left text-[12px] text-neutral-200 hover:bg-[#3a3d42] disabled:opacity-35 disabled:hover:bg-transparent flex items-center justify-between gap-4"
+                              >
+                                <span>{item.label}</span>
+                                <span className="flex items-center gap-2 text-[11px] text-neutral-500">
+                                  {item.shortcut}
+                                  {isHistoryProjects && <ChevronRight className="h-3 w-3" />}
+                                </span>
+                              </button>
+                              {isHistoryProjects && (
+                                <div className="invisible absolute left-full top-0 ml-1 w-[360px] rounded-[4px] border border-[#151619] bg-[#252629]/98 p-1 shadow-2xl opacity-0 backdrop-blur-xl transition-all group-hover/menuitem:visible group-hover/menuitem:opacity-100">
+                                  <div className="border-b border-[#34363a] px-2 py-1.5 text-[10px] font-bold tracking-wide text-neutral-500">
+                                    历史工程
+                                  </div>
+                                  {cloudProjects.length === 0 ? (
+                                    <div className="px-2 py-4 text-center text-[11px] text-neutral-500">
+                                      暂无历史工程
+                                    </div>
+                                  ) : (
+                                    <div className="max-h-[320px] overflow-y-auto">
+                                      {cloudProjects.map((project) => {
+                                        const saveLocation =
+                                          (project as any).path ||
+                                          (project as any).localPath ||
+                                          (project as any).directory ||
+                                          (projectsLocal
+                                            ? "本机 · 本地工程档案"
+                                            : "云端 · Jepow 账户");
+                                        return (
+                                          <button
+                                            key={project.id}
+                                            type="button"
+                                            onClick={() => {
+                                              setActiveTopMenu(null);
+                                              void handleLoadCloudProject(project.id);
+                                            }}
+                                            className="w-full rounded-[3px] px-2 py-2 text-left hover:bg-[#3a3d42]"
+                                          >
+                                            <div className="truncate text-[12px] font-semibold text-neutral-100">
+                                              {project.name || "未命名工程"}
+                                            </div>
+                                            <div className="mt-1 truncate text-[10px] text-neutral-500">
+                                              保存位置：{saveLocation}
+                                            </div>
+                                            <div className="mt-0.5 text-[10px] text-neutral-500">
+                                              最新保存：
+                                              {new Date(project.updatedAt).toLocaleString("zh-CN", {
+                                                year: "numeric",
+                                                month: "2-digit",
+                                                day: "2-digit",
+                                                hour: "2-digit",
+                                                minute: "2-digit",
+                                              })}
+                                            </div>
+                                          </button>
+                                        );
+                                      })}
+                                    </div>
+                                  )}
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+
+              <div className="ml-5 hidden md:flex items-center gap-1 rounded-[3px] bg-[#2b2d31] border border-[#151619] p-0.5">
+                {professionalModes.map((mode) => (
+                  <button
+                    key={mode.id}
+                    type="button"
+                      className={`h-6 px-2.5 rounded-sm text-[10px] font-bold tracking-wide transition-all ${
+                      mode.active
+                        ? "bg-[#4772b3] text-white"
+                        : "text-neutral-400 hover:text-white hover:bg-white/[0.08]"
+                    }`}
+                  >
+                    {mode.label}
+                  </button>
+                ))}
+              </div>
+            </header>
+
+            <input
+              type="file"
+              id="project-load-input"
+              className="hidden"
+              accept=".aiswork,.AI.json,.json"
+              onChange={(e: any) => {
+                handleLoadProject(e);
+                setShowTransferMenu(false);
+              }}
+            />
+            <input
+              type="color"
+              id="canvas-color-input"
+              className="hidden"
+              value={canvasColor}
+              onChange={(e) => setCanvasColor(e.target.value)}
+            />
+
+            <div className="flex flex-1 min-h-0 bg-[#1f2023]">
+              <main className="relative min-w-0 flex-1 p-0.5">
+                <div className="absolute inset-0.5 overflow-hidden rounded-[12px] border border-[#25272b] bg-[#3b3d40] shadow-none">
               <ShotContext.Provider
                 value={{
                   globalImageModel: imageModel,
@@ -7315,8 +7969,8 @@ export default function App() {
                 }}
               >
                 <ReactFlow
-                  nodes={nodes}
-                  edges={edges}
+                  nodes={desktopStartupLocked ? [] : nodes}
+                  edges={desktopStartupLocked ? [] : edges}
                   onNodesChange={onNodesChange}
                   onEdgesChange={onEdgesChange}
                   onNodesDelete={onNodesDelete}
@@ -7337,7 +7991,7 @@ export default function App() {
                   defaultEdgeOptions={{ type: "deletable", animated: true }}
                   snapToGrid={snapToGrid}
                   snapGrid={[16, 16]}
-                  style={{ backgroundColor: canvasColor }}
+                  style={{ backgroundColor: desktopStartupLocked ? "#3b3d40" : canvasColor }}
                   className="transition-colors duration-300"
                   minZoom={0.01}
                   maxZoom={2}
@@ -7353,126 +8007,9 @@ export default function App() {
                   deleteKeyCode={["Backspace", "Delete"]}
                   proOptions={{ hideAttribution: true }}
                 >
-                  <Background />
+                  <Background color="rgba(255,255,255,0.12)" gap={24} size={1.1} />
 
-                  <Panel
-                    position="top-left"
-                    className="ml-4 mt-6 z-[100] flex pointer-events-none"
-                  >
-                    <div className="relative group pointer-events-auto flex flex-col items-center">
-                      <button
-                        className="w-12 h-12 rounded-2xl flex items-center justify-center cursor-pointer hover:scale-105 transition-all bg-transparent"
-                        onClick={async () => {
-                          if (canvasOnly) {
-                            if (currentProjectId) {
-                              await handleCloudSave(false);
-                            }
-                            setDesktopScreen("home");
-                            fetchProjects();
-                          } else {
-                            setView("landing");
-                          }
-                        }}
-                        title={canvasOnly ? "返回工程首页" : "返回首页"}
-                      >
-                        <Logo className="w-10 h-10 drop-shadow-md" />
-                      </button>
-
-                      <div className="absolute top-full left-0 pt-3 flex flex-col gap-1 bg-neutral-900/95 backdrop-blur-xl p-2 rounded-2xl shadow-2xl border border-neutral-800 opacity-0 -translate-y-3 scale-95 pointer-events-none group-hover:opacity-100 group-hover:translate-y-0 group-hover:scale-100 group-hover:pointer-events-auto transition-all duration-200 origin-top before:content-[''] before:absolute before:left-0 before:right-0 before:-top-3 before:h-3">
-                        {/* 个人中心 */}
-                        <button
-                          className="w-10 h-10 rounded-xl transition-all duration-200 bg-transparent text-neutral-400 hover:bg-neutral-800 hover:text-white flex items-center justify-center relative group/btn"
-                          onClick={() => {
-                            if (user) {
-                              const nextState = !showUserMenu;
-                              if (nextState) {
-                                setShowTransferMenu(false);
-                                setPaneContextMenu(null);
-                                setShowLayoutMenu(false);
-                              }
-                              setShowUserMenu(nextState);
-                            } else {
-                              setShowAuthModal(true);
-                            }
-                          }}
-                        >
-                          <User
-                            className={`w-5 h-5 ${user ? "text-blue-500" : ""}`}
-                          />
-                          <span className="absolute left-full ml-2 top-1/2 -translate-y-1/2 bg-black text-white text-[10px] uppercase font-bold tracking-widest px-2 py-1 rounded opacity-0 group-hover/btn:opacity-100 pointer-events-none transition-opacity whitespace-nowrap">
-                            {user ? "用户档案" : "登录/注册"}
-                          </span>
-                        </button>
-
-                        <div className="w-6 h-[1px] bg-neutral-800 mx-auto my-1" />
-
-                        {/* 导出工程 */}
-                        <button
-                          className="w-10 h-10 rounded-xl transition-all duration-200 bg-transparent text-neutral-400 hover:bg-neutral-800 hover:text-white flex items-center justify-center relative group/btn"
-                          onClick={() => {
-                            handleSaveProject();
-                            setShowTransferMenu(false);
-                          }}
-                        >
-                          <Download className="w-5 h-5" />
-                          <span className="absolute left-full ml-2 top-1/2 -translate-y-1/2 bg-black text-white text-[10px] uppercase font-bold tracking-widest px-2 py-1 rounded opacity-0 group-hover/btn:opacity-100 pointer-events-none transition-opacity whitespace-nowrap">
-                            导出工程
-                          </span>
-                        </button>
-
-                        {/* 导入工程 */}
-                        <button
-                          className="w-10 h-10 rounded-xl transition-all duration-200 bg-transparent text-neutral-400 hover:bg-neutral-800 hover:text-white flex items-center justify-center relative group/btn"
-                          onClick={() => {
-                            document
-                              .getElementById("project-load-input")
-                              ?.click();
-                          }}
-                        >
-                          <Upload className="w-5 h-5" />
-                          <span className="absolute left-full ml-2 top-1/2 -translate-y-1/2 bg-black text-white text-[10px] uppercase font-bold tracking-widest px-2 py-1 rounded opacity-0 group-hover/btn:opacity-100 pointer-events-none transition-opacity whitespace-nowrap">
-                            导入工程
-                          </span>
-                        </button>
-                        <input
-                          type="file"
-                          id="project-load-input"
-                          className="hidden"
-                          accept=".aiswork,.AI.json,.json"
-                          onChange={(e: any) => {
-                            handleLoadProject(e);
-                            setShowTransferMenu(false);
-                          }}
-                        />
-
-                        {/* 网格吸附 */}
-                        <button
-                          className={`w-10 h-10 rounded-xl transition-all duration-200 flex items-center justify-center relative group/btn ${snapToGrid ? "bg-blue-900/40 text-blue-400" : "bg-transparent text-neutral-400 hover:bg-neutral-800 hover:text-white"}`}
-                          onClick={() => setSnapToGrid(!snapToGrid)}
-                        >
-                          <Grid className="w-5 h-5" />
-                          <span className="absolute left-full ml-2 top-1/2 -translate-y-1/2 bg-black text-white text-[10px] uppercase font-bold tracking-widest px-2 py-1 rounded opacity-0 group-hover/btn:opacity-100 pointer-events-none transition-opacity whitespace-nowrap">
-                            {snapToGrid ? "禁用吸附" : "启用吸附"}
-                          </span>
-                        </button>
-
-                        {/* 色度 */}
-                        <div className="w-10 h-10 rounded-xl transition-all duration-200 bg-transparent text-neutral-400 hover:bg-neutral-800 hover:text-white flex items-center justify-center relative group/btn overflow-hidden">
-                          <Palette className="w-5 h-5 relative z-10 pointer-events-none" />
-                          <input
-                            type="color"
-                            value={canvasColor}
-                            onChange={(e) => setCanvasColor(e.target.value)}
-                            className="absolute inset-0 opacity-0 cursor-pointer w-[200%] h-[200%] -top-1/2 -left-1/2"
-                          />
-                          <span className="absolute left-full ml-2 top-1/2 -translate-y-1/2 bg-black text-white text-[10px] uppercase font-bold tracking-widest px-2 py-1 rounded opacity-0 group-hover/btn:opacity-100 pointer-events-none transition-opacity whitespace-nowrap z-20">
-                            系统调色
-                          </span>
-                        </div>
-                      </div>
-                    </div>
-                  </Panel>
-
+                  {false && (
                   <Panel
                     position="top-right"
                     className={`fixed top-6 bottom-6 right-4 flex flex-col transition-[width,background,box-shadow,border-color] duration-300 ease-in-out z-[95] pointer-events-none rounded-l-3xl rounded-r-2xl ${
@@ -8211,60 +8748,7 @@ export default function App() {
                     </div>
                     )}
                   </Panel>
-
-                  {user && (
-                    <Panel
-                      position="bottom-left"
-                      className="mb-6 ml-6 z-[90] transition-all duration-300 ease-in-out"
-                    >
-                      <button
-                        onClick={() =>
-                          canvasOnly
-                            ? openJepowWeb("/")
-                            : setShowCreditsModal(true)
-                        }
-                        className="flex items-center gap-1.5 p-2.5 px-4 rounded-xl bg-[#121214]/90 backdrop-blur-md border border-neutral-800/80 shadow-2xl text-sm font-black hover:scale-105 active:scale-95 group transition-all text-neutral-305 hover:text-white"
-                        title={
-                          canvasOnly ? "前往网站充值/查看能量" : "查看能量"
-                        }
-                      >
-                        <Zap className="w-5 h-5 text-amber-500 fill-amber-500/20 group-hover:text-amber-400 transition-colors" />
-                        <span className="text-amber-500 tracking-wider text-[13px] font-sans">
-                          {user.credits || 0} 能量
-                        </span>
-                      </button>
-                    </Panel>
                   )}
-
-                  {selectedNodes.length >= 2 ||
-                  (selectedNodes.length >= 1 &&
-                    selectedNodes.every((n) => n.type === "groupNode")) ? (
-                    <Panel
-                      position="top-center"
-                      className="flex items-center gap-2 z-50 mt-6 pointer-events-none"
-                    >
-                      {selectedNodes.length >= 2 && (
-                        <button
-                          className="flex items-center justify-center h-10 px-6 rounded-md text-sm font-bold transition-all duration-300 bg-white text-black hover:bg-neutral-100 shadow-md active:scale-95 pointer-events-auto border border-neutral-200"
-                          onClick={handleGroupNodes}
-                        >
-                          <Group className="w-5 h-5 mr-2" />
-                          组合选定对象
-                        </button>
-                      )}
-                      {selectedNodes.length >= 1 &&
-                        selectedNodes.every((n) => n.type === "groupNode") && (
-                          <button
-                            className="flex items-center justify-center h-10 px-6 rounded-md text-sm font-bold transition-all duration-300 bg-red-600 text-neutral-900 hover:bg-red-700 shadow-md active:scale-95 pointer-events-auto"
-                            onClick={handleUngroupNodes}
-                          >
-                            <Ungroup className="w-5 h-5 mr-2" />
-                            取消组合
-                          </button>
-                        )}
-                    </Panel>
-                  ) : null}
-
                   {nodes.length === 0 && (
                     <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none z-0 text-neutral-600 select-none">
                       <p className="text-lg font-medium tracking-wide opacity-60">
@@ -8274,6 +8758,612 @@ export default function App() {
                   )}
                 </ReactFlow>
               </ShotContext.Provider>
+                </div>
+              </main>
+
+              <div
+                className="hidden lg:block w-px shrink-0 cursor-col-resize bg-[#1f2023] hover:bg-[#4772b3] transition-colors"
+                onMouseDown={handleRightPanelResizeStart}
+                title="拖拽调整右侧面板宽度"
+              />
+
+              <aside
+                className="hidden lg:flex shrink-0 bg-[#1f2023] flex-col overflow-hidden rounded-l-[8px]"
+                style={{ width: rightPanelWidth }}
+              >
+                <div
+                  className="shrink-0 bg-[#1f2023] overflow-hidden rounded-tl-[8px]"
+                  style={{ height: rightPanelOutlinerHeight }}
+                >
+                  <div className="h-6 border-b border-[#25272b] px-2 flex items-center justify-between">
+                    <div className="flex items-center gap-1.5 text-[10px] font-black tracking-wide text-neutral-300">
+                      <Layers className="h-3.5 w-3.5 text-neutral-500" />
+                      场景集合
+                    </div>
+                    <Search className="h-3.5 w-3.5 text-neutral-600" />
+                  </div>
+                  <div className="h-[calc(100%-1.5rem)] overflow-y-auto custom-scrollbar p-px">
+                    <div className="h-full rounded-[8px] border border-[#25272b] bg-[#252629] overflow-hidden">
+                      <div className="flex items-center gap-1.5 border-b border-[#2b2d31] px-2 py-1 text-[10px] font-bold text-neutral-400">
+                        <ChevronDown className="h-3 w-3" />
+                        集合
+                      </div>
+                      {sceneRootNodes.map((node) => renderSceneTreeNode(node))}
+                    </div>
+                  </div>
+                </div>
+
+                <div
+                  className="h-px shrink-0 cursor-row-resize bg-[#1f2023] hover:bg-[#4772b3] transition-colors"
+                  onMouseDown={handleOutlinerResizeStart}
+                  title="拖拽调整大纲高度"
+                />
+
+                <div className="m-1 flex min-h-0 flex-1 overflow-hidden rounded-[12px] border border-[#25272b] bg-[#252629]">
+                  <div className="w-8 shrink-0 border-r border-[#2b2d31] bg-transparent py-2 flex flex-col items-center gap-1">
+                    {[
+                      { id: "properties" as const, label: "属性", icon: Settings2 },
+                      { id: "ai" as const, label: "AI 助手", icon: Sparkles },
+                    ].map(({ id, label, icon: Icon }) => (
+                      <button
+                        key={id}
+                        type="button"
+                        title={label}
+                        onClick={() => setRightPanelMode(id)}
+                        className={`h-6 w-6 rounded-[5px] flex items-center justify-center transition-colors ${
+                          rightPanelMode === id
+                            ? "bg-[#4772b3] text-white"
+                            : "text-[#a8a8a8] hover:bg-[#3f4145] hover:text-white"
+                        }`}
+                      >
+                        <Icon className="h-3.5 w-3.5" />
+                      </button>
+                    ))}
+                  </div>
+
+                  <div className="min-w-0 flex-1 overflow-y-auto custom-scrollbar p-2">
+                  {rightPanelMode === "ai" ? (
+                    <div className="h-full flex flex-col gap-1">
+                      <div className="min-h-[220px] flex-1 overflow-y-auto rounded-[8px] bg-[#252629] p-2 space-y-2">
+                        {aiMessages.length === 0 ? (
+                          <div className="h-full min-h-[180px] flex items-center justify-center text-center text-[10px] leading-relaxed text-neutral-500">
+                            暂无对话，输入指令开始生成。
+                          </div>
+                        ) : (
+                          aiMessages.map((msg, index) => (
+                            <div
+                              key={index}
+                              className={`rounded-lg border px-3 py-2 text-[10px] leading-relaxed ${
+                                msg.role === "user"
+                                  ? "border-emerald-400/20 bg-emerald-400/10 text-emerald-50"
+                                  : "border-white/10 bg-white/[0.04] text-neutral-300"
+                              }`}
+                            >
+                              {msg.content}
+                            </div>
+                          ))
+                        )}
+                        {isAiLoading && (
+                          <div className="flex items-center gap-2 text-[10px] text-emerald-300">
+                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                            正在生成...
+                          </div>
+                        )}
+                        <div ref={aiChatEndRef} />
+                      </div>
+
+                      <form onSubmit={handleAiSubmit} className="shrink-0 space-y-2">
+                        <div className="grid grid-cols-2 gap-2">
+                          <select
+                            value={aiMode}
+                            onChange={(e) => setAiMode(e.target.value)}
+                            className="h-8 rounded-md border border-white/[0.08] bg-black/30 px-2 text-[10px] text-neutral-200 outline-none"
+                          >
+                            <option value="自动识别">模式：自动</option>
+                            <option value="图像生成">模式：图片</option>
+                            <option value="视频生成">模式：视频</option>
+                            <option value="脚本生成">模式：脚本</option>
+                          </select>
+                          <select
+                            value={aiModelSelect}
+                            onChange={(e) => setAiModelSelect(e.target.value)}
+                            className="h-8 rounded-md border border-white/[0.08] bg-black/30 px-2 text-[10px] text-neutral-200 outline-none"
+                          >
+                            <option value="自动分配">模型：自动</option>
+                            {Object.entries(IMAGE_MODELS).map(([key, model]) => (
+                              <option key={key} value={key}>
+                                {model.name}
+                              </option>
+                            ))}
+                            {Object.entries(KLING_MODELS).map(([key, model]) => (
+                              <option key={key} value={key}>
+                                {model.name}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                        <textarea
+                          value={aiInput}
+                          onChange={(e) => setAiInput(e.target.value)}
+                          placeholder="输入 AI 命令..."
+                          disabled={isAiLoading || isSelectingAiReference}
+                          className="min-h-[90px] w-full resize-y rounded-lg border border-white/[0.08] bg-black/30 px-3 py-2 text-[11px] text-neutral-100 outline-none focus:border-emerald-400/50"
+                        />
+                        <Button
+                          type="submit"
+                          disabled={!aiInput.trim() || isAiLoading || isSelectingAiReference}
+                          className="h-9 w-full rounded-lg bg-emerald-500 text-[11px] font-black text-neutral-950 hover:bg-emerald-400"
+                        >
+                          <Send className="mr-1.5 h-3.5 w-3.5" />
+                          发送
+                        </Button>
+                      </form>
+                    </div>
+                  ) : (
+                    <>
+                  {!selectedPrimaryNode ? (
+                    <div className="h-full min-h-[420px] rounded-xl border border-dashed border-white/10 bg-black/20 px-5 py-8 text-center flex flex-col items-center justify-center">
+                      <MousePointer2 className="mb-3 h-8 w-8 text-neutral-600" />
+                      <div className="text-[12px] font-black text-neutral-300">
+                        选择一个节点
+                      </div>
+                      <p className="mt-2 text-[10px] leading-relaxed text-neutral-500">
+                        点击画布中的任意节点后，只在这里显示它的可编辑参数。
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="space-y-3">
+                      {(selectedPrimaryNode.type === "imageShotNode" ||
+                        selectedPrimaryNode.type === "videoShotNode") &&
+                        (() => {
+                          const shot = ((selectedPrimaryNode.data as any)?.shot || {}) as Shot;
+                          const selectClass =
+                            "h-8 w-full rounded-md border border-white/[0.08] bg-black/30 px-2 text-[10px] text-neutral-200 outline-none focus:border-purple-400/50";
+                          const inputClass =
+                            "h-8 w-full rounded-md border border-white/[0.08] bg-black/30 px-2 text-[10px] text-neutral-200 outline-none focus:border-purple-400/50";
+                          const labelClass =
+                            "mb-1 block text-[9px] font-bold uppercase tracking-wide text-neutral-500";
+
+                          if (selectedPrimaryNode.type === "imageShotNode") {
+                            const currentModel =
+                              shot.imageModel ||
+                              imageModel ||
+                              "gemini-3.1-flash-image-preview";
+                            const modelConfig =
+                              IMAGE_MODELS[currentModel] ||
+                              IMAGE_MODELS["gemini-3.1-flash-image-preview"];
+                            const countOptions = Array.from(
+                              { length: modelConfig?.maxCount || 4 },
+                              (_, index) => index + 1,
+                            );
+
+                            return (
+                              <section className="rounded-xl border border-purple-400/20 bg-purple-400/[0.045] p-3">
+                                <div className="mb-3 flex items-center justify-between">
+                                  <div className="flex items-center gap-2 text-[11px] font-bold text-neutral-100">
+                                    <ImageIcon className="h-3.5 w-3.5 text-purple-300" />
+                                    图片生成参数
+                                  </div>
+                                  <Button
+                                    type="button"
+                                    size="sm"
+                                    onClick={() => handleGenerateImage(shot.id)}
+                                    disabled={shot.status === "generating_image"}
+                                    className="h-7 rounded-md bg-purple-500 px-2 text-[10px] font-black text-white hover:bg-purple-400"
+                                  >
+                                    {shot.status === "generating_image"
+                                      ? `生成中 ${shot.progress || 0}%`
+                                      : "生成图片"}
+                                  </Button>
+                                </div>
+
+                                <div className="space-y-3">
+                                  <label className="block">
+                                    <span className={labelClass}>模型</span>
+                                    <select
+                                      value={currentModel}
+                                      onChange={(e) =>
+                                        updateSelectedNodeDataPath(
+                                          ["shot", "imageModel"],
+                                          e.target.value,
+                                        )
+                                      }
+                                      className={selectClass}
+                                    >
+                                      {Object.values(IMAGE_MODELS).map((model) => (
+                                        <option key={model.id} value={model.id}>
+                                          {model.name}
+                                        </option>
+                                      ))}
+                                    </select>
+                                    {modelConfig?.description && (
+                                      <p className="mt-1 text-[9px] leading-relaxed text-neutral-500">
+                                        {modelConfig.description}
+                                      </p>
+                                    )}
+                                  </label>
+
+                                  <label className="block">
+                                    <span className={labelClass}>提示词</span>
+                                    <textarea
+                                      value={shot.description || ""}
+                                      onChange={(e) =>
+                                        updateSelectedNodeDataPath(
+                                          ["shot", "description"],
+                                          e.target.value,
+                                        )
+                                      }
+                                      placeholder="描述你想要生成的画面内容"
+                                      className="min-h-[92px] w-full resize-y rounded-md border border-white/[0.08] bg-black/30 px-2 py-1.5 text-[10px] leading-relaxed text-neutral-200 outline-none focus:border-purple-400/50"
+                                    />
+                                  </label>
+
+                                  <div className="grid grid-cols-2 gap-2">
+                                    <label className="block">
+                                      <span className={labelClass}>比例</span>
+                                      <select
+                                        value={shot.aspectRatio || "16:9"}
+                                        onChange={(e) =>
+                                          updateSelectedNodeDataPath(
+                                            ["shot", "aspectRatio"],
+                                            e.target.value,
+                                          )
+                                        }
+                                        className={selectClass}
+                                      >
+                                        {(modelConfig?.ratios?.length
+                                          ? modelConfig.ratios
+                                          : [
+                                              { label: "16:9", value: "16:9" },
+                                              { label: "9:16", value: "9:16" },
+                                              { label: "1:1", value: "1:1" },
+                                            ]
+                                        ).map((ratio) => (
+                                          <option key={ratio.value} value={ratio.value}>
+                                            {ratio.label}
+                                          </option>
+                                        ))}
+                                      </select>
+                                    </label>
+                                    <label className="block">
+                                      <span className={labelClass}>分辨率</span>
+                                      <select
+                                        value={shot.resolution || "2K"}
+                                        onChange={(e) =>
+                                          updateSelectedNodeDataPath(
+                                            ["shot", "resolution"],
+                                            e.target.value,
+                                          )
+                                        }
+                                        className={selectClass}
+                                      >
+                                        {(modelConfig?.resolutions?.length
+                                          ? modelConfig.resolutions
+                                          : [
+                                              { label: "1K", value: "1K" },
+                                              { label: "2K", value: "2K" },
+                                              { label: "4K", value: "4K" },
+                                            ]
+                                        ).map((resolution) => (
+                                          <option
+                                            key={resolution.value}
+                                            value={resolution.value}
+                                          >
+                                            {resolution.label}
+                                          </option>
+                                        ))}
+                                      </select>
+                                    </label>
+                                  </div>
+
+                                  <label className="block">
+                                    <span className={labelClass}>生成数量</span>
+                                    <select
+                                      value={shot.numberOfImages || 1}
+                                      onChange={(e) =>
+                                        updateSelectedNodeDataPath(
+                                          ["shot", "numberOfImages"],
+                                          Number(e.target.value),
+                                        )
+                                      }
+                                      className={selectClass}
+                                    >
+                                      {countOptions.map((count) => (
+                                        <option key={count} value={count}>
+                                          {count} 张
+                                        </option>
+                                      ))}
+                                    </select>
+                                  </label>
+
+                                  {modelConfig?.styles?.length ? (
+                                    <label className="block">
+                                      <span className={labelClass}>风格</span>
+                                      <select
+                                        value={shot.imageStyle || modelConfig.styles[0].value}
+                                        onChange={(e) =>
+                                          updateSelectedNodeDataPath(
+                                            ["shot", "imageStyle"],
+                                            e.target.value,
+                                          )
+                                        }
+                                        className={selectClass}
+                                      >
+                                        {modelConfig.styles.map((style) => (
+                                          <option key={style.value} value={style.value}>
+                                            {style.label}
+                                          </option>
+                                        ))}
+                                      </select>
+                                    </label>
+                                  ) : null}
+                                </div>
+                              </section>
+                            );
+                          }
+
+                          const currentVideoModel =
+                            (shot.klingModel as KlingModelId | undefined) ||
+                            "kling-video-o1";
+                          const videoConfig =
+                            KLING_MODELS[currentVideoModel] ||
+                            KLING_MODELS["kling-video-o1"];
+                          return (
+                            <section className="rounded-xl border border-blue-400/20 bg-blue-400/[0.04] p-3">
+                              <div className="mb-3 flex items-center justify-between">
+                                <div className="flex items-center gap-2 text-[11px] font-bold text-neutral-100">
+                                  <Video className="h-3.5 w-3.5 text-blue-300" />
+                                  视频生成参数
+                                </div>
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  onClick={() => handleGenerateVideo(shot.id)}
+                                  disabled={shot.status === "generating_video"}
+                                  className="h-7 rounded-md bg-blue-500 px-2 text-[10px] font-black text-white hover:bg-blue-400"
+                                >
+                                  {shot.status === "generating_video"
+                                    ? `生成中 ${shot.progress || 0}%`
+                                    : "生成视频"}
+                                </Button>
+                              </div>
+
+                              <div className="space-y-3">
+                                <label className="block">
+                                  <span className={labelClass}>模型</span>
+                                  <select
+                                    value={currentVideoModel}
+                                    onChange={(e) =>
+                                      updateSelectedNodeDataPath(
+                                        ["shot", "klingModel"],
+                                        e.target.value,
+                                      )
+                                    }
+                                    className={selectClass}
+                                  >
+                                    {Object.entries(KLING_MODELS).map(([key, model]) => (
+                                      <option key={key} value={key}>
+                                        {model.name}
+                                      </option>
+                                    ))}
+                                  </select>
+                                </label>
+
+                                <label className="block">
+                                  <span className={labelClass}>提示词</span>
+                                  <textarea
+                                    value={shot.description || shot.videoPrompt || ""}
+                                    onChange={(e) =>
+                                      updateSelectedNodeDataPath(
+                                        ["shot", "description"],
+                                        e.target.value,
+                                      )
+                                    }
+                                    placeholder="描述你想要生成的视频内容"
+                                    className="min-h-[92px] w-full resize-y rounded-md border border-white/[0.08] bg-black/30 px-2 py-1.5 text-[10px] leading-relaxed text-neutral-200 outline-none focus:border-blue-400/50"
+                                  />
+                                </label>
+
+                                <div className="grid grid-cols-2 gap-2">
+                                  <label className="block">
+                                    <span className={labelClass}>模式</span>
+                                    <select
+                                      value={shot.klingMode || videoConfig.modes[0] || "std"}
+                                      onChange={(e) =>
+                                        updateSelectedNodeDataPath(
+                                          ["shot", "klingMode"],
+                                          e.target.value,
+                                        )
+                                      }
+                                      className={selectClass}
+                                    >
+                                      {videoConfig.modes.map((mode) => (
+                                        <option key={mode} value={mode}>
+                                          {mode === "std"
+                                            ? "标准"
+                                            : mode === "pro"
+                                              ? "专业"
+                                              : "默认"}
+                                        </option>
+                                      ))}
+                                    </select>
+                                  </label>
+                                  <label className="block">
+                                    <span className={labelClass}>输入方式</span>
+                                    <select
+                                      value={shot.videoInputMode || "t2v"}
+                                      onChange={(e) =>
+                                        updateSelectedNodeDataPath(
+                                          ["shot", "videoInputMode"],
+                                          e.target.value,
+                                        )
+                                      }
+                                      className={selectClass}
+                                    >
+                                      <option value="t2v">文生视频</option>
+                                      <option value="i2v">全能参考</option>
+                                      <option value="firstLastFrame">首尾帧</option>
+                                      <option value="subjectControl">主体控制</option>
+                                      <option value="videoEdit">视频编辑</option>
+                                    </select>
+                                  </label>
+                                </div>
+
+                                <div className="grid grid-cols-3 gap-2">
+                                  <label className="block">
+                                    <span className={labelClass}>比例</span>
+                                    <select
+                                      value={shot.aspectRatio || "16:9"}
+                                      onChange={(e) =>
+                                        updateSelectedNodeDataPath(
+                                          ["shot", "aspectRatio"],
+                                          e.target.value,
+                                        )
+                                      }
+                                      className={selectClass}
+                                    >
+                                      {videoConfig.aspectRatios.map((ratio) => (
+                                        <option key={ratio} value={ratio}>
+                                          {ratio}
+                                        </option>
+                                      ))}
+                                    </select>
+                                  </label>
+                                  <label className="block">
+                                    <span className={labelClass}>时长</span>
+                                    <select
+                                      value={shot.klingDuration || videoConfig.durations[0] || "5s"}
+                                      onChange={(e) =>
+                                        updateSelectedNodeDataPath(
+                                          ["shot", "klingDuration"],
+                                          e.target.value,
+                                        )
+                                      }
+                                      className={selectClass}
+                                    >
+                                      {videoConfig.durations.map((duration) => (
+                                        <option key={duration} value={duration}>
+                                          {duration}
+                                        </option>
+                                      ))}
+                                    </select>
+                                  </label>
+                                  <label className="block">
+                                    <span className={labelClass}>清晰度</span>
+                                    <select
+                                      value={shot.resolution || videoConfig.resolutions[0] || "1080p"}
+                                      onChange={(e) =>
+                                        updateSelectedNodeDataPath(
+                                          ["shot", "resolution"],
+                                          e.target.value,
+                                        )
+                                      }
+                                      className={selectClass}
+                                    >
+                                      {videoConfig.resolutions.map((resolution) => (
+                                        <option key={resolution} value={resolution}>
+                                          {resolution}
+                                        </option>
+                                      ))}
+                                    </select>
+                                  </label>
+                                </div>
+
+                                <label className="block">
+                                  <span className={labelClass}>负面提示词</span>
+                                  <input
+                                    type="text"
+                                    value={shot.negativePrompt || ""}
+                                    onChange={(e) =>
+                                      updateSelectedNodeDataPath(
+                                        ["shot", "negativePrompt"],
+                                        e.target.value,
+                                      )
+                                    }
+                                    className={inputClass}
+                                  />
+                                </label>
+                              </div>
+                            </section>
+                          );
+                        })()}
+
+                      {selectedNodePropertyGroups.length === 0 ? (
+                        <section className="rounded-xl border border-white/10 bg-black/20 p-3 text-[10px] leading-relaxed text-neutral-500">
+                          这个节点没有可编辑参数，或它的内容是输出结果/资源链接，已从属性栏中过滤。
+                        </section>
+                      ) : (
+                        selectedNodePropertyGroups.map((group) => (
+                          <section
+                            key={group.title}
+                            className="rounded-xl border border-white/10 bg-black/20 p-3"
+                          >
+                            <div className="mb-2 flex items-center gap-2 text-[11px] font-bold text-neutral-200">
+                              <Settings2 className="h-3.5 w-3.5 text-purple-300" />
+                              {group.title}
+                            </div>
+                            <div className="space-y-2">
+                              {group.items.map((item) => (
+                                <label key={item.key} className="block">
+                                  <span className="mb-1 block text-[9px] font-bold uppercase tracking-wide text-neutral-500">
+                                    {item.label}
+                                  </span>
+                                  {item.type === "boolean" ? (
+                                    <button
+                                      type="button"
+                                      onClick={() =>
+                                        updateSelectedNodeDataPath(item.path, !item.value)
+                                      }
+                                      className={`h-8 w-full rounded-md border px-2 text-left text-[10px] font-bold transition-colors ${
+                                        item.value
+                                          ? "border-emerald-400/25 bg-emerald-400/15 text-emerald-100"
+                                          : "border-white/[0.08] bg-black/25 text-neutral-400"
+                                      }`}
+                                    >
+                                      {item.value ? "开启" : "关闭"}
+                                    </button>
+                                  ) : item.type === "number" ? (
+                                    <input
+                                      type="number"
+                                      value={
+                                        Number.isFinite(item.value as number)
+                                          ? (item.value as number)
+                                          : 0
+                                      }
+                                      onChange={(e) =>
+                                        updateSelectedNodeDataPath(
+                                          item.path,
+                                          Number(e.target.value),
+                                        )
+                                      }
+                                      className="h-8 w-full rounded-md border border-white/[0.08] bg-black/30 px-2 font-mono text-[10px] text-neutral-200 outline-none focus:border-purple-400/50"
+                                    />
+                                  ) : (
+                                    <input
+                                      type="text"
+                                      value={formatPropertyValue(item.value)}
+                                      onChange={(e) =>
+                                        updateSelectedNodeDataPath(
+                                          item.path,
+                                          parsePropertyValue(e.target.value),
+                                        )
+                                      }
+                                      className="h-8 w-full rounded-md border border-white/[0.08] bg-black/30 px-2 text-[10px] text-neutral-200 outline-none focus:border-purple-400/50"
+                                    />
+                                  )}
+                                </label>
+                              ))}
+                            </div>
+                          </section>
+                        ))
+                      )}
+                    </div>
+                  )}
+                    </>
+                  )}
+                  </div>
+                </div>
+              </aside>
             </div>
           </div>
         </>
@@ -8352,16 +9442,6 @@ export default function App() {
             </div>
           </div>
         </div>
-      )}
-
-      {showHistory && (
-        <HistoryPanel
-          history={Array.isArray(history) ? history : []}
-          onClose={() => setShowHistory(false)}
-          onClear={handleClearHistory}
-          onSync={handleSyncFromCanvas}
-          onAddToCanvas={handleAddHistoryToCanvas}
-        />
       )}
 
       {showSettings && (
@@ -8467,103 +9547,24 @@ export default function App() {
         </div>
       )}
 
-      {radialMenu && (
+      {sceneRenameMenu && (
         <div
-          className="fixed z-[10000] pointer-events-auto flex items-center justify-center"
-          style={{
-            left: radialMenu.x,
-            top: radialMenu.y,
-            transform: "translate(-50%, -50%)",
-          }}
+          className="fixed z-[300] min-w-[108px] rounded-[6px] border border-[#34363a] bg-[#252629]/98 p-1 shadow-2xl backdrop-blur-sm"
+          style={{ left: sceneRenameMenu.x, top: sceneRenameMenu.y }}
+          onMouseDown={(event) => event.stopPropagation()}
+          onContextMenu={(event) => event.preventDefault()}
         >
-          <div
-            className={`relative w-56 h-56 rounded-full bg-white/60 shadow-2xl border border-black/20 animate-in fade-in zoom-in-75 duration-200 ${isRadialRotating ? "animate-spin" : ""}`}
-            style={{ animationDuration: isRadialRotating ? "0.5s" : undefined }}
+          <button
+            type="button"
+            className="flex h-7 w-full items-center rounded-[4px] px-2 text-left text-[11px] font-medium text-neutral-200 hover:bg-[#34363a]"
+            onClick={() => {
+              setRenamingNodeId(sceneRenameMenu.nodeId);
+              setRenamingNodeLabel(sceneRenameMenu.label);
+              setSceneRenameMenu(null);
+            }}
           >
-            {[
-              {
-                icon: ImageIcon,
-                label: "生图",
-                type: "imageShotNode",
-                color:
-                  "bg-neutral-100 text-neutral-800 border border-black/20 hover:bg-neutral-200 hover:text-neutral-900",
-                angle: -120,
-              },
-              {
-                icon: Video,
-                label: "生影",
-                type: "videoShotNode",
-                color:
-                  "bg-neutral-100 text-neutral-800 border border-black/20 hover:bg-neutral-200 hover:text-neutral-900",
-                angle: -80,
-              },
-              {
-                icon: FileText,
-                label: "脚本",
-                type: "scriptNode",
-                color:
-                  "bg-neutral-100 text-neutral-800 border border-black/20 hover:bg-neutral-200 hover:text-neutral-900",
-                angle: -40,
-              },
-              {
-                icon: TypeIcon,
-                label: "文本",
-                type: "textNode",
-                color:
-                  "bg-neutral-100 text-neutral-800 border border-black/20 hover:bg-neutral-200 hover:text-neutral-900",
-                angle: 0,
-              },
-            ].map((item, i) => {
-              const rad = (item.angle * Math.PI) / 180;
-              const radius = 90;
-              const x = Math.cos(rad) * radius;
-              const y = Math.sin(rad) * radius;
-
-              return (
-                <button
-                  key={item.type + i}
-                  className={`absolute w-14 h-14 -ml-7 -mt-7 rounded-full ${item.color} shadow-lg flex flex-col items-center justify-center transition-all hover:scale-110 active:scale-95 pointer-events-auto`}
-                  style={{
-                    left: `calc(50% + ${x}px)`,
-                    top: `calc(50% + ${y}px)`,
-                  }}
-                  onClick={() => {
-                    if (item.type === "imageShotNode")
-                      handleAddImageNode({
-                        x: radialMenu.flowX,
-                        y: radialMenu.flowY,
-                      });
-                    else if (item.type === "videoShotNode")
-                      handleAddVideoNode({
-                        x: radialMenu.flowX,
-                        y: radialMenu.flowY,
-                      });
-                    else if (item.type === "textNode")
-                      handleAddTextNode({
-                        x: radialMenu.flowX,
-                        y: radialMenu.flowY,
-                      });
-                    else if (item.type === "scriptNode")
-                      handleAddScriptNode({
-                        x: radialMenu.flowX,
-                        y: radialMenu.flowY,
-                      });
-                    else if (item.type === "groupNode")
-                      handleAddGroupNode({
-                        x: radialMenu.flowX,
-                        y: radialMenu.flowY,
-                      });
-                    setRadialMenu(null);
-                  }}
-                >
-                  <item.icon className="w-5 h-5" />
-                  <span className="text-[8px] font-bold mt-0.5">
-                    {item.label}
-                  </span>
-                </button>
-              );
-            })}
-          </div>
+            重命名
+          </button>
         </div>
       )}
 
@@ -8825,6 +9826,50 @@ export default function App() {
         />
       )}
 
+      {canvasOnly && !user && (
+        <div className="fixed inset-0 z-[90000] flex items-center justify-center bg-black/45 p-4 backdrop-blur-[1px]">
+          <DesktopLoginGate
+            waiting={desktopAuthPending || !!token}
+            onOpenLogin={async () => {
+              setDesktopAuthPending(true);
+              await startDesktopBrowserLogin();
+            }}
+          />
+        </div>
+      )}
+
+      {canvasOnly && user && desktopScreen === "home" && (
+        <div className="fixed inset-0 z-[90000] flex items-center justify-center bg-black/35 p-4 backdrop-blur-[1px]">
+          <DesktopHomeScreen
+            user={user}
+            onStart={() => {
+              setDesktopScreen("canvas");
+              setView("canvas");
+            }}
+            onLogout={() => {
+              setToken(null);
+              setUser(null);
+              setNodes([]);
+              setEdges([]);
+              setCurrentProjectId(null);
+              setDesktopScreen("home");
+              localStorage.removeItem("ais-user");
+              localStorage.removeItem("ais-token");
+              toast.info("已退出登录");
+            }}
+          />
+        </div>
+      )}
+
+      {canvasOnly && user && (
+        <NewProjectSaveDialog
+          userId={String(user.id)}
+          open={showNewProjectSaveDialog}
+          onClose={() => setShowNewProjectSaveDialog(false)}
+          onCreated={handleConfirmNewProjectSave}
+        />
+      )}
+
       {showAuthModal && !canvasOnly && (
         <AuthModal
           onClose={() => setShowAuthModal(false)}
@@ -8834,7 +9879,7 @@ export default function App() {
         />
       )}
 
-      {showProjectList && (
+      {!canvasOnly && showProjectList && (
         <ProjectListModal
           projects={cloudProjects}
           onClose={popView}

@@ -197,7 +197,16 @@ export function redirectDesktopAuthCallback(token: string, user: unknown): void 
   const payload = btoa(
     encodeURIComponent(JSON.stringify({ token, user })),
   );
-  window.location.href = `jepow://auth?payload=${payload}`;
+  const callbackUrl = `jepow://auth?payload=${payload}`;
+  const iframe = document.createElement('iframe');
+  iframe.style.display = 'none';
+  iframe.src = callbackUrl;
+  document.body.appendChild(iframe);
+
+  window.setTimeout(() => {
+    iframe.remove();
+    window.location.replace(`${getJepowWebOrigin()}/`);
+  }, 900);
 }
 
 export function getJepowWebOrigin(): string {

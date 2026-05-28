@@ -145,9 +145,9 @@ export function ImageTo3DNode({ id, data, selected }: ImageTo3DNodeProps) {
               referrerPolicy="no-referrer"
             />
             {data.glbUrl && (
-              <div className="absolute bottom-2.5 left-2.5 z-10 px-2.5 py-1 bg-purple-950/95 border border-purple-800 rounded-md text-[9px] font-mono font-black text-purple-300 tracking-wider shadow-lg flex items-center gap-1">
+              <div className="absolute bottom-2.5 left-2.5 z-10 px-2 py-1 bg-purple-950/95 border border-purple-800 rounded-md text-[9px] font-mono font-black text-purple-300 shadow-lg flex items-center gap-1">
                 <Box className="w-3 h-3 text-purple-400 animate-spin" />
-                <span>3D MESH READY ({data.modelName?.toUpperCase()}.GLB)</span>
+                <span>{data.modelName || "已生成"}</span>
               </div>
             )}
           </div>
