@@ -66,7 +66,7 @@ export function CyclesCameraNode({ id, data, selected }: CyclesCameraNodeProps) 
           </button>
         </div>
         <p className="text-[8px] text-neutral-500 leading-tight">
-          对齐 Cycles Camera sockets: FOV / Aperture Size / Focal Distance / Clip。视窗角度由 3D 视口统一控制。
+          光学参数（FOV / 光圈 / 焦距 / 裁剪）。轨道角度请在 3D 编辑器 Cycles 视窗拖拽控制，与 CL 相机共用。
         </p>
         <div className="grid grid-cols-2 gap-2 text-[9px]">
           <label className="flex flex-col gap-1 bg-neutral-900/60 rounded p-2">

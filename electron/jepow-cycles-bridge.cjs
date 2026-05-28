@@ -1266,6 +1266,9 @@ async function updateSession(sessionId, patch = {}) {
     session.forceFrameRead = true;
     session.updatedAt = Date.now();
     scheduleNavigationSettle(session.id);
+    if (patch.camera || patch.cameraVersion != null) {
+      void captureResidentFrameAfterCamera(session).catch(() => {});
+    }
   }
   return {
     ...res,
@@ -1273,6 +1276,25 @@ async function updateSession(sessionId, patch = {}) {
     status: session.status,
     cameraVersion: Number(session.opts.cameraVersion) || 0,
   };
+}
+
+async function captureResidentFrameAfterCamera(session) {
+  if (!session.loaded || session.stopped) return null;
+  await new Promise((resolve) =>
+    setTimeout(resolve, session.device === 'METAL' ? 240 : 420),
+  );
+  if (session.stopped) return null;
+  const framePath = path.join(
+    getCyclesCacheDir(),
+    `cycles-capture-${session.id}-${Date.now()}.png`,
+  );
+  const frame = await readResidentFrameViaDaemon(session, framePath);
+  if (!frame.ok || session.stopped) return frame;
+  session.frameVersion += 1;
+  session.frame = buildFramePayload(session, frame, 'converging', 'preview');
+  session.status = 'converging';
+  session.updatedAt = Date.now();
+  return frame;
 }
 
 async function stopSession(sessionId) {
