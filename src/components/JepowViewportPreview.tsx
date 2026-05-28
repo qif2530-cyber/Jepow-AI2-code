@@ -180,8 +180,6 @@ export function JepowViewportPreview({
   const [camera, setCamera] = useState<ViewportCamera>({ ...initialCam });
   const cameraRef = useRef(camera);
   const viewCameraRef = useRef<ViewportCamera | undefined>(viewCamera);
-  const parentCameraRaf = useRef(0);
-  const pendingParentCamera = useRef<ViewportCamera | null>(null);
   const transformRef = useRef(transform);
   const lightingRef = useRef(lighting);
   const materialRef = useRef(material);
@@ -190,14 +188,7 @@ export function JepowViewportPreview({
     (next: ViewportCamera) => {
       cameraRef.current = next;
       setCamera(next);
-      if (!onCameraChange) return;
-      pendingParentCamera.current = next;
-      if (parentCameraRaf.current) return;
-      parentCameraRaf.current = requestAnimationFrame(() => {
-        parentCameraRaf.current = 0;
-        const pending = pendingParentCamera.current;
-        if (pending) onCameraChange(pending);
-      });
+      onCameraChange?.(next);
     },
     [onCameraChange],
   );
@@ -216,13 +207,6 @@ export function JepowViewportPreview({
     cameraRef.current = { ...viewCamera };
     setCamera({ ...viewCamera });
   }, [viewCamera]);
-
-  useEffect(
-    () => () => {
-      if (parentCameraRaf.current) cancelAnimationFrame(parentCameraRaf.current);
-    },
-    [],
-  );
 
   transformRef.current = transform;
   lightingRef.current = lighting;
@@ -619,7 +603,7 @@ export function JepowViewportPreview({
         orbitOnly || !(e.button === 2 || e.shiftKey) ? "orbit" : "pan",
       x: e.clientX,
       y: e.clientY,
-      cam: { ...camera },
+      cam: { ...cameraRef.current },
     };
   };
 
