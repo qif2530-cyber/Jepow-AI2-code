@@ -599,6 +599,9 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
   const cyclesRenderSeqRef = useRef(0);
   const activeCyclesSessionRef = useRef<string | null>(null);
   const lastCyclesSessionPatchKeyRef = useRef("");
+  const lastCameraChangeAtRef = useRef(0);
+  const cyclesCameraPatchTimerRef = useRef<number | null>(null);
+  const cyclesCameraSettleTimerRef = useRef<number | null>(null);
   const viewportContainerRef = useRef<HTMLDivElement | null>(null);
   const [viewportPixelSize, setViewportPixelSize] = useState({ width: 640, height: 360 });
 
@@ -690,6 +693,56 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
     return () => window.clearTimeout(timer);
   }, [effectiveCyclesCamera, viewportMode]);
 
+  const cyclesWantsInteractivePatch = () =>
+    viewportInteractingRef.current ||
+    Date.now() - lastCameraChangeAtRef.current < 2800;
+
+  const flushCyclesCameraPatch = async (quality: "interactive" | "final") => {
+    const sessionId = activeCyclesSessionRef.current;
+    if (!sessionId || viewportMode !== "render" || !renderActive) return;
+    const stableRenderSettings = JSON.parse(renderSettingsKey);
+    const target = getCyclesViewportTarget(
+      Number(stableRenderSettings.width) || 2048,
+      Number(stableRenderSettings.height) || 1536,
+      Math.max(16, Number(stableRenderSettings.samples) || 32),
+      stableRenderSettings.device,
+      quality,
+      viewportPixelSize,
+    );
+    const cam = cyclesRenderCameraRef.current;
+    const patchKey = JSON.stringify({
+      camera: cam,
+      width: target.width,
+      height: target.height,
+      samples: target.samples,
+      cameraVersion: cameraVersionRef.current,
+      quality,
+    });
+    if (lastCyclesSessionPatchKeyRef.current === patchKey) return;
+    lastCyclesSessionPatchKeyRef.current = patchKey;
+    await getViewportEngine().updateCyclesSession?.(sessionId, {
+      camera: cam,
+      width: target.width,
+      height: target.height,
+      samples: target.samples,
+      renderSettings: stableRenderSettings,
+      cameraVersion: cameraVersionRef.current,
+    } as any);
+  };
+
+  const scheduleCyclesCameraPatch = (
+    quality: "interactive" | "final",
+    delayMs = 28,
+  ) => {
+    if (cyclesCameraPatchTimerRef.current != null) {
+      window.clearTimeout(cyclesCameraPatchTimerRef.current);
+    }
+    cyclesCameraPatchTimerRef.current = window.setTimeout(() => {
+      cyclesCameraPatchTimerRef.current = null;
+      void flushCyclesCameraPatch(quality);
+    }, delayMs);
+  };
+
   const handleViewportCameraChange = (next: ViewportCamera) => {
     const current = viewportCameraRef.current;
     const changed =
@@ -716,6 +769,19 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
     if (changed) {
       cameraVersionRef.current = nextCameraVersion;
       setCameraVersion(nextCameraVersion);
+      lastCameraChangeAtRef.current = Date.now();
+      if (viewportMode === "render" && activeCyclesSessionRef.current) {
+        scheduleCyclesCameraPatch("interactive", 24);
+        if (cyclesCameraSettleTimerRef.current != null) {
+          window.clearTimeout(cyclesCameraSettleTimerRef.current);
+        }
+        cyclesCameraSettleTimerRef.current = window.setTimeout(() => {
+          cyclesCameraSettleTimerRef.current = null;
+          if (!cyclesWantsInteractivePatch()) {
+            scheduleCyclesCameraPatch("final", 0);
+          }
+        }, 850);
+      }
     }
     if (viewportMode === "render") {
       setCyclesFrame((prev) =>
@@ -759,6 +825,12 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
     () => () => {
       if (viewportInteractionTimerRef.current != null) {
         window.clearTimeout(viewportInteractionTimerRef.current);
+      }
+      if (cyclesCameraPatchTimerRef.current != null) {
+        window.clearTimeout(cyclesCameraPatchTimerRef.current);
+      }
+      if (cyclesCameraSettleTimerRef.current != null) {
+        window.clearTimeout(cyclesCameraSettleTimerRef.current);
       }
     },
     [],
@@ -862,7 +934,8 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
       if (
         finalFrame &&
         frameCameraVersion !== cameraVersionRef.current &&
-        !viewportInteractingRef.current
+        !viewportInteractingRef.current &&
+        Date.now() - lastCameraChangeAtRef.current > 2800
       ) {
         return false;
       }
@@ -976,6 +1049,7 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
             cameraVersion: sessionCameraVersion,
           });
           let lastFrameVersion = -1;
+          let lastDaemonFrameVersion = -1;
           const poll = async () => {
             if (cancelled || cyclesRenderSeqRef.current !== seq || !activeCyclesSessionRef.current) return;
             const state = await engine.readCyclesSession!(activeCyclesSessionRef.current);
@@ -990,8 +1064,15 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
                 detail: debugMessage ? `${debugStage}: ${debugMessage}` : `Cycles ${debugStage}`,
               }));
             }
-            if (frame && Number(frame.frameVersion ?? 0) !== lastFrameVersion) {
-              lastFrameVersion = Number(frame.frameVersion ?? 0);
+            const frameVersion = Number(frame?.frameVersion ?? 0);
+            const daemonFrameVersion = Number(frame?.daemonFrameVersion ?? 0);
+            const frameChanged =
+              frame &&
+              (frameVersion !== lastFrameVersion ||
+                daemonFrameVersion !== lastDaemonFrameVersion);
+            if (frameChanged) {
+              lastFrameVersion = frameVersion;
+              lastDaemonFrameVersion = daemonFrameVersion;
               applyCyclesResult(
                 frame,
                 frame.status === "done" || frame.stage === "final",
@@ -1068,48 +1149,19 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
 
   useEffect(() => {
     if (viewportMode !== "render" || !renderActive || !activeCyclesSessionRef.current) return;
-    const stableRenderSettings = JSON.parse(renderSettingsKey);
-    const hasCyclesFrame = !!cyclesFrame.previewDataUrl && cyclesFrame.status !== "error";
-    const target = getCyclesViewportTarget(
-      Number(stableRenderSettings.width) || 2048,
-      Number(stableRenderSettings.height) || 1536,
-      Math.max(16, Number(stableRenderSettings.samples) || 32),
-      stableRenderSettings.device,
-      !viewportInteracting && hasCyclesFrame ? "final" : "interactive",
-      viewportPixelSize,
-    );
-    const patchKey = JSON.stringify({
-      camera: cyclesRenderCamera,
-      width: target.width,
-      height: target.height,
-      samples: target.samples,
-      cameraVersion: cameraVersionRef.current,
-    });
-    if (lastCyclesSessionPatchKeyRef.current === patchKey) return;
-    const timer = window.setTimeout(() => {
-      const sessionId = activeCyclesSessionRef.current;
-      if (!sessionId) return;
-      if (lastCyclesSessionPatchKeyRef.current === patchKey) return;
-      lastCyclesSessionPatchKeyRef.current = patchKey;
-      cyclesRenderCameraRef.current = cyclesRenderCamera;
-      void getViewportEngine().updateCyclesSession?.(sessionId, {
-        camera: cyclesRenderCamera,
-        width: target.width,
-        height: target.height,
-        samples: target.samples,
-        renderSettings: stableRenderSettings,
-        cameraVersion: cameraVersionRef.current,
-      } as any);
-    }, !viewportInteracting && hasCyclesFrame ? 1200 : 40);
-    return () => window.clearTimeout(timer);
+    const quality = cyclesWantsInteractivePatch() ? "interactive" : "final";
+    scheduleCyclesCameraPatch(quality, quality === "interactive" ? 40 : 320);
+    return () => {
+      if (cyclesCameraPatchTimerRef.current != null) {
+        window.clearTimeout(cyclesCameraPatchTimerRef.current);
+      }
+    };
   }, [
     viewportMode,
     renderActive,
-    cyclesRenderCamera,
     renderSettingsKey,
     viewportInteracting,
-    cyclesFrame.previewDataUrl,
-    cyclesFrame.status,
+    cameraVersion,
     viewportPixelSize,
   ]);
 

@@ -1081,10 +1081,12 @@ async function runProgressiveSession(session) {
     session.updatedAt = Date.now();
     const noNewDaemonFrame = status.ok && currentDaemonFrameVersion === lastDaemonFrameVersion;
     const waitingForFirstDaemonFrame = status.ok && currentDaemonFrameVersion === 0 && !session.frame;
-    if (noNewDaemonFrame || waitingForFirstDaemonFrame) {
+    const forceFrameRead = !!session.forceFrameRead;
+    if ((noNewDaemonFrame && !forceFrameRead) || waitingForFirstDaemonFrame) {
       const now = Date.now();
       const shouldProbeFrame =
-        waitingForFirstDaemonFrame && now - lastFrameReadAttemptAt > 1400;
+        (waitingForFirstDaemonFrame && now - lastFrameReadAttemptAt > 1400) ||
+        (forceFrameRead && now - lastFrameReadAttemptAt > 120);
       if (currentDaemonFrameVersion === 0 && Date.now() - started > 45000 && !session.frame) {
         session.status = 'error';
         session.frameVersion += 1;
@@ -1097,10 +1099,16 @@ async function runProgressiveSession(session) {
       }
       lastFrameReadAttemptAt = now;
     }
+    if (forceFrameRead) {
+      session.forceFrameRead = false;
+    }
     const framePath = path.join(cacheDir, `cycles-resident-${id}-${Date.now()}.png`);
     const frame = await readResidentFrameViaDaemon(session, framePath);
     if (session.stopped) return;
-    if (frame.ok && frame.frameVersion !== lastDaemonFrameVersion) {
+    if (
+      frame.ok &&
+      (frame.frameVersion !== lastDaemonFrameVersion || forceFrameRead)
+    ) {
       const lumMax = Number(frame.luminanceMax ?? 0);
       const veryDarkFirstFrame =
         !session.frame &&
@@ -1255,6 +1263,7 @@ async function updateSession(sessionId, patch = {}) {
   const res = await updateResidentCamera(session.id, session.opts, width, height, samples);
   if (res.ok) {
     session.status = 'navigating';
+    session.forceFrameRead = true;
     session.updatedAt = Date.now();
     scheduleNavigationSettle(session.id);
   }
