@@ -594,6 +594,7 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
     cameraVersion?: number;
   }>({ status: "idle" });
   const [viewportInteracting, setViewportInteracting] = useState(false);
+  const viewportInteractingRef = useRef(false);
   const viewportInteractionTimerRef = useRef<number | null>(null);
   const cyclesRenderSeqRef = useRef(0);
   const activeCyclesSessionRef = useRef<string | null>(null);
@@ -734,6 +735,7 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
       window.clearTimeout(viewportInteractionTimerRef.current);
       viewportInteractionTimerRef.current = null;
     }
+    viewportInteractingRef.current = interacting;
     setViewportInteracting(interacting);
     if (interacting && viewportMode === "render") {
       setCyclesFrame((prev) =>
@@ -747,8 +749,9 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
       );
       viewportInteractionTimerRef.current = window.setTimeout(() => {
         viewportInteractionTimerRef.current = null;
+        viewportInteractingRef.current = false;
         setViewportInteracting(false);
-      }, 900);
+      }, 1100);
     }
   };
 
@@ -856,7 +859,13 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
       frameCameraVersion = cameraVersionRef.current,
     ) => {
       if (cancelled || cyclesRenderSeqRef.current !== seq) return false;
-      if (frameCameraVersion !== cameraVersionRef.current) return false;
+      if (
+        finalFrame &&
+        frameCameraVersion !== cameraVersionRef.current &&
+        !viewportInteractingRef.current
+      ) {
+        return false;
+      }
       const previewDataUrl = res.previewDataUrl as string | undefined;
       const triCount = Number((res as { triangleCount?: number }).triangleCount ?? 0);
       if (res.ok && previewDataUrl) {
@@ -1225,7 +1234,13 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
       </Handle>
  
       {/* Main Workspace (Full viewport width & height covering with perfect 1px inset to avoid border overlap & clipping bleed) */}
-      <div ref={viewportContainerRef} id={`canvas-container-${id}`} className="absolute inset-[1px] bg-neutral-950 rounded-[7px] overflow-hidden nodrag nowheel nopan z-0">
+      <div
+        ref={viewportContainerRef}
+        id={`canvas-container-${id}`}
+        className="absolute inset-[1px] bg-neutral-950 rounded-[7px] overflow-hidden nodrag nowheel nopan z-0"
+        onMouseDown={(e) => e.stopPropagation()}
+        onTouchStart={(e) => e.stopPropagation()}
+      >
         <style dangerouslySetInnerHTML={{ __html: `
           #canvas-container-${id} canvas {
             width: 100% !important;
@@ -1314,30 +1329,42 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
             </p>
           </div>
         ) : showLiveViewport ? (
-          <JepowViewportPreview
-            scenePath={resolvedScenePath}
-            fill
-            mode="orbit"
-            liveRender
-            lockRenderSize
-            highPerformanceMode={highPerfDynamic}
-            shading="clay"
-            transform={{
-              x: transform.x,
-              y: transform.y,
-              z: transform.z,
-              rx: transform.rx,
-              ry: transform.ry,
-              rz: transform.rz,
-              scale: transform.scale,
-            }}
-            lighting={nativeLighting}
-            material={null}
-            resetViewToken={viewportResetToken}
-            viewCamera={effectiveViewportCamera}
-            onCameraChange={handleViewportCameraChange}
-            onInteractingChange={handleViewportInteractingChange}
-          />
+          <div
+            className={`absolute inset-0 ${viewportMode === "render" ? "z-[11]" : "z-0"}`}
+            onMouseDown={(e) => e.stopPropagation()}
+            onTouchStart={(e) => e.stopPropagation()}
+          >
+            <JepowViewportPreview
+              scenePath={resolvedScenePath}
+              fill
+              mode="orbit"
+              liveRender
+              lockRenderSize
+              highPerformanceMode={highPerfDynamic}
+              shading="clay"
+              ghostOverlay={
+                viewportMode === "render" &&
+                !!cyclesFrame.previewDataUrl &&
+                cyclesFrame.status !== "error" &&
+                !viewportInteracting
+              }
+              transform={{
+                x: transform.x,
+                y: transform.y,
+                z: transform.z,
+                rx: transform.rx,
+                ry: transform.ry,
+                rz: transform.rz,
+                scale: transform.scale,
+              }}
+              lighting={nativeLighting}
+              material={null}
+              resetViewToken={viewportResetToken}
+              viewCamera={effectiveViewportCamera}
+              onCameraChange={handleViewportCameraChange}
+              onInteractingChange={handleViewportInteractingChange}
+            />
+          </div>
         ) : showPausedOverlay ? (
           <>
             <JepowViewportPreview
@@ -1444,12 +1471,14 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
           )
         )}
 
-        {viewportMode === "render" && cyclesFrame.previewDataUrl && (
+        {viewportMode === "render" &&
+          cyclesFrame.previewDataUrl &&
+          !viewportInteracting && (
           <div className="absolute inset-0 z-[8] bg-neutral-950 pointer-events-none">
             <img
               src={cyclesFrame.previewDataUrl}
               alt="Cycles Render"
-              className={`w-full h-full object-cover ${viewportInteracting ? "opacity-45" : "opacity-100"}`}
+              className="w-full h-full object-cover opacity-100"
               onError={() =>
                 setCyclesFrame({
                   status: "error",

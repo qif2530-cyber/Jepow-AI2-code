@@ -43,6 +43,10 @@ interface JepowViewportPreviewProps {
   /** Orbit 相机变化时同步给父组件，供 Cycles 使用同一视角。 */
   onCameraChange?: (camera: ViewportCamera) => void;
   onInteractingChange?: (interacting: boolean) => void;
+  /**
+   * Cycles 模式下叠在路径追踪图之上：容器可交互，白膜图透明，便于旋转/平移/缩放时看到实时反馈。
+   */
+  ghostOverlay?: boolean;
   onSceneInfo?: (info: {
     meshCount?: number;
     nodeCount?: number;
@@ -143,6 +147,7 @@ export function JepowViewportPreview({
   onCameraChange,
   onInteractingChange,
   onSceneInfo,
+  ghostOverlay = false,
 }: JepowViewportPreviewProps) {
   const initialCameraRef = useRef<ViewportCamera>({
     ...(viewCamera ?? defaultCamera ?? DEFAULT_CAM),
@@ -708,8 +713,14 @@ export function JepowViewportPreview({
   return (
     <div
       ref={containerRef}
-      className={`${shellClass} nodrag nopan nowheel bg-neutral-950 border ${
-        fill ? "border-0" : mode === "orbit" ? "border-purple-500/50" : "border-emerald-500/40"
+      className={`${shellClass} nodrag nopan nowheel ${
+        ghostOverlay ? "bg-transparent border-0" : "bg-neutral-950 border"
+      } ${
+        !ghostOverlay && !fill
+          ? mode === "orbit"
+            ? "border-purple-500/50"
+            : "border-emerald-500/40"
+          : ""
       } ${(liveRender || orbitOnly) && mode === "orbit" ? "cursor-grab active:cursor-grabbing" : ""}`}
       style={shellStyle}
       onPointerDown={onPointerDown}
@@ -725,7 +736,9 @@ export function JepowViewportPreview({
         <img
           src={previewSrc}
           alt="Jepow native viewport"
-          className="w-full h-full bg-[#1a1b1e] pointer-events-none select-none object-contain"
+          className={`w-full h-full pointer-events-none select-none object-contain transition-opacity duration-150 ${
+            ghostOverlay ? "opacity-0 bg-transparent" : "opacity-100 bg-[#1a1b1e]"
+          }`}
           style={{ imageRendering: "auto" }}
           draggable={false}
         />
@@ -740,7 +753,11 @@ export function JepowViewportPreview({
         </div>
       )}
 
-      <div className="absolute top-2 left-2 flex flex-col gap-1 pointer-events-none max-w-[85%]">
+      <div
+        className={`absolute top-2 left-2 flex flex-col gap-1 pointer-events-none max-w-[85%] ${
+          ghostOverlay ? "opacity-0" : ""
+        }`}
+      >
         <span
           className={`text-[8px] font-bold uppercase px-1.5 py-0.5 rounded border ${
             mode === "turntable"
