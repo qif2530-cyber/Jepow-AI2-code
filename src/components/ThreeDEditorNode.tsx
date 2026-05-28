@@ -35,6 +35,8 @@ interface ThreeDEditorNodeProps {
     sceneData?: any;
     status?: string;
     renderActive?: boolean;
+    blendSourcePath?: string;
+    blendFidelityRender?: boolean;
   };
   selected?: boolean;
 }
@@ -472,6 +474,14 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
   );
 
   const glbToRender = activeGlb || "";
+  const blendSourcePath =
+    editorPipeline.model?.blendSourcePath ||
+    (data.blendSourcePath as string | undefined) ||
+    "";
+  const useBlenderFidelityRender =
+    !!blendSourcePath &&
+    (data.blendFidelityRender === true || !!editorPipeline.model?.blendSourcePath) &&
+    !!window.jepowDesktop?.viewport?.renderBlenderCycles;
   const {
     scenePath: resolvedScenePath,
     resolving: scenePathResolving,
@@ -876,8 +886,38 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
         ...prev,
         status: "rendering",
         error: undefined,
-        detail: "启动 Cycles session...",
+        detail: useBlenderFidelityRender
+          ? "Blender Cycles 高保真渲染中..."
+          : "启动 Cycles session...",
       }));
+
+      if (useBlenderFidelityRender) {
+        try {
+          const stableRenderSettings = JSON.parse(renderSettingsKey);
+          const finalWidth = Number(stableRenderSettings.width) || 2048;
+          const finalHeight = Number(stableRenderSettings.height) || 1536;
+          const finalSamples = Math.max(
+            16,
+            Number(stableRenderSettings.samples) || 128,
+          );
+          const res = await window.jepowDesktop!.viewport!.renderBlenderCycles!({
+            blendPath: blendSourcePath,
+            width: finalWidth,
+            height: finalHeight,
+            samples: finalSamples,
+            useGpu: stableRenderSettings.device !== "CPU",
+          });
+          applyCyclesResult(res, true, cameraVersionRef.current);
+        } catch (err: unknown) {
+          if (cancelled || cyclesRenderSeqRef.current !== seq) return;
+          setCyclesFrame({
+            status: "error",
+            error: err instanceof Error ? err.message : "Blender Cycles 渲染失败",
+          });
+        }
+        return;
+      }
+
       const engine = getViewportEngine();
       if (!engine.renderCyclesFrame && !engine.startCyclesSession) {
         setCyclesFrame({ status: "error", error: "Cycles 渲染入口不可用" });
@@ -1030,6 +1070,8 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
     glbToRender,
     nativeLightingKey,
     viewportPixelSize,
+    blendSourcePath,
+    useBlenderFidelityRender,
   ]);
 
   useEffect(() => {

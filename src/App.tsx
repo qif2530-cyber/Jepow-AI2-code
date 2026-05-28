@@ -89,7 +89,8 @@ import {
   isDesktopLoginOnWeb,
   startDesktopBrowserLogin,
 } from "./lib/runtime";
-import { ingestDroppedModelFile } from "./lib/local-assets";
+import { ingestBlendProjectFile, ingestDroppedModelFile } from "./lib/local-assets";
+import { mergeBlendImportGraph } from "./lib/blend-project-import";
 import { getLocalUserId } from "./lib/local-user-id";
 import {
   listLocalProjects,
@@ -3559,9 +3560,43 @@ export default function App() {
 
       files.forEach(async (file, index) => {
         const fileExt = file.name.substring(file.name.lastIndexOf(".")).toLowerCase();
+        const isBlend = fileExt === ".blend";
         const isModel = fileExt === ".glb" || fileExt === ".gltf" || fileExt === ".fbx" || fileExt === ".obj" || file.type.startsWith("model/");
-        if (!file.type.startsWith("image/") && !file.type.startsWith("video/") && !isModel)
+        if (!file.type.startsWith("image/") && !file.type.startsWith("video/") && !isModel && !isBlend)
           return;
+
+        if (isBlend && shouldUseLocalCanvasAssets()) {
+          const position = {
+            x: dropPosition.x + index * 20,
+            y: dropPosition.y + index * 20,
+          };
+          void (async () => {
+            try {
+              const ingested = await ingestBlendProjectFile(
+                getLocalUserId(),
+                file,
+                position,
+              );
+              if (!ingested.ok || !ingested.graph) {
+                toast.error(
+                  ingested.error ||
+                    "Blender 工程导入失败，请确认已安装 Blender",
+                );
+                return;
+              }
+              mergeBlendImportGraph(setNodes, setEdges, ingested.graph);
+              toast.success(
+                `已导入 Blender 工程并生成 Cycles 节点图`,
+              );
+            } catch (err: unknown) {
+              console.error("Blend project drop failed:", err);
+              toast.error(
+                err instanceof Error ? err.message : "Blender 工程导入失败",
+              );
+            }
+          })();
+          return;
+        }
 
         if (isModel) {
           const nodeId = `model-${Date.now()}-${index}`;
@@ -3750,7 +3785,7 @@ export default function App() {
         reader.readAsDataURL(file);
       });
     },
-    [reactFlowInstance, setNodes],
+    [reactFlowInstance, setNodes, setEdges],
   );
 
   const onNodeDragStop = useCallback(

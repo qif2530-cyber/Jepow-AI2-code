@@ -366,17 +366,20 @@ pub fn mesh_for_cycles(scene_path: &str) -> Result<serde_json::Value> {
 }
 
 pub fn write_mesh_cache_for_cycles(scene_path: &str, output_path: &str) -> Result<serde_json::Value> {
-    let ext = Path::new(scene_path)
+    // Use the same triangulated mesh path as the interactive viewport so scene-fit
+    // bounds and normalized coordinates match preview ↔ Cycles.
+    let mesh = mesh_loader::load_meshes(scene_path)?;
+    let source_topology = if Path::new(scene_path)
         .extension()
         .and_then(|e| e.to_str())
-        .unwrap_or("")
-        .to_lowercase();
-    let cache = if ext == "fbx" {
-        mesh_cache_from_fbx_faces(scene_path)?
+        .map(|e| e.eq_ignore_ascii_case("fbx"))
+        .unwrap_or(false)
+    {
+        "fbx-viewport-mesh"
     } else {
-        let mesh = mesh_loader::load_meshes(scene_path)?;
-        mesh_cache_from_triangle_mesh(mesh, "triangulated-source")?
+        "triangulated-source"
     };
+    let cache = mesh_cache_from_triangle_mesh(mesh, source_topology)?;
     write_mesh_cache(&cache, output_path)?;
     Ok(json!({
         "meshCachePath": output_path,

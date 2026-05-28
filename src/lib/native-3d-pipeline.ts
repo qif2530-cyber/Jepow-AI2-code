@@ -69,6 +69,7 @@ export interface Resolved3DModel {
   glbUrl: string;
   nativeScenePath?: string;
   modelName?: string;
+  blendSourcePath?: string;
   sourceNodeId: string;
   sourceType: string;
 }
@@ -529,6 +530,7 @@ export function resolveModelFromSourceNode(
       glbUrl,
       nativeScenePath,
       modelName: data.modelName as string | undefined,
+      blendSourcePath: data.blendSourcePath as string | undefined,
       sourceNodeId: sourceNode.id,
       sourceType: sourceNode.type,
     };

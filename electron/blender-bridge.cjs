@@ -292,6 +292,52 @@ async function exportGlb({ blendPath, outputPath }) {
   return runBlenderCommand('export_glb', { blendPath, outputPath: out });
 }
 
+async function importBlendProject({ blendPath, outputGlbPath }) {
+  return runBlenderCommand(
+    'import_blend_project',
+    { blendPath: normalizeScenePath(blendPath), outputGlbPath },
+    180000,
+  );
+}
+
+async function renderBlenderCycles(opts = {}) {
+  const {
+    blendPath,
+    width = 1920,
+    height = 1080,
+    samples = 128,
+    frame,
+    useGpu = true,
+  } = opts;
+  const resolved = normalizeScenePath(blendPath);
+  if (!resolved || path.extname(resolved).toLowerCase() !== '.blend') {
+    return { ok: false, error: 'blendPath (.blend) required for Blender Cycles render' };
+  }
+  const id = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  const outputPath = path.join(getViewportCacheDir(), `cycles-blend-${id}.png`);
+  const result = await runBlenderCommand(
+    'render_frame',
+    {
+      blendPath: resolved,
+      outputPath,
+      engine: 'cycles',
+      width,
+      height,
+      samples,
+      frame,
+      useGpu,
+    },
+    DEFAULT_TIMEOUT_MS,
+  );
+  if (!result.ok) return result;
+  return {
+    ...result,
+    previewUrl: `viewport-cache://${path.basename(outputPath)}`,
+    localPath: outputPath,
+    previewDataUrl: null,
+  };
+}
+
 function readCachedImageByName(fileName) {
   const safe = path.basename(fileName);
   const full = path.join(getViewportCacheDir(), safe);
@@ -314,5 +360,7 @@ module.exports = {
   sceneInfo,
   renderPreview,
   exportGlb,
+  importBlendProject,
+  renderBlenderCycles,
   readCachedImageByName,
 };

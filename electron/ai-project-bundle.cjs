@@ -22,7 +22,7 @@ const ASSET_DIRS = {
   models: 'assets/models',
 };
 
-const MODEL_EXTS = new Set(['.glb', '.gltf', '.fbx', '.obj']);
+const MODEL_EXTS = new Set(['.glb', '.gltf', '.fbx', '.obj', '.blend']);
 const VIDEO_EXTS = new Set(['.mp4', '.webm', '.mov', '.mkv', '.avi', '.m4v']);
 const IMAGE_EXTS = new Set(['.png', '.jpg', '.jpeg', '.webp', '.gif', '.bmp']);
 const TEXTURE_EXTS = new Set(['.tga', '.hdr', '.exr', '.dds']);

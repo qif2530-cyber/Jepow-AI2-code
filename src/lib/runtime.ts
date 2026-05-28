@@ -49,9 +49,21 @@ declare global {
         ) => Promise<Record<string, unknown>>;
         stopCyclesSession?: (sessionId: string) => Promise<Record<string, unknown>>;
         readPreview: (previewUrl: string) => Promise<string | null>;
+        renderBlenderCycles?: (opts: Record<string, unknown>) => Promise<Record<string, unknown>>;
+        getBlenderStatus?: () => Promise<Record<string, unknown>>;
       };
       assets?: {
         pickModelFile: () => Promise<{ canceled: boolean; filePath: string | null }>;
+        pickBlendFile?: () => Promise<{ canceled: boolean; filePath: string | null }>;
+        importBlendProject?: (
+          userId: string,
+          sourcePath: string,
+          projectId?: string | null,
+        ) => Promise<{
+          ok: boolean;
+          blueprint?: Record<string, unknown>;
+          error?: string;
+        }>;
         importFile: (
           userId: string,
           sourcePath: string,

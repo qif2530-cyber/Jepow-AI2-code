@@ -612,6 +612,295 @@ def cmd_export_cycles_xml(payload: dict) -> None:
         _emit({"ok": False, "error": str(e), "trace": traceback.format_exc()})
 
 
+def _rgba_to_hex(rgba) -> str:
+    r, g, b = rgba[0], rgba[1], rgba[2]
+    return f"#{int(max(0, min(1, r)) * 255):02x}{int(max(0, min(1, g)) * 255):02x}{int(max(0, min(1, b)) * 255):02x}"
+
+
+def _input_float(node_input, default: float = 0.0) -> float:
+    try:
+        return float(node_input.default_value)
+    except Exception:
+        return default
+
+
+def _input_color_hex(node_input, fallback: str = "#b8b8b8") -> str:
+    try:
+        val = node_input.default_value
+        if hasattr(val, "__len__") and len(val) >= 3:
+            return _rgba_to_hex(val)
+    except Exception:
+        pass
+    return fallback
+
+
+def _scene_bounds_center():
+    import bpy
+    from mathutils import Vector
+
+    meshes = [o for o in bpy.data.objects if o.type == "MESH"]
+    if not meshes:
+        return Vector((0.0, 0.0, 0.0))
+    mins = Vector((1e9, 1e9, 1e9))
+    maxs = Vector((-1e9, -1e9, -1e9))
+    for obj in meshes:
+        try:
+            for corner in obj.bound_box:
+                world = obj.matrix_world @ Vector(corner)
+                mins = Vector((min(mins[i], world[i]) for i in range(3)))
+                maxs = Vector((max(maxs[i], world[i]) for i in range(3)))
+        except Exception:
+            continue
+    return (mins + maxs) * 0.5
+
+
+def _active_camera_object():
+    import bpy
+
+    cam = bpy.context.scene.camera
+    if cam:
+        return cam
+    for obj in bpy.data.objects:
+        if obj.type == "CAMERA":
+            return obj
+    return None
+
+
+def _camera_viewport_params(cam_obj) -> dict:
+    import math
+    from mathutils import Vector
+
+    center = _scene_bounds_center()
+    loc = cam_obj.matrix_world.to_translation()
+    delta = loc - center
+    dist = max(0.1, float(delta.length))
+    dx, dy, dz = float(delta.x), float(delta.y), float(delta.z)
+    horiz = math.sqrt(dx * dx + dz * dz)
+    pitch = math.degrees(math.atan2(dy, horiz)) if horiz > 1e-6 else 0.0
+    yaw = math.degrees(math.atan2(dx, dz))
+    cam_data = cam_obj.data
+    fov = math.pi / 4
+    if cam_data and cam_data.type == "PERSP":
+        try:
+            fov = float(cam_data.angle_y)
+        except Exception:
+            try:
+                fov = float(cam_data.angle)
+            except Exception:
+                pass
+    return {
+        "yaw": yaw,
+        "pitch": pitch,
+        "distance": dist,
+        "panX": 0.0,
+        "panY": 0.0,
+        "fov": fov,
+    }
+
+
+def _extract_cycles_camera(cam_obj) -> dict:
+    import math
+
+    cam_data = cam_obj.data if cam_obj else None
+    fov = math.pi / 4
+    cam_type = "perspective"
+    aperturesize = 0.0
+    focaldistance = 10.0
+    if cam_data:
+        cam_type = "perspective" if cam_data.type == "PERSP" else "orthographic"
+        try:
+            fov = float(cam_data.angle_y)
+        except Exception:
+            try:
+                fov = float(cam_data.angle)
+            except Exception:
+                pass
+        if getattr(cam_data, "dof", None):
+            try:
+                aperturesize = float(cam_data.dof.aperture_fstop)
+            except Exception:
+                pass
+            try:
+                focaldistance = float(cam_data.dof.focus_distance)
+            except Exception:
+                pass
+    return {
+        "type": cam_type,
+        "fov": fov,
+        "aperturesize": aperturesize,
+        "focaldistance": focaldistance,
+        "blades": 0,
+        "bladesrotation": 0,
+        "nearclip": 0.00001,
+        "farclip": 100000,
+    }
+
+
+def _extract_principled_material() -> dict:
+    import bpy
+
+    for mat in bpy.data.materials:
+        if not mat or not getattr(mat, "use_nodes", False) or not mat.node_tree:
+            continue
+        for node in mat.node_tree.nodes:
+            if node.type != "BSDF_PRINCIPLED":
+                continue
+            inp = node.inputs
+            base = inp.get("Base Color")
+            return {
+                "materialName": mat.name,
+                "tint": _input_color_hex(base) if base else "#b8b8b8",
+                "roughness": _input_float(inp.get("Roughness"), 0.5),
+                "metalness": _input_float(inp.get("Metallic"), 0.0),
+                "specular": _input_float(inp.get("Specular IOR Level", inp.get("Specular")), 0.5),
+                "transmission": _input_float(inp.get("Transmission Weight", inp.get("Transmission")), 0.0),
+                "ior": _input_float(inp.get("IOR"), 1.5),
+                "clearcoat": _input_float(inp.get("Coat Weight", inp.get("Clearcoat")), 0.0),
+                "emissionStrength": _input_float(
+                    inp.get("Emission Strength", inp.get("Emission")),
+                    0.0,
+                ),
+                "alpha": _input_float(inp.get("Alpha"), 1.0),
+            }
+    return {}
+
+
+def _extract_light_rig() -> dict:
+    import bpy
+    import math
+
+    env_strength = 0.75
+    bg_color = "#08090a"
+    key_strength = 650.0
+    key_size = 3.0
+    key_yaw = 45.0
+    key_pitch = 35.0
+
+    world = bpy.context.scene.world
+    if world and getattr(world, "use_nodes", False) and world.node_tree:
+        for node in world.node_tree.nodes:
+            if node.type != "BACKGROUND":
+                continue
+            strength_in = node.inputs.get("Strength") or node.inputs.get("强度")
+            color_in = node.inputs.get("Color") or node.inputs.get("颜色")
+            if strength_in:
+                env_strength = _input_float(strength_in, env_strength)
+            if color_in:
+                bg_color = _input_color_hex(color_in, bg_color)
+            break
+
+    for obj in bpy.data.objects:
+        if obj.type != "LIGHT":
+            continue
+        ld = obj.data
+        energy = float(getattr(ld, "energy", 1.0))
+        if ld.type == "SUN":
+            key_strength = max(50.0, energy * 120.0)
+        elif ld.type == "AREA":
+            key_strength = max(50.0, energy * 80.0)
+            key_size = float(getattr(ld, "size", key_size))
+        else:
+            key_strength = max(50.0, energy * 100.0)
+        rot = obj.matrix_world.to_euler("XYZ")
+        key_yaw = math.degrees(rot.z)
+        key_pitch = math.degrees(rot.x)
+        break
+
+    return {
+        "environmentStrength": env_strength,
+        "keyStrength": key_strength,
+        "keySize": key_size,
+        "yaw": key_yaw,
+        "pitch": key_pitch,
+        "backgroundColor": bg_color,
+    }
+
+
+def _extract_render_settings(scene) -> dict:
+    samples = 128
+    device = "CPU"
+    if scene.render.engine == "CYCLES" and hasattr(scene, "cycles"):
+        samples = int(getattr(scene.cycles, "samples", samples))
+        try:
+            device = str(scene.cycles.device)
+        except Exception:
+            pass
+    return {
+        "type": "cycles_render_settings",
+        "samples": samples,
+        "bounces": int(getattr(scene.cycles, "max_bounces", 8)) if hasattr(scene, "cycles") else 8,
+        "width": int(scene.render.resolution_x),
+        "height": int(scene.render.resolution_y),
+        "device": device,
+        "denoise": bool(getattr(scene.cycles, "use_denoising", True)) if hasattr(scene, "cycles") else True,
+    }
+
+
+def cmd_import_blend_project(payload: dict) -> None:
+    import bpy
+    import math
+
+    blend_path = payload.get("blendPath")
+    output_glb = payload.get("outputGlbPath") or payload.get("outputPath")
+    if not blend_path:
+        _emit({"ok": False, "error": "blendPath required"})
+        return
+    if not os.path.isfile(blend_path):
+        _emit({"ok": False, "error": f"Blend file not found: {blend_path}"})
+        return
+    if not output_glb:
+        _emit({"ok": False, "error": "outputGlbPath required"})
+        return
+
+    bpy.ops.wm.open_mainfile(filepath=blend_path)
+    os.makedirs(os.path.dirname(os.path.abspath(output_glb)), exist_ok=True)
+    bpy.ops.export_scene.gltf(
+        filepath=output_glb,
+        export_format="GLB",
+        export_apply=True,
+    )
+
+    scene = bpy.context.scene
+    principled = _extract_principled_material()
+    light_rig = _extract_light_rig()
+    cam_obj = _active_camera_object()
+    viewport_cam = _camera_viewport_params(cam_obj) if cam_obj else {
+        "yaw": 45.0,
+        "pitch": 35.0,
+        "distance": 2.45,
+        "panX": 0.0,
+        "panY": 0.0,
+        "fov": math.pi / 4,
+    }
+    cycles_cam = _extract_cycles_camera(cam_obj) if cam_obj else {
+        "type": "perspective",
+        "fov": math.pi / 4,
+        "aperturesize": 0,
+        "focaldistance": 10,
+        "blades": 0,
+        "bladesrotation": 0,
+        "nearclip": 0.00001,
+        "farclip": 100000,
+    }
+    render_settings = _extract_render_settings(scene)
+
+    _emit(
+        {
+            "ok": True,
+            "blendPath": blend_path,
+            "glbPath": output_glb,
+            "sceneName": scene.name,
+            "blendFileName": os.path.basename(blend_path),
+            "principled": principled,
+            "cyclesLight": {"type": "cycles_light_rig", **light_rig},
+            "cyclesCamera": cycles_cam,
+            "viewportCamera": viewport_cam,
+            "cyclesRenderSettings": render_settings,
+            "renderEngine": scene.render.engine,
+        }
+    )
+
+
 def cmd_export_glb(payload: dict) -> None:
     import bpy
 
@@ -649,6 +938,7 @@ def main() -> None:
         "render_scene": cmd_render_scene,
         "export_cycles_xml": cmd_export_cycles_xml,
         "export_glb": cmd_export_glb,
+        "import_blend_project": cmd_import_blend_project,
     }
     fn = handlers.get(cmd)
     if not fn:

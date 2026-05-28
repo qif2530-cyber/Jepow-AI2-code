@@ -11,7 +11,11 @@ import {
   shouldUseLocalAssets,
   toLocalAssetRef,
   importLocalModelFile,
+  pickLocalBlendFile,
+  importBlendProjectFromPath,
+  ingestBlendProjectFile,
 } from "../lib/local-assets";
+import { buildBlendProjectGraph, mergeBlendImportGraph } from "../lib/blend-project-import";
 import { isDesktopApp, shouldUseLocalCanvasAssets } from "../lib/runtime";
 import { loadModelGroup } from "../lib/model-asset-loader";
 import { JepowViewportPreview, PREVIEW_CAM_45 } from "./JepowViewportPreview";
@@ -176,7 +180,7 @@ function ModelRenderer({
 }
 
 export function ModelAssetNode({ id, data, selected }: ModelAssetNodeProps) {
-  const { updateNodeData } = useReactFlow();
+  const { updateNodeData, setNodes, setEdges, getNode } = useReactFlow();
   const [loadError, setLoadError] = useState<string | null>(null);
   const [isUploading, setIsUploading] = useState(false);
   const [canvasMounted, setCanvasMounted] = useState(false);
@@ -286,6 +290,50 @@ export function ModelAssetNode({ id, data, selected }: ModelAssetNodeProps) {
     toast.success("已导入本地场景，由 Jepow 原生渲染器加载");
   };
 
+  const handleImportBlendProject = async (file?: File) => {
+    if (!shouldUseLocalCanvasAssets()) {
+      toast.error("仅桌面端支持导入 Blender 工程");
+      return;
+    }
+    setIsUploading(true);
+    try {
+      const self = getNode(id);
+      const position = self?.position || { x: 0, y: 0 };
+      if (file) {
+        const ingested = await ingestBlendProjectFile(
+          getLocalUserId(),
+          file,
+          { x: position.x + 40, y: position.y + 40 },
+        );
+        if (!ingested.ok || !ingested.graph) {
+          throw new Error(ingested.error || "Blender 工程导入失败");
+        }
+        mergeBlendImportGraph(setNodes, setEdges, ingested.graph);
+        toast.success("已导入 Blender 工程并生成节点图");
+        return;
+      }
+      const picked = await pickLocalBlendFile();
+      if (picked.canceled || !picked.filePath) return;
+      const imported = await importBlendProjectFromPath(
+        getLocalUserId(),
+        picked.filePath,
+      );
+      if (!imported.ok || !imported.blueprint) {
+        throw new Error(imported.error || "Blender 工程解析失败");
+      }
+      const graph = buildBlendProjectGraph(imported.blueprint, {
+        x: position.x + 40,
+        y: position.y + 40,
+      });
+      mergeBlendImportGraph(setNodes, setEdges, graph);
+      toast.success(`已导入 ${imported.blueprint.blendFileName}`);
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : "Blender 工程导入失败");
+    } finally {
+      setIsUploading(false);
+    }
+  };
+
   const handleImportNativeScene = async () => {
     if (shouldUseLocalAssets()) {
       const picked = await window.jepowDesktop!.assets!.pickModelFile();
@@ -308,9 +356,15 @@ export function ModelAssetNode({ id, data, selected }: ModelAssetNodeProps) {
 
     const ext = file.name.substring(file.name.lastIndexOf(".")).toLowerCase();
     const isAcceptedModel = ext === ".glb" || ext === ".gltf" || ext === ".fbx" || ext === ".obj";
+    const isBlend = ext === ".blend";
+
+    if (isBlend && shouldUseLocalCanvasAssets()) {
+      await handleImportBlendProject(file);
+      return;
+    }
 
     if (!isAcceptedModel) {
-      toast.error("只支持上传 .glb, .gltf, .fbx, .obj 格式的模型三维文件");
+      toast.error("只支持上传 .glb, .gltf, .fbx, .obj 或 .blend（工程）");
       return;
     }
 
@@ -586,7 +640,7 @@ export function ModelAssetNode({ id, data, selected }: ModelAssetNodeProps) {
         <input
           id={fileInputId}
           type="file"
-          accept=".glb,.gltf,.fbx,.obj"
+          accept=".glb,.gltf,.fbx,.obj,.blend"
           onChange={handleFileUpload}
           className="hidden"
         />
@@ -623,6 +677,20 @@ export function ModelAssetNode({ id, data, selected }: ModelAssetNodeProps) {
           >
             <Layers className="w-3.5 h-3.5" />
             <span>从磁盘选择大场景</span>
+          </Button>
+        )}
+        {shouldUseLocalCanvasAssets() && (
+          <Button
+            size="sm"
+            className="w-full text-[11px] h-8 bg-orange-950/40 border border-orange-800/70 hover:bg-orange-900/50 text-orange-200 font-bold rounded shadow-sm flex items-center justify-center gap-1.5"
+            disabled={isUploading}
+            onClick={(e) => {
+              e.stopPropagation();
+              void handleImportBlendProject();
+            }}
+          >
+            <Box className="w-3.5 h-3.5" />
+            <span>导入 Blender 工程 (.blend)</span>
           </Button>
         )}
       </div>

@@ -26,7 +26,7 @@ const MESH_EXPORT_EXT = new Set(['.glb', '.gltf', '.fbx', '.obj']);
 const meshExportCache = new Map();
 const cyclesSessions = new Map();
 const navigationSettleTimers = new Map();
-const CYCLES_MESH_EXPORT_VERSION = 'cycles-mesh-v9-binary-cache';
+const CYCLES_MESH_EXPORT_VERSION = 'cycles-mesh-v10-viewport-camera-sync';
 let cyclesSessionSeq = 0;
 let daemonProc = null;
 let daemonBuf = '';
@@ -84,6 +84,19 @@ function cyclesTransformParams(opts = {}) {
     transformRy: clampNumber(t.ry, -360000, 360000, 0),
     transformRz: clampNumber(t.rz, -360000, 360000, 0),
     transformScale: clampNumber(t.scale, 0.01, 100000, 1),
+  };
+}
+
+/** Same Y-up orbit camera as jepow-engine preview / Cycles XML export. */
+function cyclesCameraParams(opts = {}) {
+  const cam = opts.camera || {};
+  return {
+    yaw: clampNumber(cam.yaw, -Math.PI * 4, Math.PI * 4, 0.55),
+    pitch: clampNumber(cam.pitch, -1.2, 1.2, 0.38),
+    distance: clampNumber(cam.distance ?? opts.cameraDistance, 0.35, 48, 2.45),
+    panX: clampNumber(cam.panX, -24, 24, 0),
+    panY: clampNumber(cam.panY, -24, 24, 0),
+    fov: clampNumber(cam.fov, 0.05, 3.13, Math.PI / 4),
   };
 }
 
@@ -999,6 +1012,7 @@ async function runProgressiveSession(session) {
           samples: finalSamples,
           ...cyclesMaterialParams(session.opts),
           ...cyclesTransformParams(session.opts),
+          ...cyclesCameraParams(session.opts),
         },
         60000,
       )
@@ -1091,25 +1105,23 @@ async function runProgressiveSession(session) {
       const veryDarkFirstFrame =
         !session.frame &&
         lumMax < 2 &&
-        Number(status.meshTriangles || 0) > 0 &&
-        Number(status.meshCameraDistance || 0) > 0;
+        Number(status.meshTriangles || 0) > 0;
       if (veryDarkFirstFrame && !cameraRecoveryApplied) {
         cameraRecoveryApplied = true;
-        const recoveredDistance = Math.max(2.8, Number(status.meshCameraDistance || 3.5));
+        const currentCam = session.opts?.camera || {};
+        const recoveredDistance = Math.max(
+          2.45,
+          Number(currentCam.distance) || 2.45,
+        );
         session.opts = {
           ...session.opts,
           camera: {
-            ...(session.opts?.camera || {}),
-            yaw: 0.55,
-            pitch: 0.38,
+            ...currentCam,
             distance: recoveredDistance,
-            panX: 0,
-            panY: 0,
-            fov: Math.PI / 4,
           },
         };
         session.debugStage = 'recover_camera';
-        session.debugMessage = `首帧过暗，自动回退安全相机姿态 distance=${recoveredDistance.toFixed(3)}`;
+        session.debugMessage = `首帧过暗，同步视口相机 distance=${recoveredDistance.toFixed(3)}`;
         session.updatedAt = Date.now();
         const recover = await updateResidentCamera(
           session.id,
@@ -1141,20 +1153,14 @@ async function runProgressiveSession(session) {
 }
 
 async function updateResidentCamera(sessionId, opts = {}, width, height, samples) {
-  const cam = opts.camera || {};
   return runDaemonCommand(
     'update_camera',
     {
       sessionId,
-      yaw: Number(cam.yaw ?? 0),
-      pitch: Number(cam.pitch ?? 0),
-      distance: Number(cam.distance ?? opts.cameraDistance ?? 4.2),
-      panX: Number(cam.panX ?? 0),
-      panY: Number(cam.panY ?? 0),
-      fov: Number(cam.fov ?? Math.PI / 4),
       width,
       height,
       samples,
+      ...cyclesCameraParams(opts),
     },
     5000,
   );

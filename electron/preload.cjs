@@ -26,6 +26,9 @@ contextBridge.exposeInMainWorld('jepowDesktop', {
   /** 本地 3D 资产库（桌面端不上传云端） */
   assets: {
     pickModelFile: () => ipcRenderer.invoke('assets:pickModelFile'),
+    pickBlendFile: () => ipcRenderer.invoke('assets:pickBlendFile'),
+    importBlendProject: (userId, sourcePath, projectId) =>
+      ipcRenderer.invoke('assets:importBlendProject', userId, sourcePath, projectId),
     importFile: (userId, sourcePath, projectId, nodeType) =>
       ipcRenderer.invoke('assets:importFile', userId, sourcePath, projectId, nodeType),
     saveBuffer: (userId, fileName, base64, projectId, nodeType) =>
@@ -49,5 +52,7 @@ contextBridge.exposeInMainWorld('jepowDesktop', {
     updateCyclesSession: (sessionId, patch) => ipcRenderer.invoke('viewport:updateCyclesSession', sessionId, patch),
     stopCyclesSession: (sessionId) => ipcRenderer.invoke('viewport:stopCyclesSession', sessionId),
     readPreview: (previewUrl) => ipcRenderer.invoke('viewport:readPreview', previewUrl),
+    renderBlenderCycles: (opts) => ipcRenderer.invoke('viewport:renderBlenderCycles', opts),
+    getBlenderStatus: () => ipcRenderer.invoke('viewport:getBlenderStatus'),
   },
 });

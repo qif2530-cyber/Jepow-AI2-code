@@ -21,7 +21,7 @@ export const AI_CATEGORY_LABELS: Record<AiAssetCategory, string> = {
   models: '3D 模型',
 };
 
-const MODEL_EXTS = new Set(['.glb', '.gltf', '.fbx', '.obj']);
+const MODEL_EXTS = new Set(['.glb', '.gltf', '.fbx', '.obj', '.blend']);
 const VIDEO_EXTS = new Set(['.mp4', '.webm', '.mov', '.mkv', '.avi', '.m4v']);
 const TEXTURE_EXTS = new Set(['.tga', '.hdr', '.exr', '.dds']);
 

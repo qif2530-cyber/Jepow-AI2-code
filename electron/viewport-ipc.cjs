@@ -6,9 +6,9 @@ const nativeEngine = require('./native-engine-bridge.cjs');
  * 导入规则对齐 Blender io_scene_fbx（坐标、节点矩阵、三角化），见 native/jepow-engine。
  * 可选：JEPOW_USE_BLENDER_VIEWPORT=1 时回退 Blender 子进程（仅调试，非产品路径）。
  */
-const blenderBridge = process.env.JEPOW_USE_BLENDER_VIEWPORT === '1'
-  ? require('./blender-bridge.cjs')
-  : null;
+const blenderBridgeModule = require('./blender-bridge.cjs');
+const blenderBridge =
+  process.env.JEPOW_USE_BLENDER_VIEWPORT === '1' ? blenderBridgeModule : null;
 
 /** GPL offline renderer (route A) — never blender.exe, never viewport daemon */
 const cyclesBridge = require('./jepow-cycles-bridge.cjs');
@@ -146,7 +146,49 @@ function registerViewportIpc(ipcMain) {
   ipcMain.handle('viewport:readPreview', async (_e, previewUrl) => {
     if (!previewUrl || typeof previewUrl !== 'string') return null;
     const name = previewUrl.replace('viewport-cache://', '');
-    return nativeEngine.readCachedImageByName(name);
+    const fromNative = nativeEngine.readCachedImageByName(name);
+    if (fromNative) return fromNative;
+    return blenderBridgeModule.readCachedImageByName(name);
+  });
+
+  /** 高保真：用本机 Blender 后台 Cycles 渲染 .blend（与 Blender 内效果一致） */
+  ipcMain.handle('viewport:renderBlenderCycles', async (_e, opts) => {
+    const o = opts || {};
+    const blendPath = normalizeScenePath(o.blendPath);
+    const rendered = await blenderBridgeModule.renderBlenderCycles({
+      blendPath,
+      width: o.width,
+      height: o.height,
+      samples: o.samples,
+      frame: o.frame,
+      useGpu: o.useGpu !== false,
+    });
+    if (!rendered.ok) return rendered;
+    let previewDataUrl = rendered.previewDataUrl;
+    if (!previewDataUrl && rendered.previewUrl) {
+      previewDataUrl = blenderBridgeModule.readCachedImageByName(
+        rendered.previewUrl.replace('viewport-cache://', ''),
+      );
+    }
+    return {
+      ...rendered,
+      previewDataUrl,
+      renderer: 'blender-cycles',
+    };
+  });
+
+  ipcMain.handle('viewport:getBlenderStatus', async () => {
+    const exe = blenderBridgeModule.getBlenderExecutable();
+    if (!exe) {
+      return { ok: true, available: false, error: 'Blender executable not found' };
+    }
+    const ping = await blenderBridgeModule.runBlenderCommand('ping', {}, 30000);
+    return {
+      ok: true,
+      available: !!ping?.ok,
+      executable: exe,
+      blenderVersion: ping?.blender_version,
+    };
   });
 }
 

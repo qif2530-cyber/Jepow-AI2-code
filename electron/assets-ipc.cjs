@@ -3,6 +3,7 @@ const path = require('path');
 const crypto = require('crypto');
 const { app, dialog } = require('electron');
 const bundle = require('./ai-project-bundle.cjs');
+const blenderBridge = require('./blender-bridge.cjs');
 const { loadIndex, findEntry, entryBundlePath } = require('./projects-ipc.cjs');
 
 function assetsRoot(userId) {
@@ -45,6 +46,75 @@ function registerAssetsIpc(ipcMain) {
       return { canceled: true, filePath: null };
     }
     return { canceled: false, filePath: res.filePaths[0] };
+  });
+
+  ipcMain.handle('assets:pickBlendFile', async () => {
+    const res = await dialog.showOpenDialog({
+      title: '选择 Blender 工程 (.blend)',
+      properties: ['openFile'],
+      filters: [{ name: 'Blender', extensions: ['blend'] }],
+    });
+    if (res.canceled || !res.filePaths?.[0]) {
+      return { canceled: true, filePath: null };
+    }
+    return { canceled: false, filePath: res.filePaths[0] };
+  });
+
+  ipcMain.handle('assets:importBlendProject', async (_e, userId, sourcePath, projectId) => {
+    if (!sourcePath || !fs.existsSync(sourcePath)) {
+      return { ok: false, error: 'source .blend not found' };
+    }
+    const executable = blenderBridge.getBlenderExecutable();
+    if (!executable) {
+      return {
+        ok: false,
+        error:
+          '未找到 Blender。请安装 Blender 或设置环境变量 JEPOW_BLENDER_PATH / userData/jepow-blender.json',
+      };
+    }
+
+    const base = path.basename(sourcePath);
+    const hash = crypto.createHash('sha1').update(sourcePath + Date.now()).digest('hex').slice(0, 10);
+    const blendDestName = `${hash}_${base}`;
+    const { dir, category, bundlePath } = destDirForCategory(userId, base, projectId, 'modelAssetNode');
+    fs.mkdirSync(dir, { recursive: true });
+    const blendDest = path.join(dir, blendDestName);
+    fs.copyFileSync(sourcePath, blendDest);
+
+    const glbBase = base.replace(/\.blend$/i, '.glb');
+    const glbDestName = `${hash}_${glbBase}`;
+    const glbDest = path.join(dir, glbDestName);
+
+    const extracted = await blenderBridge.importBlendProject({
+      blendPath: blendDest,
+      outputGlbPath: glbDest,
+    });
+    if (!extracted.ok) {
+      return extracted;
+    }
+
+    const assetRef =
+      bundlePath && category ? `jepow-asset://${category}/${blendDestName}` : null;
+    const glbAssetRef =
+      bundlePath && category ? `jepow-asset://${category}/${glbDestName}` : null;
+
+    return {
+      ok: true,
+      blueprint: {
+        blendPath: blendDest,
+        glbPath: glbDest,
+        blendFileName: base,
+        assetRef,
+        glbAssetRef,
+        sceneName: extracted.sceneName,
+        principled: extracted.principled || {},
+        cyclesLight: extracted.cyclesLight || {},
+        cyclesCamera: extracted.cyclesCamera || {},
+        viewportCamera: extracted.viewportCamera || {},
+        cyclesRenderSettings: extracted.cyclesRenderSettings || {},
+        renderEngine: extracted.renderEngine,
+      },
+    };
   });
 
   ipcMain.handle('assets:importFile', async (_e, userId, sourcePath, projectId, nodeType) => {

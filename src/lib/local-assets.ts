@@ -3,7 +3,10 @@
  * Cloud API is only for auth, profile, credits, AI generation.
  */
 
+import type { Edge, Node } from '@xyflow/react';
 import { AI_ASSET_PREFIX, parseAiAssetRef } from './ai-project-format';
+import type { BlendImportGraph, BlendProjectBlueprint } from './blend-project-import';
+import { buildBlendProjectGraph } from './blend-project-import';
 import { getCurrentProjectId } from './current-project';
 import { isCanvasOnlyMode } from './runtime';
 
@@ -107,7 +110,81 @@ export type IngestedModelNodeData = {
   modelName: string;
   viewportBackend: 'jepow-native';
   localPreviewUrl: '';
+  blendSourcePath?: string;
+  blendImported?: boolean;
 };
+
+export async function pickLocalBlendFile(): Promise<{
+  canceled: boolean;
+  filePath: string | null;
+}> {
+  const api = assetsApi();
+  if (!api?.pickBlendFile) return { canceled: true, filePath: null };
+  return api.pickBlendFile();
+}
+
+export async function importBlendProjectFromPath(
+  userId: string,
+  sourcePath: string,
+  options?: { projectId?: string | null },
+): Promise<{
+  ok: boolean;
+  blueprint?: BlendProjectBlueprint;
+  error?: string;
+}> {
+  const api = assetsApi();
+  if (!api?.importBlendProject) {
+    return { ok: false, error: 'importBlendProject API unavailable' };
+  }
+  const projectId = options?.projectId ?? getCurrentProjectId();
+  const res = await api.importBlendProject(userId, sourcePath, projectId);
+  if (!res.ok || !res.blueprint) {
+    return { ok: false, error: res.error || 'Blender 工程解析失败' };
+  }
+  return { ok: true, blueprint: res.blueprint as BlendProjectBlueprint };
+}
+
+export async function ingestBlendProjectFile(
+  userId: string,
+  file: File,
+  dropPosition: { x: number; y: number },
+): Promise<{
+  ok: boolean;
+  graph?: BlendImportGraph;
+  error?: string;
+}> {
+  const electronPath =
+    typeof file === 'object' && file && 'path' in file
+      ? String((file as File & { path?: string }).path || '')
+      : '';
+
+  let sourcePath = electronPath;
+  if (!sourcePath) {
+    const api = assetsApi();
+    if (!api?.saveBufferRaw) {
+      return { ok: false, error: '无法保存 .blend 文件到本地' };
+    }
+    const buf = await file.arrayBuffer();
+    const saved = await api.saveBufferRaw(
+      userId,
+      file.name,
+      buf,
+      getCurrentProjectId(),
+      'modelAssetNode',
+    );
+    if (!saved.ok || !saved.localPath) {
+      return { ok: false, error: saved.error || '保存 .blend 失败' };
+    }
+    sourcePath = saved.localPath;
+  }
+
+  const imported = await importBlendProjectFromPath(userId, sourcePath);
+  if (!imported.ok || !imported.blueprint) {
+    return { ok: false, error: imported.error };
+  }
+  const graph = buildBlendProjectGraph(imported.blueprint, dropPosition);
+  return { ok: true, graph };
+}
 
 /** 画布拖入 FBX/GLB 等（含微信临时文件）→ 写入工程 assets/models */
 export async function ingestDroppedModelFile(
