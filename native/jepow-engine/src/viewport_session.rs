@@ -15,17 +15,28 @@ fn demo_mesh() -> MeshData {
             Vertex {
                 pos: [0.0, 0.55, 0.0],
                 normal: [0.2, 0.9, 0.3],
+                uv: [0.5, 0.0],
+                material_tint: [1.0, 1.0, 1.0],
             },
             Vertex {
                 pos: [-0.55, -0.35, 0.0],
                 normal: [-0.6, 0.5, 0.2],
+                uv: [0.0, 1.0],
+                material_tint: [1.0, 1.0, 1.0],
             },
             Vertex {
                 pos: [0.55, -0.35, 0.0],
                 normal: [0.6, 0.5, 0.2],
+                uv: [1.0, 1.0],
+                material_tint: [1.0, 1.0, 1.0],
             },
         ],
         indices: vec![0, 1, 2],
+        material_color: Some([0.35, 0.78, 0.62]),
+        metallic_factor: 0.0,
+        roughness_factor: 0.65,
+        base_color_texture: None,
+        metallic_roughness_texture: None,
     }
 }
 

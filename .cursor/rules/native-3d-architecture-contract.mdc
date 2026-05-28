@@ -15,5 +15,9 @@ Rules:
 - Keep Rust/wgpu as the primary interactive 3D viewport. Do not replace it with Three.js as the product viewport.
 - Keep Cycles/CL rendering isolated behind the render bridge/process boundary. Do not link GPL Cycles into the MIT `jepow-engine`.
 - Keep Assimp/USD and Bullet/Jolt as required architecture slots, even while runtime implementations are incremental.
-- Keep the required command/API surface: `architecture_status`, `import_pipeline_status`, `import_scene_pipeline`, `physics_pipeline_status`, `physics_create_world`, `physics_step_world`.
+- Keep the required command/API surface: `architecture_status`, `architecture_self_test`, `import_pipeline_status`, `import_scene_pipeline`, `physics_pipeline_status`, `physics_create_world`, `physics_step_world`.
+- Keep 3D workspace probes for Assimp/USD import and Bullet/Jolt physics until replaced by full production panels.
+- Keep the architecture diagnostics API/UI until replaced by a full production diagnostics panel.
+- Keep architecture progress reporting (`骨架完成`, `Runtime 填充中`, `生产能力就绪`) visible through status/diagnostics.
+- Successful native imports must create scene objects with asset metadata until full mesh scene instancing replaces the placeholder object path.
 - For architecture changes, update `ARCHITECTURE_CONTRACT.md`, `electron/native-architecture-contract.cjs`, and run `npm run architecture:verify`.

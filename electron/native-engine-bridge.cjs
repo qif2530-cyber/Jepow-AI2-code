@@ -713,6 +713,10 @@ function getImportPipelineStatus() {
   return runEngineCommand('import_pipeline_status', {}, 60000);
 }
 
+function runArchitectureSelfTest() {
+  return runEngineCommand('architecture_self_test', {}, 60000);
+}
+
 function importScenePipeline(opts = {}) {
   return runEngineCommand(
     'import_scene_pipeline',
@@ -753,6 +757,7 @@ module.exports = {
   openScene,
   renderPreview,
   meshForCycles,
+  runArchitectureSelfTest,
   getImportPipelineStatus,
   importScenePipeline,
   getPhysicsPipelineStatus,

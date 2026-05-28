@@ -2,6 +2,7 @@ const { dialog } = require('electron');
 const nativeEngine = require('./native-engine-bridge.cjs');
 const {
   ARCHITECTURE_CONTRACT,
+  buildArchitectureProgress,
   buildArchitectureStatus,
 } = require('./native-architecture-contract.cjs');
 
@@ -64,6 +65,7 @@ async function getCombinedStatus() {
     cyclesAvailable,
     nativeArchitecture,
   });
+  const architectureProgress = buildArchitectureProgress(architecture);
   return {
     ok: true,
     available: nativeAvailable || blenderAvailable,
@@ -83,6 +85,7 @@ async function getCombinedStatus() {
     renderEngines,
     architectureContract: ARCHITECTURE_CONTRACT,
     architecture,
+    architectureProgress,
     nativeArchitecture,
     architectureReady:
       architecture.ui.status &&
@@ -105,8 +108,83 @@ async function getCombinedStatus() {
   };
 }
 
+async function getArchitectureDiagnostics() {
+  const [status, selfTest, importStatus, physicsStatus] = await Promise.all([
+    getCombinedStatus(),
+    nativeEngine.runArchitectureSelfTest().catch((error) => ({
+      ok: false,
+      error: error?.message || String(error),
+    })),
+    nativeEngine.getImportPipelineStatus().catch((error) => ({
+      ok: false,
+      error: error?.message || String(error),
+    })),
+    nativeEngine.getPhysicsPipelineStatus().catch((error) => ({
+      ok: false,
+      error: error?.message || String(error),
+    })),
+  ]);
+  const checks = [
+    {
+      id: 'ui',
+      label: 'React/Electron UI',
+      ok: true,
+      detail: 'preload + IPC diagnostics endpoint is callable',
+    },
+    {
+      id: 'viewport',
+      label: 'Rust/wgpu Core Viewport',
+      ok: !!status.nativeAvailable,
+      detail: status.nativeAvailable ? 'jepow-engine is available' : status.buildHint,
+    },
+    {
+      id: 'renderer',
+      label: 'Cycles/CL Render',
+      ok: !!status.architecture?.renderer?.status,
+      productionReady: !!status.cyclesAvailable,
+      detail: status.architecture?.renderer?.detail,
+    },
+    {
+      id: 'importers',
+      label: 'Assimp/USD Import',
+      ok: !!importStatus?.architecture_wired,
+      productionReady: !!importStatus?.production_ready,
+      detail: importStatus?.production_ready
+        ? 'Assimp/USD runtime is ready'
+        : 'Assimp/USD command surface is wired; runtime implementation is pending',
+    },
+    {
+      id: 'physics',
+      label: 'Bullet/Jolt Physics',
+      ok: !!physicsStatus?.architecture_wired,
+      productionReady: !!physicsStatus?.production_ready,
+      detail: physicsStatus?.production_ready
+        ? 'Bullet/Jolt runtime is ready'
+        : 'Bullet/Jolt command surface is wired; runtime implementation is pending',
+    },
+  ];
+  return {
+    ok: checks.every((check) => check.ok),
+    generatedAt: new Date().toISOString(),
+    canonicalStack: ARCHITECTURE_CONTRACT.canonicalStack,
+    architectureReady: status.architectureReady,
+    architectureProductionReady: status.architectureProductionReady,
+    architectureProgress: status.architectureProgress,
+    checks,
+    status,
+    selfTest,
+    importStatus,
+    physicsStatus,
+    cycles: status.cycles,
+  };
+}
+
 function registerViewportIpc(ipcMain) {
   ipcMain.handle('viewport:getStatus', async () => getCombinedStatus());
+
+  ipcMain.handle('viewport:getArchitectureDiagnostics', async () => {
+    return getArchitectureDiagnostics();
+  });
 
   ipcMain.handle('viewport:pickSceneFile', async () => {
     const res = await dialog.showOpenDialog({
@@ -115,7 +193,7 @@ function registerViewportIpc(ipcMain) {
       filters: [
         {
           name: '3D Scene',
-          extensions: ['blend', 'glb', 'gltf', 'fbx', 'obj'],
+          extensions: ['blend', 'glb', 'gltf', 'fbx', 'obj', 'usd', 'usda', 'usdc', 'usdz', 'dae', '3ds', 'ply', 'stl'],
         },
       ],
     });
@@ -222,6 +300,10 @@ function registerViewportIpc(ipcMain) {
       executable: exe,
       blenderVersion: ping?.blender_version,
     };
+  });
+
+  ipcMain.handle('viewport:runArchitectureSelfTest', async () => {
+    return nativeEngine.runArchitectureSelfTest();
   });
 
   ipcMain.handle('viewport:getImportPipelineStatus', async () => {

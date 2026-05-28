@@ -11,6 +11,17 @@ export type ThreeDObject = {
   visible?: boolean;
   locked?: boolean;
   materialColor?: string;
+  assetPath?: string;
+  importBackend?: string;
+  triangleCount?: number;
+  vertexCount?: number;
+  boundsMin?: [number, number, number];
+  boundsMax?: [number, number, number];
+  boundsSize?: [number, number, number];
+  hasBaseColorTexture?: boolean;
+  hasMetallicRoughnessTexture?: boolean;
+  metallicFactor?: number;
+  roughnessFactor?: number;
 };
 
 type NativeArchitectureFeature = {
@@ -23,7 +34,45 @@ type NativeArchitectureFeature = {
 type NativeArchitectureStatus = {
   architectureReady?: boolean;
   architectureProductionReady?: boolean;
+  architectureProgress?: ArchitectureProgress;
   architecture?: Record<string, NativeArchitectureFeature>;
+};
+
+type ArchitectureProgress = {
+  currentPhase?: string;
+  currentPhaseLabel?: string;
+  description?: string;
+  wiredCount?: number;
+  productionCount?: number;
+  total?: number;
+  skeletonPercent?: number;
+  productionPercent?: number;
+  nextMilestone?: string;
+};
+
+type PipelineProbe = {
+  title: string;
+  ok: boolean;
+  message: string;
+  backend?: string;
+  command?: string;
+  timestamp: number;
+};
+
+type ArchitectureDiagnostics = {
+  ok?: boolean;
+  generatedAt?: string;
+  canonicalStack?: string;
+  architectureReady?: boolean;
+  architectureProductionReady?: boolean;
+  architectureProgress?: ArchitectureProgress;
+  checks?: Array<{
+    id?: string;
+    label?: string;
+    ok?: boolean;
+    productionReady?: boolean;
+    detail?: string;
+  }>;
 };
 
 interface ThreeDWorkspaceProps {
@@ -33,6 +82,7 @@ interface ThreeDWorkspaceProps {
   onUpdateObject: (id: string, patch: Partial<ThreeDObject>) => void;
   onSyncObjects?: (objects: ThreeDObject[], selectedObjectId?: string) => void;
   onAddObject?: (type: ThreeDObject["type"]) => void;
+  onImportObject?: (object: ThreeDObject) => void;
   onDuplicateObject?: () => void;
   onDeleteObject?: () => void;
   onResetObject?: () => void;
@@ -100,6 +150,17 @@ const toHostObjects = (objects: ThreeDObject[]) =>
     visible: object.visible !== false,
     locked: object.locked === true,
     materialColor: object.materialColor,
+    assetPath: object.assetPath,
+    importBackend: object.importBackend,
+    triangleCount: object.triangleCount,
+    vertexCount: object.vertexCount,
+    boundsMin: object.boundsMin,
+    boundsMax: object.boundsMax,
+    boundsSize: object.boundsSize,
+    hasBaseColorTexture: object.hasBaseColorTexture,
+    hasMetallicRoughnessTexture: object.hasMetallicRoughnessTexture,
+    metallicFactor: object.metallicFactor,
+    roughnessFactor: object.roughnessFactor,
   }));
 
 const toVec3 = (value: unknown, fallback: [number, number, number]) => {
@@ -118,6 +179,7 @@ export function ThreeDWorkspace({
   onUpdateObject,
   onSyncObjects,
   onAddObject,
+  onImportObject,
   onDuplicateObject,
   onDeleteObject,
   onResetObject,
@@ -135,6 +197,9 @@ export function ThreeDWorkspace({
     "perspective",
   );
   const [nativeStatus, setNativeStatus] = useState<NativeArchitectureStatus | null>(null);
+  const [pipelineProbe, setPipelineProbe] = useState<PipelineProbe | null>(null);
+  const [diagnostics, setDiagnostics] = useState<ArchitectureDiagnostics | null>(null);
+  const [pipelineBusy, setPipelineBusy] = useState<string | null>(null);
   const [hostReady, setHostReady] = useState(false);
   const [hostError, setHostError] = useState<string | null>(null);
   const selectedObject = useMemo(
@@ -159,6 +224,147 @@ export function ThreeDWorkspace({
       speed: activeTool === "游走" ? 1.65 : 1,
     });
   };
+  const runPipelineProbe = async (
+    key: string,
+    title: string,
+    action: () => Promise<Record<string, unknown> | undefined>,
+  ) => {
+    setPipelineBusy(key);
+    const result = (await action().catch((error) => ({
+      ok: false,
+      message: error?.message || String(error),
+    }))) as Record<string, unknown> | undefined;
+    setPipelineBusy(null);
+    if (!result) {
+      setPipelineProbe({
+        title,
+        ok: false,
+        message: "当前环境没有暴露该架构管线 API。",
+        timestamp: Date.now(),
+      });
+      return;
+    }
+    setPipelineProbe({
+      title,
+      ok: result.ok !== false,
+      message: String(result.message || result.status || "管线接口已返回。"),
+      backend: String(result.plannedBackend || result.backend || result.active_backend || ""),
+      command: typeof result.command === "string" ? result.command : undefined,
+      timestamp: Date.now(),
+    });
+  };
+  const probeImportPipeline = () =>
+    runPipelineProbe("import", "Assimp/USD Import", async () => {
+      const status = await window.jepowDesktop?.viewport?.getImportPipelineStatus?.();
+      const picked = await window.jepowDesktop?.viewport?.pickSceneFile?.();
+      if (
+        !picked ||
+        picked.canceled ||
+        !picked.filePath ||
+        typeof picked.filePath !== "string"
+      ) {
+        return {
+          ...(status || {}),
+          ok: true,
+          message: "导入管线状态已读取；未选择文件，未执行 runtime 导入。",
+        };
+      }
+      const imported = await window.jepowDesktop?.viewport?.importScenePipeline?.({
+        scenePath: picked.filePath,
+        backend: "auto",
+      });
+      if (
+        imported?.productionReady &&
+        imported.scenePath &&
+        typeof imported.scenePath === "string"
+      ) {
+        const fileName = imported.scenePath.split(/[\\/]/).pop() || "Imported Mesh";
+        const importedCount = objects.filter((object) => object.assetPath).length;
+        onImportObject?.({
+          id: `import-${Date.now().toString(36)}`,
+          name: fileName.replace(/\.[^.]+$/, "") || fileName,
+          type: "网格",
+          color: "text-orange-300",
+          position: [importedCount * 1.4, 0, 0],
+          rotation: [0, 0, 0],
+          scale: [1, 1, 1],
+          visible: true,
+          locked: false,
+          materialColor:
+            typeof imported.materialColor === "string" ? imported.materialColor : "#9fb7ff",
+          assetPath: imported.scenePath,
+          importBackend: String(imported.activeBackend || imported.plannedBackend || "native"),
+          triangleCount: Number(imported.triangleCount) || 0,
+          vertexCount: Number(imported.vertexCount) || 0,
+          boundsMin: toVec3(imported.boundsMin, [0, 0, 0]),
+          boundsMax: toVec3(imported.boundsMax, [0, 0, 0]),
+          boundsSize: toVec3(imported.boundsSize, [1, 1, 1]),
+          hasBaseColorTexture: imported.hasBaseColorTexture === true,
+          hasMetallicRoughnessTexture: imported.hasMetallicRoughnessTexture === true,
+          metallicFactor: Number(imported.metallicFactor) || 0,
+          roughnessFactor: Number(imported.roughnessFactor) || 0.65,
+        });
+      }
+      return imported || status;
+    });
+  const probeArchitectureSelfTest = () =>
+    runPipelineProbe("architecture-self-test", "Architecture Self-Test", () =>
+      window.jepowDesktop?.viewport?.runArchitectureSelfTest?.(),
+    );
+  const runArchitectureDiagnostics = async () => {
+    setPipelineBusy("diagnostics");
+    const report = (await window.jepowDesktop?.viewport
+      ?.getArchitectureDiagnostics?.()
+      .catch((error) => ({
+        ok: false,
+        generatedAt: new Date().toISOString(),
+        canonicalStack: "diagnostics unavailable",
+        checks: [
+          {
+            id: "diagnostics",
+            label: "Architecture Diagnostics",
+            ok: false,
+            detail: error?.message || String(error),
+          },
+        ],
+      }))) as ArchitectureDiagnostics | undefined;
+    setPipelineBusy(null);
+    if (!report) {
+      setPipelineProbe({
+        title: "Architecture Diagnostics",
+        ok: false,
+        message: "当前环境没有暴露架构诊断 API。",
+        timestamp: Date.now(),
+      });
+      return;
+    }
+    setDiagnostics(report);
+    setPipelineProbe({
+      title: "Architecture Diagnostics",
+      ok: report.ok !== false,
+      message: report.architectureProductionReady
+        ? "生产能力全部就绪。"
+        : report.architectureReady
+          ? "固定架构骨架完整，部分 runtime 仍在填充。"
+          : "架构诊断发现缺失项。",
+      backend: report.architectureProductionReady ? "production-ready" : "architecture-ready",
+      timestamp: Date.now(),
+    });
+  };
+  const probePhysicsWorld = () =>
+    runPipelineProbe("physics-world", "Bullet/Jolt World", () =>
+      window.jepowDesktop?.viewport?.createPhysicsWorld?.({
+        backend: "jolt",
+        gravity: [0, -9.81, 0],
+      }),
+    );
+  const probePhysicsStep = () =>
+    runPipelineProbe("physics-step", "Bullet/Jolt Step", () =>
+      window.jepowDesktop?.viewport?.stepPhysicsWorld?.({
+        worldId: "physics-world-placeholder",
+        deltaTime: 1 / 60,
+      }),
+    );
 
   useEffect(() => {
     let stopped = false;
@@ -328,6 +534,17 @@ export function ThreeDWorkspace({
           visible: raw.visible !== false,
           locked: raw.locked === true,
           materialColor: typeof raw.materialColor === "string" ? raw.materialColor : undefined,
+          assetPath: typeof raw.assetPath === "string" ? raw.assetPath : undefined,
+          importBackend: typeof raw.importBackend === "string" ? raw.importBackend : undefined,
+          triangleCount: Number(raw.triangleCount) || undefined,
+          vertexCount: Number(raw.vertexCount) || undefined,
+          boundsMin: Array.isArray(raw.boundsMin) ? toVec3(raw.boundsMin, [0, 0, 0]) : undefined,
+          boundsMax: Array.isArray(raw.boundsMax) ? toVec3(raw.boundsMax, [0, 0, 0]) : undefined,
+          boundsSize: Array.isArray(raw.boundsSize) ? toVec3(raw.boundsSize, [1, 1, 1]) : undefined,
+          hasBaseColorTexture: raw.hasBaseColorTexture === true,
+          hasMetallicRoughnessTexture: raw.hasMetallicRoughnessTexture === true,
+          metallicFactor: Number(raw.metallicFactor) || undefined,
+          roughnessFactor: Number(raw.roughnessFactor) || undefined,
         } as ThreeDObject;
       });
       const syncedSelectedObjectId =
@@ -422,6 +639,51 @@ export function ThreeDWorkspace({
             >
               重做
             </button>
+            <button
+              type="button"
+              onClick={runArchitectureDiagnostics}
+              disabled={pipelineBusy !== null}
+              className="rounded-[3px] px-2 py-0.5 text-emerald-200 hover:bg-emerald-400/10 hover:text-white disabled:cursor-wait disabled:opacity-50"
+              title="聚合 native/Cycles/import/physics 架构诊断报告"
+            >
+              架构诊断
+            </button>
+            <button
+              type="button"
+              onClick={probeArchitectureSelfTest}
+              disabled={pipelineBusy !== null}
+              className="rounded-[3px] px-2 py-0.5 text-emerald-200 hover:bg-emerald-400/10 hover:text-white disabled:cursor-wait disabled:opacity-50"
+              title="从 React/Electron 调用 Rust 架构自检"
+            >
+              架构自检
+            </button>
+            <button
+              type="button"
+              onClick={probeImportPipeline}
+              disabled={pipelineBusy !== null}
+              className="rounded-[3px] px-2 py-0.5 text-blue-200 hover:bg-blue-400/10 hover:text-white disabled:cursor-wait disabled:opacity-50"
+              title="调用 Assimp/USD 导入管线占位接口"
+            >
+              导入管线
+            </button>
+            <button
+              type="button"
+              onClick={probePhysicsWorld}
+              disabled={pipelineBusy !== null}
+              className="rounded-[3px] px-2 py-0.5 text-blue-200 hover:bg-blue-400/10 hover:text-white disabled:cursor-wait disabled:opacity-50"
+              title="调用 Bullet/Jolt 创建物理世界接口"
+            >
+              物理世界
+            </button>
+            <button
+              type="button"
+              onClick={probePhysicsStep}
+              disabled={pipelineBusy !== null}
+              className="rounded-[3px] px-2 py-0.5 text-blue-200 hover:bg-blue-400/10 hover:text-white disabled:cursor-wait disabled:opacity-50"
+              title="调用 Bullet/Jolt 物理步进接口"
+            >
+              物理步进
+            </button>
           </div>
           <div className="flex items-center gap-1 rounded-[3px] bg-[#252629] p-0.5">
             <button
@@ -488,6 +750,33 @@ export function ThreeDWorkspace({
                     ? "骨架完成 / 功能填充中"
                     : "核心就绪 / 扩展接入中"}
               </div>
+              {nativeStatus.architectureProgress && (
+                <div className="mb-1 rounded border border-white/10 bg-white/[0.04] px-1.5 py-1">
+                  <div className="flex items-center justify-between text-[9px] text-neutral-300">
+                    <span>{nativeStatus.architectureProgress.currentPhaseLabel}</span>
+                    <span>
+                      骨架 {nativeStatus.architectureProgress.skeletonPercent ?? 0}% · 生产{" "}
+                      {nativeStatus.architectureProgress.productionPercent ?? 0}%
+                    </span>
+                  </div>
+                  <div className="mt-1 h-1 rounded bg-white/10">
+                    <div
+                      className="h-1 rounded bg-blue-400"
+                      style={{
+                        width: `${nativeStatus.architectureProgress.skeletonPercent ?? 0}%`,
+                      }}
+                    />
+                  </div>
+                  <div className="mt-0.5 h-1 rounded bg-white/10">
+                    <div
+                      className="h-1 rounded bg-emerald-400"
+                      style={{
+                        width: `${nativeStatus.architectureProgress.productionPercent ?? 0}%`,
+                      }}
+                    />
+                  </div>
+                </div>
+              )}
               <div className="flex flex-wrap gap-1">
                 {Object.entries(nativeStatus.architecture).map(([key, feature]) => (
                   <span
@@ -508,6 +797,63 @@ export function ThreeDWorkspace({
                         : "待接入"}{" "}
                     · {feature.label || key}
                   </span>
+                ))}
+              </div>
+            </div>
+          )}
+          {(pipelineProbe || pipelineBusy) && (
+            <div className="pointer-events-none absolute left-3 top-[112px] max-w-[520px] rounded border border-blue-400/20 bg-black/45 px-2 py-1 text-[10px] text-neutral-300 backdrop-blur">
+              <div className="mb-0.5 font-bold text-blue-100">
+                架构管线控制台 · {pipelineBusy ? "调用中" : pipelineProbe?.title}
+              </div>
+              {pipelineBusy ? (
+                <div className="text-blue-200">正在调用 {pipelineBusy} 管线接口...</div>
+              ) : (
+                <div className={pipelineProbe?.ok ? "text-emerald-200" : "text-amber-200"}>
+                  {pipelineProbe?.ok ? "OK" : "WARN"}
+                  {pipelineProbe?.backend ? ` · ${pipelineProbe.backend}` : ""}
+                  {pipelineProbe?.command ? ` · ${pipelineProbe.command}` : ""} ·{" "}
+                  {pipelineProbe?.message}
+                </div>
+              )}
+            </div>
+          )}
+          {diagnostics?.checks && (
+            <div className="pointer-events-none absolute right-3 bottom-3 w-[360px] rounded border border-emerald-400/20 bg-black/45 px-2 py-1.5 text-[10px] text-neutral-300 backdrop-blur">
+              <div className="mb-1 font-bold text-emerald-100">
+                架构诊断报告 · {diagnostics.ok ? "通过" : "需处理"}
+              </div>
+              {diagnostics.architectureProgress && (
+                <div className="mb-1 rounded bg-white/[0.04] px-1.5 py-1 text-[9px] text-neutral-300">
+                  阶段 · {diagnostics.architectureProgress.currentPhaseLabel} · 骨架{" "}
+                  {diagnostics.architectureProgress.skeletonPercent ?? 0}% · 生产{" "}
+                  {diagnostics.architectureProgress.productionPercent ?? 0}%
+                  <div className="mt-0.5 text-neutral-400">
+                    下一步：{diagnostics.architectureProgress.nextMilestone}
+                  </div>
+                </div>
+              )}
+              <div className="mb-1 truncate text-[9px] text-neutral-400" title={diagnostics.canonicalStack}>
+                {diagnostics.canonicalStack}
+              </div>
+              <div className="grid gap-1">
+                {diagnostics.checks.map((check) => (
+                  <div
+                    key={check.id || check.label}
+                    className={`rounded border px-1.5 py-1 ${
+                      check.productionReady
+                        ? "border-emerald-400/25 bg-emerald-400/10"
+                        : check.ok
+                          ? "border-blue-400/25 bg-blue-400/10"
+                          : "border-amber-400/25 bg-amber-400/10"
+                    }`}
+                  >
+                    <div className="font-bold text-neutral-100">
+                      {check.productionReady ? "可用" : check.ok ? "骨架 OK" : "缺失"} ·{" "}
+                      {check.label || check.id}
+                    </div>
+                    <div className="text-neutral-400">{check.detail}</div>
+                  </div>
                 ))}
               </div>
             </div>

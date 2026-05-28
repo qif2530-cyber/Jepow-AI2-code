@@ -42,6 +42,7 @@ contextBridge.exposeInMainWorld('jepowDesktop', {
   /** Jepow 自研原生 3D 内核 — 与 AI / LLM API 无关 */
   viewport: {
     getStatus: () => ipcRenderer.invoke('viewport:getStatus'),
+    getArchitectureDiagnostics: () => ipcRenderer.invoke('viewport:getArchitectureDiagnostics'),
     pickSceneFile: () => ipcRenderer.invoke('viewport:pickSceneFile'),
     openScene: (scenePath) => ipcRenderer.invoke('viewport:openScene', scenePath),
     sceneInfo: (scenePath) => ipcRenderer.invoke('viewport:sceneInfo', scenePath),
@@ -54,6 +55,7 @@ contextBridge.exposeInMainWorld('jepowDesktop', {
     readPreview: (previewUrl) => ipcRenderer.invoke('viewport:readPreview', previewUrl),
     renderBlenderCycles: (opts) => ipcRenderer.invoke('viewport:renderBlenderCycles', opts),
     getBlenderStatus: () => ipcRenderer.invoke('viewport:getBlenderStatus'),
+    runArchitectureSelfTest: () => ipcRenderer.invoke('viewport:runArchitectureSelfTest'),
     getImportPipelineStatus: () => ipcRenderer.invoke('viewport:getImportPipelineStatus'),
     importScenePipeline: (opts) => ipcRenderer.invoke('viewport:importScenePipeline', opts),
     getPhysicsPipelineStatus: () => ipcRenderer.invoke('viewport:getPhysicsPipelineStatus'),

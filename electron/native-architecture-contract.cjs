@@ -29,7 +29,50 @@ const ARCHITECTURE_CONTRACT = Object.freeze({
       owner: 'native/jepow-engine physics_pipeline',
     }),
   }),
+  phases: Object.freeze({
+    skeleton: Object.freeze({
+      label: '骨架完成',
+      description: '模块边界、IPC、状态、自检和诊断链路已固定。',
+    }),
+    runtime: Object.freeze({
+      label: 'Runtime 填充中',
+      description: '把占位接口替换为真实导入器、渲染器和物理 runtime。',
+    }),
+    production: Object.freeze({
+      label: '生产能力就绪',
+      description: '核心 runtime 可用于真实项目并进入性能/稳定性优化。',
+    }),
+  }),
 });
+
+function buildArchitectureProgress(architecture) {
+  const entries = Object.entries(architecture);
+  const wiredCount = entries.filter(([, feature]) => feature.status).length;
+  const productionCount = entries.filter(([, feature]) => feature.productionReady).length;
+  const total = entries.length || 1;
+  const currentPhase =
+    productionCount === total
+      ? 'production'
+      : wiredCount === total
+        ? 'runtime'
+        : 'skeleton';
+  return {
+    currentPhase,
+    currentPhaseLabel: ARCHITECTURE_CONTRACT.phases[currentPhase].label,
+    description: ARCHITECTURE_CONTRACT.phases[currentPhase].description,
+    wiredCount,
+    productionCount,
+    total,
+    skeletonPercent: Math.round((wiredCount / total) * 100),
+    productionPercent: Math.round((productionCount / total) * 100),
+    nextMilestone:
+      currentPhase === 'production'
+        ? '持续优化大型项目性能、稳定性和工具体验。'
+        : currentPhase === 'runtime'
+          ? '把 Assimp/USD 和 Bullet/Jolt 从占位 runtime 替换为真实 runtime。'
+          : '补齐固定架构所有模块的命令、IPC、状态与诊断链路。',
+  };
+}
 
 function buildArchitectureStatus({ nativeAvailable, cyclesAvailable, nativeArchitecture }) {
   const importersWired = !!nativeArchitecture?.importers?.architecture_wired;
@@ -78,5 +121,6 @@ function buildArchitectureStatus({ nativeAvailable, cyclesAvailable, nativeArchi
 
 module.exports = {
   ARCHITECTURE_CONTRACT,
+  buildArchitectureProgress,
   buildArchitectureStatus,
 };

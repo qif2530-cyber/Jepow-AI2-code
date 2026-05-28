@@ -9,12 +9,26 @@ pub struct Vertex {
     pub pos: [f32; 3],
     /// World/object normal for clay shading (normalized where possible).
     pub normal: [f32; 3],
+    pub uv: [f32; 2],
+    pub material_tint: [f32; 3],
 }
 
 #[derive(Clone)]
 pub struct MeshData {
     pub vertices: Vec<Vertex>,
     pub indices: Vec<u32>,
+    pub material_color: Option<[f32; 3]>,
+    pub metallic_factor: f32,
+    pub roughness_factor: f32,
+    pub base_color_texture: Option<TextureData>,
+    pub metallic_roughness_texture: Option<TextureData>,
+}
+
+#[derive(Clone)]
+pub struct TextureData {
+    pub width: u32,
+    pub height: u32,
+    pub rgba: Vec<u8>,
 }
 
 static MESH_CACHE: OnceLock<Mutex<HashMap<String, Arc<MeshData>>>> = OnceLock::new();
@@ -32,7 +46,7 @@ fn mesh_cache_key(path: &str) -> String {
         .map(|d| d.as_millis())
         .unwrap_or(0);
     let size = meta.map(|m| m.len()).unwrap_or(0);
-    format!("v4-raw-positions:{base}:{modified}:{size}")
+    format!("v9-per-vertex-material-tint:{base}:{modified}:{size}")
 }
 
 /// Cached mesh load (parse FBX once per path per process).
@@ -55,6 +69,57 @@ fn normalize_vec3(v: [f32; 3]) -> [f32; 3] {
     } else {
         [0.0, 1.0, 0.0]
     }
+}
+
+fn clamp_color(color: [f32; 3]) -> [f32; 3] {
+    [
+        color[0].clamp(0.0, 1.0),
+        color[1].clamp(0.0, 1.0),
+        color[2].clamp(0.0, 1.0),
+    ]
+}
+
+fn gltf_image_to_rgba(image: &gltf::image::Data) -> Option<TextureData> {
+    if image.width == 0 || image.height == 0 {
+        return None;
+    }
+    let rgba = match image.format {
+        gltf::image::Format::R8G8B8A8 => image.pixels.clone(),
+        gltf::image::Format::R8G8B8 => image
+            .pixels
+            .chunks_exact(3)
+            .flat_map(|rgb| [rgb[0], rgb[1], rgb[2], 255])
+            .collect(),
+        gltf::image::Format::R8G8 => image
+            .pixels
+            .chunks_exact(2)
+            .flat_map(|rg| [rg[0], rg[0], rg[0], rg[1]])
+            .collect(),
+        gltf::image::Format::R8 => image
+            .pixels
+            .iter()
+            .flat_map(|v| [*v, *v, *v, 255])
+            .collect(),
+        _ => return None,
+    };
+    Some(TextureData {
+        width: image.width,
+        height: image.height,
+        rgba,
+    })
+}
+
+fn load_image_texture(path: &Path) -> Option<TextureData> {
+    let image = image::open(path).ok()?.to_rgba8();
+    let (width, height) = image.dimensions();
+    if width == 0 || height == 0 {
+        return None;
+    }
+    Some(TextureData {
+        width,
+        height,
+        rgba: image.into_raw(),
+    })
 }
 
 pub fn load_meshes(path: &str) -> Result<MeshData> {
@@ -87,15 +152,37 @@ fn load_meshes_uncached(path: &str) -> Result<MeshData> {
 }
 
 fn load_gltf_mesh(path: &str) -> Result<MeshData> {
-    let (doc, buffers, _) = gltf::import(path).context("gltf import")?;
+    let (doc, buffers, images) = gltf::import(path).context("gltf import")?;
     let mut vertices = Vec::new();
     let mut indices = Vec::new();
+    let mut material_color = None;
+    let mut metallic_factor = 0.0;
+    let mut roughness_factor = 0.65;
+    let mut base_color_texture = None;
+    let mut metallic_roughness_texture = None;
     let mut base: u32 = 0;
 
     for mesh in doc.meshes() {
         for prim in mesh.primitives() {
             if prim.mode() != gltf::mesh::Mode::Triangles {
                 continue;
+            }
+            let material = prim.material();
+            let pbr = material.pbr_metallic_roughness();
+            let base_color = pbr.base_color_factor();
+            let material_tint = clamp_color([base_color[0], base_color[1], base_color[2]]);
+            if material_color.is_none() {
+                material_color = Some(material_tint);
+                metallic_factor = pbr.metallic_factor().clamp(0.0, 1.0);
+                roughness_factor = pbr.roughness_factor().clamp(0.04, 1.0);
+                base_color_texture = pbr
+                    .base_color_texture()
+                    .and_then(|info| images.get(info.texture().source().index()))
+                    .and_then(gltf_image_to_rgba);
+                metallic_roughness_texture = pbr
+                    .metallic_roughness_texture()
+                    .and_then(|info| images.get(info.texture().source().index()))
+                    .and_then(gltf_image_to_rgba);
             }
             let reader = prim.reader(|buf| buffers.get(buf.index()).map(|data| data.0.as_slice()));
             let positions: Vec<[f32; 3]> = reader
@@ -106,12 +193,19 @@ fn load_gltf_mesh(path: &str) -> Result<MeshData> {
                 .read_normals()
                 .map(|n| n.collect())
                 .unwrap_or_else(|| vec![[0.0, 1.0, 0.0]; positions.len()]);
+            let texcoords: Vec<[f32; 2]> = reader
+                .read_tex_coords(0)
+                .map(|uv| uv.into_f32().collect())
+                .unwrap_or_else(|| vec![[0.0, 0.0]; positions.len()]);
 
             for (i, p) in positions.iter().enumerate() {
                 let n = normals.get(i).copied().unwrap_or([0.0, 1.0, 0.0]);
+                let uv = texcoords.get(i).copied().unwrap_or([0.0, 0.0]);
                 vertices.push(Vertex {
                     pos: *p,
                     normal: normalize_vec3(n),
+                    uv,
+                    material_tint,
                 });
             }
 
@@ -127,7 +221,15 @@ fn load_gltf_mesh(path: &str) -> Result<MeshData> {
             base = vertices.len() as u32;
         }
     }
-    Ok(MeshData { vertices, indices })
+    Ok(MeshData {
+        vertices,
+        indices,
+        material_color,
+        metallic_factor,
+        roughness_factor,
+        base_color_texture,
+        metallic_roughness_texture,
+    })
 }
 
 fn vec3_f32(v: ufbx::Vec3) -> [f32; 3] {
@@ -192,6 +294,8 @@ fn append_fbx_mesh_triangles(
                 vertices.push(Vertex {
                     pos: vec3_f32(p),
                     normal: normalize_vec3(vec3_f32(n)),
+                    uv: [0.0, 0.0],
+                    material_tint: [1.0, 1.0, 1.0],
                 });
             }
             if tri_idx.len() == 3 {
@@ -238,17 +342,50 @@ fn load_fbx_mesh(path: &str) -> Result<MeshData> {
         append_fbx_mesh_triangles(&mut vertices, &mut indices, mesh, &node.geometry_to_world);
     }
 
-    Ok(MeshData { vertices, indices })
+    Ok(MeshData {
+        vertices,
+        indices,
+        material_color: None,
+        metallic_factor: 0.0,
+        roughness_factor: 0.65,
+        base_color_texture: None,
+        metallic_roughness_texture: None,
+    })
 }
 
 fn load_obj_mesh(path: &str) -> Result<MeshData> {
-    let (models, _) = tobj::load_obj(path, &tobj::LoadOptions::default()).context("obj load")?;
+    let (models, materials) =
+        tobj::load_obj(path, &tobj::LoadOptions::default()).context("obj load")?;
+    let materials = materials.unwrap_or_default();
+    let material_color = models.iter().find_map(|model| {
+        model
+            .mesh
+            .material_id
+            .and_then(|id| materials.get(id))
+            .and_then(|material| material.diffuse)
+            .map(clamp_color)
+    });
+    let base_dir = Path::new(path).parent().unwrap_or_else(|| Path::new("."));
+    let base_color_texture = models.iter().find_map(|model| {
+        model
+            .mesh
+            .material_id
+            .and_then(|id| materials.get(id))
+            .and_then(|material| material.diffuse_texture.as_deref())
+            .and_then(|texture| load_image_texture(&base_dir.join(texture)))
+    });
     let mut vertices = Vec::new();
     let mut indices = Vec::new();
     let mut base: u32 = 0;
 
     for model in models {
         let mesh = model.mesh;
+        let material_tint = mesh
+            .material_id
+            .and_then(|id| materials.get(id))
+            .and_then(|material| material.diffuse)
+            .map(clamp_color)
+            .unwrap_or([1.0, 1.0, 1.0]);
         for i in 0..mesh.positions.len() / 3 {
             let px = mesh.positions[i * 3];
             let py = mesh.positions[i * 3 + 1];
@@ -256,9 +393,15 @@ fn load_obj_mesh(path: &str) -> Result<MeshData> {
             let nx = mesh.normals.get(i * 3).copied().unwrap_or(0.0);
             let ny = mesh.normals.get(i * 3 + 1).copied().unwrap_or(1.0);
             let nz = mesh.normals.get(i * 3 + 2).copied().unwrap_or(0.0);
+            let uv = [
+                mesh.texcoords.get(i * 2).copied().unwrap_or(0.0),
+                mesh.texcoords.get(i * 2 + 1).copied().unwrap_or(0.0),
+            ];
             vertices.push(Vertex {
                 pos: [px, py, pz],
                 normal: normalize_vec3([nx, ny, nz]),
+                uv,
+                material_tint,
             });
         }
         for idx in &mesh.indices {
@@ -266,6 +409,14 @@ fn load_obj_mesh(path: &str) -> Result<MeshData> {
         }
         base = vertices.len() as u32;
     }
-    Ok(MeshData { vertices, indices })
+    Ok(MeshData {
+        vertices,
+        indices,
+        material_color,
+        metallic_factor: 0.0,
+        roughness_factor: 0.72,
+        base_color_texture,
+        metallic_roughness_texture: None,
+    })
 }
 

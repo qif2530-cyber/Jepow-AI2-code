@@ -36,6 +36,7 @@ declare global {
       };
       viewport?: {
         getStatus: () => Promise<Record<string, unknown>>;
+        getArchitectureDiagnostics?: () => Promise<Record<string, unknown>>;
         pickSceneFile: () => Promise<{ canceled: boolean; filePath: string | null }>;
         openScene: (scenePath: string) => Promise<Record<string, unknown>>;
         sceneInfo: (scenePath: string) => Promise<Record<string, unknown>>;
@@ -51,6 +52,7 @@ declare global {
         readPreview: (previewUrl: string) => Promise<string | null>;
         renderBlenderCycles?: (opts: Record<string, unknown>) => Promise<Record<string, unknown>>;
         getBlenderStatus?: () => Promise<Record<string, unknown>>;
+        runArchitectureSelfTest?: () => Promise<Record<string, unknown>>;
         getImportPipelineStatus?: () => Promise<Record<string, unknown>>;
         importScenePipeline?: (opts: Record<string, unknown>) => Promise<Record<string, unknown>>;
         getPhysicsPipelineStatus?: () => Promise<Record<string, unknown>>;

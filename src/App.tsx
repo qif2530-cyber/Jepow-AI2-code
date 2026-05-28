@@ -7375,6 +7375,17 @@ export default function App() {
         materialColor:
           source?.materialColor ||
           (type === "相机" ? "#33b884" : type === "灯光" ? "#f2c94c" : "#b9bdc5"),
+        assetPath: source?.assetPath,
+        importBackend: source?.importBackend,
+        triangleCount: source?.triangleCount,
+        vertexCount: source?.vertexCount,
+        boundsMin: source?.boundsMin,
+        boundsMax: source?.boundsMax,
+        boundsSize: source?.boundsSize,
+        hasBaseColorTexture: source?.hasBaseColorTexture,
+        hasMetallicRoughnessTexture: source?.hasMetallicRoughnessTexture,
+        metallicFactor: source?.metallicFactor,
+        roughnessFactor: source?.roughnessFactor,
       };
     },
     [threeDObjects],
@@ -7385,6 +7396,12 @@ export default function App() {
       commitThreeDScene((objects) => [...objects, object], object.id);
     },
     [commitThreeDScene, createThreeDObject],
+  );
+  const importThreeDObject = useCallback(
+    (object: ThreeDObject) => {
+      commitThreeDScene((objects) => [...objects, object], object.id);
+    },
+    [commitThreeDScene],
   );
   const duplicateThreeDObject = useCallback(() => {
     if (!selectedThreeDObject) return;
@@ -8269,6 +8286,7 @@ export default function App() {
                   onSelectObject={setSelectedThreeDObjectId}
                   onSyncObjects={syncThreeDObjectsFromHost}
                   onAddObject={addThreeDObject}
+                  onImportObject={importThreeDObject}
                   onDuplicateObject={duplicateThreeDObject}
                   onDeleteObject={deleteThreeDObject}
                   onResetObject={resetThreeDObject}
@@ -9370,6 +9388,42 @@ export default function App() {
                               </span>
                             </div>
                           </label>
+                          {selectedThreeDObject?.assetPath && (
+                            <section className="rounded-[6px] border border-[#25272b] bg-[#141519] p-2">
+                              <div className="mb-1 text-[9px] font-bold text-neutral-500">
+                                导入资产
+                              </div>
+                              <div className="space-y-1 text-[10px] text-neutral-400">
+                                <div className="truncate" title={selectedThreeDObject.assetPath}>
+                                  路径：{selectedThreeDObject.assetPath}
+                                </div>
+                                <div>
+                                  Backend：{selectedThreeDObject.importBackend || "native"}
+                                </div>
+                                <div>
+                                  三角面：{selectedThreeDObject.triangleCount || 0} · 顶点：
+                                  {selectedThreeDObject.vertexCount || 0}
+                                </div>
+                                {selectedThreeDObject.boundsSize && (
+                                  <div>
+                                    尺寸：{selectedThreeDObject.boundsSize
+                                      .map((value) => value.toFixed(2))
+                                      .join(" × ")}
+                                  </div>
+                                )}
+                                <div>
+                                  贴图：{selectedThreeDObject.hasBaseColorTexture ? "Base Color 已接入" : "无"}
+                                </div>
+                                <div>
+                                  MR 贴图：{selectedThreeDObject.hasMetallicRoughnessTexture ? "已接入" : "无"}
+                                </div>
+                                <div>
+                                  PBR：M {selectedThreeDObject.metallicFactor?.toFixed(2) ?? "0.00"} · R{" "}
+                                  {selectedThreeDObject.roughnessFactor?.toFixed(2) ?? "0.65"}
+                                </div>
+                              </div>
+                            </section>
+                          )}
                           <div>
                             <div className="mb-1 text-[9px] font-bold text-neutral-500">
                               渲染器

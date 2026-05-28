@@ -2,6 +2,7 @@ use glam::{EulerRot, Mat4, Quat, Vec3, Vec4};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::io::{self, BufRead, Write};
+use std::collections::HashMap;
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::Arc;
 use std::time::Instant;
@@ -21,11 +22,33 @@ struct HostVertex {
 
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+struct ImportedHostVertex {
+    pos: [f32; 3],
+    normal: [f32; 3],
+    uv: [f32; 2],
+    material_tint: [f32; 3],
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 struct HostUniforms {
     mvp: [f32; 16],
     normal: [f32; 16],
     color_selected: [f32; 4],
     light_dir: [f32; 4],
+    material_params: [f32; 4],
+}
+
+struct ImportedGpuMesh {
+    vertex_buffer: wgpu::Buffer,
+    index_buffer: wgpu::Buffer,
+    index_count: u32,
+    material_color: Option<[f32; 3]>,
+    metallic_factor: f32,
+    roughness_factor: f32,
+    _base_color_texture: Option<wgpu::Texture>,
+    _metallic_roughness_texture: Option<wgpu::Texture>,
+    texture_bind_group: Arc<wgpu::BindGroup>,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize)]
@@ -110,6 +133,28 @@ struct HostObject {
     locked: bool,
     #[serde(default, alias = "materialColor")]
     material_color: Option<String>,
+    #[serde(default, alias = "assetPath")]
+    asset_path: Option<String>,
+    #[serde(default, alias = "importBackend")]
+    import_backend: Option<String>,
+    #[serde(default, alias = "triangleCount")]
+    triangle_count: Option<u64>,
+    #[serde(default, alias = "vertexCount")]
+    vertex_count: Option<u64>,
+    #[serde(default, alias = "boundsMin")]
+    bounds_min: Option<[f32; 3]>,
+    #[serde(default, alias = "boundsMax")]
+    bounds_max: Option<[f32; 3]>,
+    #[serde(default, alias = "boundsSize")]
+    bounds_size: Option<[f32; 3]>,
+    #[serde(default, alias = "hasBaseColorTexture")]
+    has_base_color_texture: bool,
+    #[serde(default, alias = "hasMetallicRoughnessTexture")]
+    has_metallic_roughness_texture: bool,
+    #[serde(default, alias = "metallicFactor")]
+    metallic_factor: Option<f32>,
+    #[serde(default, alias = "roughnessFactor")]
+    roughness_factor: Option<f32>,
 }
 
 fn default_visible() -> bool {
@@ -126,6 +171,17 @@ impl Default for HostObject {
             visible: true,
             locked: false,
             material_color: Some("#b9bdc5".to_string()),
+            asset_path: None,
+            import_backend: None,
+            triangle_count: None,
+            vertex_count: None,
+            bounds_min: None,
+            bounds_max: None,
+            bounds_size: None,
+            has_base_color_texture: false,
+            has_metallic_roughness_texture: false,
+            metallic_factor: None,
+            roughness_factor: None,
         }
     }
 }
@@ -199,8 +255,14 @@ struct GpuState {
     config: wgpu::SurfaceConfiguration,
     pipeline: wgpu::RenderPipeline,
     line_pipeline: wgpu::RenderPipeline,
+    imported_pipeline: wgpu::RenderPipeline,
     uniform_buffer: wgpu::Buffer,
     bind_group: wgpu::BindGroup,
+    texture_bind_group_layout: wgpu::BindGroupLayout,
+    texture_sampler: wgpu::Sampler,
+    _default_texture: wgpu::Texture,
+    _default_metallic_roughness_texture: wgpu::Texture,
+    default_texture_bind_group: Arc<wgpu::BindGroup>,
     vertex_buffer: wgpu::Buffer,
     index_buffer: wgpu::Buffer,
     index_count: u32,
@@ -209,6 +271,7 @@ struct GpuState {
     grid_vertex_buffer: wgpu::Buffer,
     grid_vertex_count: u32,
     gizmo_vertex_buffer: wgpu::Buffer,
+    imported_meshes: HashMap<String, ImportedGpuMesh>,
     depth_texture: wgpu::Texture,
     depth_view: wgpu::TextureView,
 }
@@ -258,6 +321,10 @@ impl GpuState {
             label: Some("jepow-host-shader"),
             source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Borrowed(HOST_WGSL)),
         });
+        let imported_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("jepow-host-imported-shader"),
+            source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Borrowed(IMPORTED_HOST_WGSL)),
+        });
         let uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("jepow-host-uniforms"),
             size: std::mem::size_of::<HostUniforms>() as u64,
@@ -285,11 +352,75 @@ impl GpuState {
                 resource: uniform_buffer.as_entire_binding(),
             }],
         });
+        let texture_bind_group_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("jepow-host-imported-texture-layout"),
+                entries: &[
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Texture {
+                            multisampled: false,
+                            view_dimension: wgpu::TextureViewDimension::D2,
+                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        },
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 2,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Texture {
+                            multisampled: false,
+                            view_dimension: wgpu::TextureViewDimension::D2,
+                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        },
+                        count: None,
+                    },
+                ],
+            });
+        let texture_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("jepow-host-imported-texture-sampler"),
+            address_mode_u: wgpu::AddressMode::Repeat,
+            address_mode_v: wgpu::AddressMode::Repeat,
+            address_mode_w: wgpu::AddressMode::Repeat,
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            mipmap_filter: wgpu::FilterMode::Nearest,
+            ..Default::default()
+        });
+        let default_mr_pixel = [255, 255, 255, 255];
+        let (default_texture, default_mr_texture, default_texture_bind_group_raw) =
+            create_imported_texture_bind_group(
+            &device,
+            &queue,
+            &texture_bind_group_layout,
+            &texture_sampler,
+            "jepow-host-white-texture",
+            1,
+            1,
+            &[255, 255, 255, 255],
+            1,
+            1,
+            &default_mr_pixel,
+        );
+        let default_texture_bind_group = Arc::new(default_texture_bind_group_raw);
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("jepow-host-pipeline-layout"),
             bind_group_layouts: &[&bind_group_layout],
             push_constant_ranges: &[],
         });
+        let imported_pipeline_layout =
+            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("jepow-host-imported-pipeline-layout"),
+                bind_group_layouts: &[&bind_group_layout, &texture_bind_group_layout],
+                push_constant_ranges: &[],
+            });
         let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("jepow-host-pipeline"),
             layout: Some(&pipeline_layout),
@@ -389,6 +520,65 @@ impl GpuState {
             multiview: None,
             cache: None,
         });
+        let imported_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("jepow-host-imported-pipeline"),
+            layout: Some(&imported_pipeline_layout),
+            vertex: wgpu::VertexState {
+                module: &imported_shader,
+                entry_point: Some("vs_main"),
+                buffers: &[wgpu::VertexBufferLayout {
+                    array_stride: std::mem::size_of::<ImportedHostVertex>() as wgpu::BufferAddress,
+                    step_mode: wgpu::VertexStepMode::Vertex,
+                    attributes: &[
+                        wgpu::VertexAttribute {
+                            offset: 0,
+                            shader_location: 0,
+                            format: wgpu::VertexFormat::Float32x3,
+                        },
+                        wgpu::VertexAttribute {
+                            offset: 12,
+                            shader_location: 1,
+                            format: wgpu::VertexFormat::Float32x3,
+                        },
+                        wgpu::VertexAttribute {
+                            offset: 24,
+                            shader_location: 2,
+                            format: wgpu::VertexFormat::Float32x2,
+                        },
+                        wgpu::VertexAttribute {
+                            offset: 32,
+                            shader_location: 3,
+                            format: wgpu::VertexFormat::Float32x3,
+                        },
+                    ],
+                }],
+                compilation_options: Default::default(),
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &imported_shader,
+                entry_point: Some("fs_main"),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format,
+                    blend: Some(wgpu::BlendState::REPLACE),
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+                compilation_options: Default::default(),
+            }),
+            primitive: wgpu::PrimitiveState {
+                cull_mode: Some(wgpu::Face::Back),
+                ..Default::default()
+            },
+            depth_stencil: Some(wgpu::DepthStencilState {
+                format: wgpu::TextureFormat::Depth32Float,
+                depth_write_enabled: true,
+                depth_compare: wgpu::CompareFunction::Less,
+                stencil: wgpu::StencilState::default(),
+                bias: wgpu::DepthBiasState::default(),
+            }),
+            multisample: wgpu::MultisampleState::default(),
+            multiview: None,
+            cache: None,
+        });
         let (vertices, indices) = cube_mesh();
         let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("jepow-host-cube-vb"),
@@ -427,8 +617,14 @@ impl GpuState {
             config,
             pipeline,
             line_pipeline,
+            imported_pipeline,
             uniform_buffer,
             bind_group,
+            texture_bind_group_layout,
+            texture_sampler,
+            _default_texture: default_texture,
+            _default_metallic_roughness_texture: default_mr_texture,
+            default_texture_bind_group,
             vertex_buffer,
             index_buffer,
             index_count: indices.len() as u32,
@@ -437,6 +633,7 @@ impl GpuState {
             grid_vertex_buffer,
             grid_vertex_count: grid_vertices.len() as u32,
             gizmo_vertex_buffer,
+            imported_meshes: HashMap::new(),
             depth_texture,
             depth_view,
         })
@@ -454,6 +651,82 @@ impl GpuState {
         let (depth_texture, depth_view) = create_depth(&self.device, width, height);
         self.depth_texture = depth_texture;
         self.depth_view = depth_view;
+    }
+
+    fn imported_mesh_for(&mut self, asset_path: &str) -> Option<&ImportedGpuMesh> {
+        if !self.imported_meshes.contains_key(asset_path) {
+            let mesh = crate::mesh_loader::load_meshes(asset_path).ok()?;
+            if mesh.indices.len() > u32::MAX as usize {
+                return None;
+            }
+            let vertices: Vec<ImportedHostVertex> = mesh
+                .vertices
+                .iter()
+                .map(|vertex| ImportedHostVertex {
+                    pos: vertex.pos,
+                    normal: vertex.normal,
+                    uv: vertex.uv,
+                    material_tint: vertex.material_tint,
+                })
+                .collect();
+            let texture_resources = if mesh.base_color_texture.is_some()
+                || mesh.metallic_roughness_texture.is_some()
+            {
+                let white = [255, 255, 255, 255];
+                let fallback_mr = [255, 255, 255, 255];
+                let base_texture = mesh.base_color_texture.as_ref();
+                let mr_texture = mesh.metallic_roughness_texture.as_ref();
+                Some(
+                create_imported_texture_bind_group(
+                    &self.device,
+                    &self.queue,
+                    &self.texture_bind_group_layout,
+                    &self.texture_sampler,
+                    "jepow-host-imported-base-color-texture",
+                    base_texture.map(|texture| texture.width).unwrap_or(1),
+                    base_texture.map(|texture| texture.height).unwrap_or(1),
+                    base_texture.map(|texture| texture.rgba.as_slice()).unwrap_or(&white),
+                    mr_texture.map(|texture| texture.width).unwrap_or(1),
+                    mr_texture.map(|texture| texture.height).unwrap_or(1),
+                    mr_texture.map(|texture| texture.rgba.as_slice()).unwrap_or(&fallback_mr),
+                )
+                )
+            } else {
+                None
+            };
+            let (base_color_texture, metallic_roughness_texture, texture_bind_group) =
+                match texture_resources {
+                Some((base_texture, mr_texture, bind_group)) => {
+                    (Some(base_texture), Some(mr_texture), Arc::new(bind_group))
+                }
+                None => (None, None, self.default_texture_bind_group.clone()),
+            };
+            let index_buffer = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("jepow-host-imported-mesh-ib"),
+                contents: bytemuck::cast_slice(&mesh.indices),
+                usage: wgpu::BufferUsages::INDEX,
+            });
+            let vertex_buffer = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("jepow-host-imported-mesh-vb"),
+                contents: bytemuck::cast_slice(&vertices),
+                usage: wgpu::BufferUsages::VERTEX,
+            });
+            self.imported_meshes.insert(
+                asset_path.to_string(),
+                ImportedGpuMesh {
+                    vertex_buffer,
+                    index_buffer,
+                    index_count: mesh.indices.len() as u32,
+                    material_color: mesh.material_color,
+                    metallic_factor: mesh.metallic_factor,
+                    roughness_factor: mesh.roughness_factor,
+                    _base_color_texture: base_color_texture,
+                    _metallic_roughness_texture: metallic_roughness_texture,
+                    texture_bind_group,
+                },
+            );
+        }
+        self.imported_meshes.get(asset_path)
     }
 }
 
@@ -676,6 +949,17 @@ impl HostApp {
                         "visible": object.visible,
                         "locked": object.locked,
                         "materialColor": object.material_color,
+                        "assetPath": object.asset_path,
+                        "importBackend": object.import_backend,
+                        "triangleCount": object.triangle_count,
+                        "vertexCount": object.vertex_count,
+                        "boundsMin": object.bounds_min,
+                        "boundsMax": object.bounds_max,
+                        "boundsSize": object.bounds_size,
+                        "hasBaseColorTexture": object.has_base_color_texture,
+                        "hasMetallicRoughnessTexture": object.has_metallic_roughness_texture,
+                        "metallicFactor": object.metallic_factor,
+                        "roughnessFactor": object.roughness_factor,
                         "transform": {
                             "position": object.transform.position,
                             "rotation": object.transform.rotation,
@@ -813,6 +1097,7 @@ impl HostApp {
                 normal: Mat4::IDENTITY.to_cols_array(),
                 color_selected: [0.33, 0.38, 0.44, 0.0],
                 light_dir: [0.0, 1.0, 0.0, 1.0],
+                material_params: [0.0, 0.9, 0.0, 0.0],
             };
             gpu.queue
                 .write_buffer(&gpu.uniform_buffer, 0, bytemuck::bytes_of(&grid_uniforms));
@@ -821,8 +1106,28 @@ impl HostApp {
             pass.draw(0..gpu.grid_vertex_count, 0..1);
 
             for object in self.objects.iter().filter(|object| object.visible) {
-                let model = object_model_matrix(object);
-                let base_color = display_object_color(display_mode, object);
+                let mut model = object_model_matrix(object);
+                let mut loaded_imported_mesh = false;
+                let mut imported_material_color = None;
+                let mut imported_metallic = 0.0;
+                let mut imported_roughness = 0.65;
+                if let Some(asset_path) = object.asset_path.as_deref() {
+                    if let Some(imported_mesh) = gpu.imported_mesh_for(asset_path) {
+                        model = imported_mesh_model_matrix(object);
+                        loaded_imported_mesh = true;
+                        imported_material_color = imported_mesh.material_color;
+                        imported_metallic = imported_mesh.metallic_factor;
+                        imported_roughness = imported_mesh.roughness_factor;
+                    }
+                }
+                let mut base_color = display_object_color(display_mode, object);
+                if loaded_imported_mesh && imported_material_color.is_some() {
+                    base_color = [1.0, 1.0, 1.0];
+                } else if object.material_color.is_none()
+                    && matches!(display_mode, HostDisplayMode::Material | HostDisplayMode::Cl)
+                {
+                    base_color = imported_material_color.unwrap_or(base_color);
+                }
                 let object_color = if object.locked {
                     [base_color[0] * 0.48, base_color[1] * 0.48, base_color[2] * 0.48]
                 } else {
@@ -838,6 +1143,18 @@ impl HostApp {
                         if object.id == self.selected_id && !object.locked { 1.0 } else { 0.0 },
                     ],
                     light_dir: [0.35, 0.78, 0.52, 1.0],
+                    material_params: [
+                        object
+                            .metallic_factor
+                            .unwrap_or(imported_metallic)
+                            .clamp(0.0, 1.0),
+                        object
+                            .roughness_factor
+                            .unwrap_or(imported_roughness)
+                            .clamp(0.04, 1.0),
+                        if loaded_imported_mesh { 1.0 } else { 0.0 },
+                        0.0,
+                    ],
                 };
                 gpu.queue
                     .write_buffer(&gpu.uniform_buffer, 0, bytemuck::bytes_of(&uniforms));
@@ -845,6 +1162,25 @@ impl HostApp {
                     pass.set_pipeline(&gpu.line_pipeline);
                     pass.set_vertex_buffer(0, gpu.edge_vertex_buffer.slice(..));
                     pass.draw(0..gpu.edge_vertex_count, 0..1);
+                } else if let Some(asset_path) = object.asset_path.as_deref() {
+                    if loaded_imported_mesh {
+                        pass.set_pipeline(&gpu.imported_pipeline);
+                        let imported_mesh = gpu
+                            .imported_mesh_for(asset_path)
+                            .expect("imported mesh was loaded before uniforms");
+                        pass.set_bind_group(1, imported_mesh.texture_bind_group.as_ref(), &[]);
+                        pass.set_vertex_buffer(0, imported_mesh.vertex_buffer.slice(..));
+                        pass.set_index_buffer(
+                            imported_mesh.index_buffer.slice(..),
+                            wgpu::IndexFormat::Uint32,
+                        );
+                        pass.draw_indexed(0..imported_mesh.index_count, 0, 0..1);
+                    } else {
+                        pass.set_pipeline(&gpu.pipeline);
+                        pass.set_vertex_buffer(0, gpu.vertex_buffer.slice(..));
+                        pass.set_index_buffer(gpu.index_buffer.slice(..), wgpu::IndexFormat::Uint16);
+                        pass.draw_indexed(0..gpu.index_count, 0, 0..1);
+                    }
                 } else {
                     pass.set_pipeline(&gpu.pipeline);
                     pass.set_vertex_buffer(0, gpu.vertex_buffer.slice(..));
@@ -877,6 +1213,7 @@ impl HostApp {
                         normal: Mat4::IDENTITY.to_cols_array(),
                         color_selected: [color[0], color[1], color[2], 0.0],
                         light_dir: [0.0, 1.0, 0.0, 1.0],
+                        material_params: [0.0, 0.9, 0.0, 0.0],
                     };
                     gpu.queue.write_buffer(
                         &gpu.uniform_buffer,
@@ -1255,12 +1592,130 @@ fn create_depth(
     (texture, view)
 }
 
-fn object_kind_scale(kind: &str) -> Vec3 {
-    match kind {
+fn create_uploaded_rgba_texture(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    label: &str,
+    width: u32,
+    height: u32,
+    rgba: &[u8],
+) -> wgpu::Texture {
+    let width = width.max(1);
+    let height = height.max(1);
+    let texture = device.create_texture(&wgpu::TextureDescriptor {
+        label: Some(label),
+        size: wgpu::Extent3d {
+            width,
+            height,
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: wgpu::TextureFormat::Rgba8UnormSrgb,
+        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+        view_formats: &[],
+    });
+    queue.write_texture(
+        wgpu::ImageCopyTexture {
+            texture: &texture,
+            mip_level: 0,
+            origin: wgpu::Origin3d::ZERO,
+            aspect: wgpu::TextureAspect::All,
+        },
+        rgba,
+        wgpu::ImageDataLayout {
+            offset: 0,
+            bytes_per_row: Some(4 * width),
+            rows_per_image: Some(height),
+        },
+        wgpu::Extent3d {
+            width,
+            height,
+            depth_or_array_layers: 1,
+        },
+    );
+    texture
+}
+
+fn create_imported_texture_bind_group(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    layout: &wgpu::BindGroupLayout,
+    sampler: &wgpu::Sampler,
+    label: &str,
+    base_width: u32,
+    base_height: u32,
+    base_rgba: &[u8],
+    mr_width: u32,
+    mr_height: u32,
+    mr_rgba: &[u8],
+) -> (wgpu::Texture, wgpu::Texture, wgpu::BindGroup) {
+    let base_texture =
+        create_uploaded_rgba_texture(device, queue, label, base_width, base_height, base_rgba);
+    let mr_texture = create_uploaded_rgba_texture(
+        device,
+        queue,
+        "jepow-host-imported-metallic-roughness-texture",
+        mr_width,
+        mr_height,
+        mr_rgba,
+    );
+    let base_view = base_texture.create_view(&Default::default());
+    let mr_view = mr_texture.create_view(&Default::default());
+    let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("jepow-host-imported-texture-bind"),
+        layout,
+        entries: &[
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: wgpu::BindingResource::TextureView(&base_view),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: wgpu::BindingResource::Sampler(sampler),
+            },
+            wgpu::BindGroupEntry {
+                binding: 2,
+                resource: wgpu::BindingResource::TextureView(&mr_view),
+            },
+        ],
+    });
+    (base_texture, mr_texture, bind_group)
+}
+
+fn is_imported_asset(object: &HostObject) -> bool {
+    object.asset_path.as_deref().is_some_and(|path| !path.is_empty())
+}
+
+fn object_kind_scale(object: &HostObject) -> Vec3 {
+    if is_imported_asset(object) {
+        return imported_asset_proxy_scale(object);
+    }
+    match object.kind.as_str() {
         "camera" | "相机" => Vec3::new(1.3, 0.75, 0.55),
         "light" | "灯光" => Vec3::splat(0.32),
         _ => Vec3::splat(1.25),
     }
+}
+
+fn imported_asset_proxy_scale(object: &HostObject) -> Vec3 {
+    if let Some(size) = object.bounds_size {
+        let raw = Vec3::new(size[0].abs(), size[1].abs(), size[2].abs());
+        if raw.max_element() > 1e-4 {
+            let normalized = raw / raw.max_element();
+            let triangles = object.triangle_count.unwrap_or(0).max(1) as f32;
+            let footprint = (triangles.log10() * 0.22 + 1.45).clamp(1.35, 4.5);
+            return Vec3::new(
+                normalized.x.max(0.18) * footprint,
+                normalized.y.max(0.18) * footprint,
+                normalized.z.max(0.18) * footprint,
+            );
+        }
+    }
+    let triangles = object.triangle_count.unwrap_or(0).max(1) as f32;
+    let footprint = (triangles.log10() * 0.34 + 1.15).clamp(1.35, 4.2);
+    Vec3::new(footprint, (footprint * 0.62).max(0.85), footprint)
 }
 
 fn object_kind_color(kind: &str) -> [f32; 3] {
@@ -1281,14 +1736,33 @@ fn display_background(mode: HostDisplayMode) -> wgpu::Color {
 }
 
 fn display_object_color(mode: HostDisplayMode, object: &HostObject) -> [f32; 3] {
+    let imported_fallback = || {
+        if is_imported_asset(object) {
+            [0.48, 0.62, 1.0]
+        } else {
+            object_kind_color(&object.kind)
+        }
+    };
     match mode {
-        HostDisplayMode::Wireframe => [0.82, 0.88, 0.96],
-        HostDisplayMode::Solid => [0.68, 0.70, 0.74],
+        HostDisplayMode::Wireframe => {
+            if is_imported_asset(object) {
+                [0.55, 0.70, 1.0]
+            } else {
+                [0.82, 0.88, 0.96]
+            }
+        }
+        HostDisplayMode::Solid => {
+            if is_imported_asset(object) {
+                [0.42, 0.52, 0.78]
+            } else {
+                [0.68, 0.70, 0.74]
+            }
+        }
         HostDisplayMode::Material => object
             .material_color
             .as_deref()
             .and_then(parse_hex_color)
-            .unwrap_or_else(|| object_kind_color(&object.kind)),
+            .unwrap_or_else(imported_fallback),
         HostDisplayMode::Cl => object
             .material_color
             .as_deref()
@@ -1301,7 +1775,8 @@ fn display_object_color(mode: HostDisplayMode, object: &HostObject) -> [f32; 3] 
             .unwrap_or_else(|| match object.kind.as_str() {
                 "camera" | "相机" => [0.20, 0.72, 0.52],
                 "light" | "灯光" => [0.92, 0.78, 0.30],
-                _ => [0.74, 0.77, 0.83],
+                    _ if is_imported_asset(object) => [0.46, 0.58, 0.95],
+                    _ => [0.74, 0.77, 0.83],
             }),
     }
 }
@@ -1353,12 +1828,48 @@ fn object_model_matrix(object: &HostObject) -> Mat4 {
         transform.scale[0].max(0.01),
         transform.scale[1].max(0.01),
         transform.scale[2].max(0.01),
-    ) * object_kind_scale(&object.kind);
+    ) * object_kind_scale(object);
     Mat4::from_scale_rotation_translation(
         scale,
         rot,
         Vec3::from_array(transform.position),
     )
+}
+
+fn imported_mesh_model_matrix(object: &HostObject) -> Mat4 {
+    let transform = &object.transform;
+    let rot = Quat::from_euler(
+        EulerRot::XYZ,
+        transform.rotation[0].to_radians(),
+        transform.rotation[1].to_radians(),
+        transform.rotation[2].to_radians(),
+    );
+    let user_scale = Vec3::new(
+        transform.scale[0].max(0.01),
+        transform.scale[1].max(0.01),
+        transform.scale[2].max(0.01),
+    );
+    let Some(min) = object.bounds_min else {
+        return object_model_matrix(object);
+    };
+    let Some(max) = object.bounds_max else {
+        return object_model_matrix(object);
+    };
+    let min = Vec3::from_array(min);
+    let max = Vec3::from_array(max);
+    let center = (min + max) * 0.5;
+    let size = (max - min).abs();
+    let max_extent = size.max_element();
+    if max_extent <= 1e-5 {
+        return object_model_matrix(object);
+    }
+    let triangles = object.triangle_count.unwrap_or(0).max(1) as f32;
+    let target = (triangles.log10() * 0.22 + 1.45).clamp(1.35, 4.5);
+    let normalize = target / max_extent;
+    Mat4::from_translation(Vec3::from_array(transform.position))
+        * Mat4::from_quat(rot)
+        * Mat4::from_scale(user_scale * Vec3::splat(normalize))
+        * Mat4::from_translation(-center)
 }
 
 fn build_camera_matrices(
@@ -1475,6 +1986,17 @@ fn default_objects() -> Vec<HostObject> {
             visible: true,
             locked: false,
             material_color: Some("#33b884".to_string()),
+            asset_path: None,
+            import_backend: None,
+            triangle_count: None,
+            vertex_count: None,
+            bounds_min: None,
+            bounds_max: None,
+            bounds_size: None,
+            has_base_color_texture: false,
+            has_metallic_roughness_texture: false,
+            metallic_factor: None,
+            roughness_factor: None,
             transform: HostTransform {
                 position: [-2.6, 0.6, 0.0],
                 scale: [1.0, 1.0, 1.0],
@@ -1489,6 +2011,17 @@ fn default_objects() -> Vec<HostObject> {
             visible: true,
             locked: false,
             material_color: Some("#f2c94c".to_string()),
+            asset_path: None,
+            import_backend: None,
+            triangle_count: None,
+            vertex_count: None,
+            bounds_min: None,
+            bounds_max: None,
+            bounds_size: None,
+            has_base_color_texture: false,
+            has_metallic_roughness_texture: false,
+            metallic_factor: None,
+            roughness_factor: None,
             transform: HostTransform {
                 position: [2.2, 1.8, 0.0],
                 scale: [1.0, 1.0, 1.0],
@@ -1607,6 +2140,7 @@ struct Uniforms {
   normal_matrix: mat4x4<f32>,
   color_selected: vec4<f32>,
   light_dir: vec4<f32>,
+  material_params: vec4<f32>,
 }
 @group(0) @binding(0) var<uniform> uniforms: Uniforms;
 
@@ -1637,6 +2171,68 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
   let selected = uniforms.color_selected.w;
   let glow = vec3<f32>(0.24, 0.45, 0.85) * selected * 0.28;
   let color = base * (0.34 + ndotl * 0.78) + glow;
+  return vec4<f32>(color, 1.0);
+}
+"#;
+
+const IMPORTED_HOST_WGSL: &str = r#"
+struct Uniforms {
+  mvp: mat4x4<f32>,
+  normal_matrix: mat4x4<f32>,
+  color_selected: vec4<f32>,
+  light_dir: vec4<f32>,
+  material_params: vec4<f32>,
+}
+@group(0) @binding(0) var<uniform> uniforms: Uniforms;
+@group(1) @binding(0) var base_color_texture: texture_2d<f32>;
+@group(1) @binding(1) var base_color_sampler: sampler;
+@group(1) @binding(2) var metallic_roughness_texture: texture_2d<f32>;
+
+struct VertexInput {
+  @location(0) pos: vec3<f32>,
+  @location(1) normal: vec3<f32>,
+  @location(2) uv: vec2<f32>,
+  @location(3) material_tint: vec3<f32>,
+};
+
+struct VertexOutput {
+  @builtin(position) pos: vec4<f32>,
+  @location(0) normal: vec3<f32>,
+  @location(1) uv: vec2<f32>,
+  @location(2) material_tint: vec3<f32>,
+};
+
+@vertex
+fn vs_main(input: VertexInput) -> VertexOutput {
+  var out: VertexOutput;
+  out.pos = uniforms.mvp * vec4<f32>(input.pos, 1.0);
+  out.normal = normalize((uniforms.normal_matrix * vec4<f32>(input.normal, 0.0)).xyz);
+  out.uv = vec2<f32>(input.uv.x, 1.0 - input.uv.y);
+  out.material_tint = input.material_tint;
+  return out;
+}
+
+@fragment
+fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
+  let n = normalize(input.normal);
+  let l = normalize(uniforms.light_dir.xyz);
+  let v = vec3<f32>(0.0, 0.0, 1.0);
+  let h = normalize(l + v);
+  let ndotl = max(dot(n, l), 0.0);
+  let ndoth = max(dot(n, h), 0.0);
+  let sampled = textureSample(base_color_texture, base_color_sampler, input.uv).rgb;
+  let mr_sample = textureSample(metallic_roughness_texture, base_color_sampler, input.uv).rgb;
+  let metallic = clamp(uniforms.material_params.x * mr_sample.b, 0.0, 1.0);
+  let roughness = clamp(uniforms.material_params.y * mr_sample.g, 0.04, 1.0);
+  let base = uniforms.color_selected.xyz * input.material_tint * sampled;
+  let selected = uniforms.color_selected.w;
+  let dielectric = vec3<f32>(0.04, 0.04, 0.04);
+  let f0 = dielectric * (1.0 - metallic) + base * metallic;
+  let spec_power = mix(96.0, 8.0, roughness);
+  let specular = f0 * pow(ndoth, spec_power) * (1.0 - roughness * 0.55);
+  let diffuse = base * (1.0 - metallic * 0.75);
+  let glow = vec3<f32>(0.24, 0.45, 0.85) * selected * 0.28;
+  let color = diffuse * (0.28 + ndotl * 0.74) + specular + glow;
   return vec4<f32>(color, 1.0);
 }
 "#;
