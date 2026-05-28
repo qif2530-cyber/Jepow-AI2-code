@@ -198,6 +198,59 @@ function registerViewportIpc(ipcMain) {
       blenderVersion: ping?.blender_version,
     };
   });
+
+  ipcMain.handle('viewportHost:start', async (_e, opts) => {
+    return nativeEngine.startViewportHost(opts || {});
+  });
+
+  ipcMain.handle('viewportHost:setBounds', async (_e, bounds) => {
+    return nativeEngine.setViewportHostBounds(bounds || {});
+  });
+
+  ipcMain.handle('viewportHost:setVisible', async (_e, visible) => {
+    return nativeEngine.setViewportHostVisible(!!visible);
+  });
+
+  ipcMain.handle('viewportHost:setScene', async (_e, payload) => {
+    return nativeEngine.setViewportHostScene(payload || {});
+  });
+
+  ipcMain.handle('viewportHost:setTool', async (_e, tool) => {
+    return nativeEngine.setViewportHostTool(tool || 'select');
+  });
+
+  ipcMain.handle('viewportHost:setCamera', async (_e, camera) => {
+    return nativeEngine.setViewportHostCamera(camera || {});
+  });
+
+  ipcMain.handle('viewportHost:setDisplayMode', async (_e, mode) => {
+    return nativeEngine.setViewportHostDisplayMode(mode || 'solid');
+  });
+
+  ipcMain.handle('viewportHost:setSnap', async (_e, snap) => {
+    return nativeEngine.setViewportHostSnap(snap || {});
+  });
+
+  ipcMain.handle('viewportHost:focusSelection', async () => {
+    return nativeEngine.focusViewportHostSelection();
+  });
+
+  ipcMain.handle('viewportHost:setSelection', async (_e, objectId) => {
+    return nativeEngine.setViewportHostSelection(objectId || '');
+  });
+
+  ipcMain.handle('viewportHost:setObjectTransform', async (_e, objectId, transform) => {
+    return nativeEngine.setViewportHostObjectTransform(objectId || '', transform || {});
+  });
+
+  ipcMain.handle('viewportHost:getState', async () => {
+    return nativeEngine.getViewportHostState();
+  });
+
+  ipcMain.handle('viewportHost:stop', async () => {
+    nativeEngine.killViewportHost();
+    return { ok: true, stopped: true };
+  });
 }
 
 module.exports = { registerViewportIpc };

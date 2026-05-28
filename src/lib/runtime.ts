@@ -52,6 +52,24 @@ declare global {
         renderBlenderCycles?: (opts: Record<string, unknown>) => Promise<Record<string, unknown>>;
         getBlenderStatus?: () => Promise<Record<string, unknown>>;
       };
+      viewportHost?: {
+        start: (opts?: Record<string, unknown>) => Promise<Record<string, unknown>>;
+        setBounds: (bounds: Record<string, unknown>) => Promise<Record<string, unknown>>;
+        setVisible: (visible: boolean) => Promise<Record<string, unknown>>;
+        setScene: (payload: Record<string, unknown>) => Promise<Record<string, unknown>>;
+        setTool: (tool: string) => Promise<Record<string, unknown>>;
+        setCamera?: (camera: Record<string, unknown>) => Promise<Record<string, unknown>>;
+        setDisplayMode?: (mode: string) => Promise<Record<string, unknown>>;
+        setSnap?: (snap: Record<string, unknown>) => Promise<Record<string, unknown>>;
+        focusSelection?: () => Promise<Record<string, unknown>>;
+        setSelection: (objectId: string) => Promise<Record<string, unknown>>;
+        setObjectTransform: (
+          objectId: string,
+          transform: Record<string, unknown>,
+        ) => Promise<Record<string, unknown>>;
+        getState: () => Promise<Record<string, unknown>>;
+        stop: () => Promise<Record<string, unknown>>;
+      };
       assets?: {
         pickModelFile: () => Promise<{ canceled: boolean; filePath: string | null }>;
         pickBlendFile?: () => Promise<{ canceled: boolean; filePath: string | null }>;

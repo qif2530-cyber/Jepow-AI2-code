@@ -135,6 +135,7 @@ import { ImageTo3DNode } from "./components/ImageTo3DNode";
 import { MaterialGenNode } from "./components/MaterialGenNode";
 import { MaterialReplaceNode } from "./components/MaterialReplaceNode";
 import { ThreeDEditorNode } from "./components/ThreeDEditorNode";
+import { ThreeDWorkspace, type ThreeDObject } from "./components/ThreeDWorkspace";
 import { ModelAssetNode } from "./components/ModelAssetNode";
 import { ThreeDRenderNode } from "./components/ThreeDRenderNode";
 import { CyclesLightNode } from "./components/CyclesLightNode";
@@ -266,6 +267,9 @@ let lastCursorEmitTimestamp = 0;
 
 export default function App() {
   const [viewMode, setViewMode] = useState<"node" | "video">("node");
+  const [activeWorkspace, setActiveWorkspace] = useState<
+    "node" | "3d" | "reference" | "compose"
+  >("node");
   const canvasOnly = isCanvasOnlyMode();
   const projectsLocal = shouldStoreProjectsLocally();
   const [view, setView] = useState<"landing" | "canvas">(
@@ -1914,6 +1918,45 @@ export default function App() {
   const [rightPanelMode, setRightPanelMode] = useState<"properties" | "ai">("properties");
   const [rightPanelWidth, setRightPanelWidth] = useState(304);
   const [rightPanelOutlinerHeight, setRightPanelOutlinerHeight] = useState(320);
+  const [threeDObjects, setThreeDObjects] = useState<ThreeDObject[]>([
+    {
+      id: "camera",
+      name: "Camera",
+      type: "相机" as const,
+      color: "text-emerald-300",
+      position: [-3, 1, 0] as [number, number, number],
+      rotation: [0, 0, 0] as [number, number, number],
+      scale: [1, 1, 1] as [number, number, number],
+      visible: true,
+      locked: false,
+      materialColor: "#33b884",
+    },
+    {
+      id: "cube",
+      name: "Cube",
+      type: "网格" as const,
+      color: "text-orange-300",
+      position: [0, 0, 0] as [number, number, number],
+      rotation: [0, 0, 0] as [number, number, number],
+      scale: [1, 1, 1] as [number, number, number],
+      visible: true,
+      locked: false,
+      materialColor: "#b9bdc5",
+    },
+    {
+      id: "light",
+      name: "Light",
+      type: "灯光" as const,
+      color: "text-yellow-300",
+      position: [2, -1, 0] as [number, number, number],
+      rotation: [0, 0, 0] as [number, number, number],
+      scale: [1, 1, 1] as [number, number, number],
+      visible: true,
+      locked: false,
+      materialColor: "#f2c94c",
+    },
+  ]);
+  const [selectedThreeDObjectId, setSelectedThreeDObjectId] = useState("cube");
   const [renamingNodeId, setRenamingNodeId] = useState<string | null>(null);
   const [renamingNodeLabel, setRenamingNodeLabel] = useState("");
   const [sceneRenameMenu, setSceneRenameMenu] = useState<{
@@ -7180,6 +7223,112 @@ export default function App() {
         .replace(/Node$/, "")
         .replace(/([a-z])([A-Z])/g, "$1 $2")
     : "未选择对象";
+  const selectedThreeDObject =
+    threeDObjects.find((object) => object.id === selectedThreeDObjectId) ||
+    threeDObjects[0];
+  const createThreeDObject = useCallback(
+    (type: ThreeDObject["type"], source?: ThreeDObject): ThreeDObject => {
+      const typeMeta: Record<ThreeDObject["type"], { prefix: string; color: string }> = {
+        相机: { prefix: "Camera", color: "text-emerald-300" },
+        网格: { prefix: "Cube", color: "text-orange-300" },
+        灯光: { prefix: "Light", color: "text-yellow-300" },
+      };
+      const sameTypeCount = threeDObjects.filter((object) => object.type === type).length + 1;
+      const id = `${typeMeta[type].prefix.toLowerCase()}-${Date.now().toString(36)}-${sameTypeCount}`;
+      return {
+        id,
+        name: source ? `${source.name} 副本` : `${typeMeta[type].prefix}.${String(sameTypeCount).padStart(3, "0")}`,
+        type,
+        color: typeMeta[type].color,
+        position: source
+          ? ([source.position[0] + 0.6, source.position[1] + 0.3, source.position[2]] as [
+              number,
+              number,
+              number,
+            ])
+          : ([sameTypeCount * 0.65 - 1, type === "灯光" ? 1.6 : 0, 0] as [number, number, number]),
+        rotation: source ? ([...source.rotation] as [number, number, number]) : [0, 0, 0],
+        scale: source ? ([...source.scale] as [number, number, number]) : [1, 1, 1],
+        visible: source?.visible !== false,
+        locked: source?.locked === true,
+        materialColor:
+          source?.materialColor ||
+          (type === "相机" ? "#33b884" : type === "灯光" ? "#f2c94c" : "#b9bdc5"),
+      };
+    },
+    [threeDObjects],
+  );
+  const addThreeDObject = useCallback(
+    (type: ThreeDObject["type"]) => {
+      const object = createThreeDObject(type);
+      setThreeDObjects((objects) => [...objects, object]);
+      setSelectedThreeDObjectId(object.id);
+    },
+    [createThreeDObject],
+  );
+  const duplicateThreeDObject = useCallback(() => {
+    if (!selectedThreeDObject) return;
+    const object = createThreeDObject(selectedThreeDObject.type, selectedThreeDObject);
+    setThreeDObjects((objects) => [...objects, object]);
+    setSelectedThreeDObjectId(object.id);
+  }, [createThreeDObject, selectedThreeDObject]);
+  const deleteThreeDObject = useCallback(() => {
+    if (!selectedThreeDObjectId) return;
+    setThreeDObjects((objects) => {
+      const nextObjects = objects.filter((object) => object.id !== selectedThreeDObjectId);
+      const nextSelected = nextObjects[0]?.id || "";
+      setSelectedThreeDObjectId(nextSelected);
+      return nextObjects;
+    });
+  }, [selectedThreeDObjectId]);
+  const resetThreeDObject = useCallback(() => {
+    if (!selectedThreeDObjectId) return;
+    setThreeDObjects((objects) =>
+      objects.map((object) =>
+        object.id === selectedThreeDObjectId && !object.locked
+          ? {
+              ...object,
+              position: [0, 0, 0],
+              rotation: [0, 0, 0],
+              scale: [1, 1, 1],
+            }
+          : object,
+      ),
+    );
+  }, [selectedThreeDObjectId]);
+  const toggleThreeDObjectVisible = useCallback((objectId: string) => {
+    setThreeDObjects((objects) =>
+      objects.map((object) =>
+        object.id === objectId ? { ...object, visible: object.visible === false } : object,
+      ),
+    );
+  }, []);
+  const toggleThreeDObjectLocked = useCallback((objectId: string) => {
+    setThreeDObjects((objects) =>
+      objects.map((object) =>
+        object.id === objectId ? { ...object, locked: object.locked !== true } : object,
+      ),
+    );
+  }, []);
+  const updateThreeDObjectVector = useCallback(
+    (
+      key: "position" | "rotation" | "scale",
+      index: number,
+      value: string,
+    ) => {
+      const numericValue = Number(value);
+      if (!Number.isFinite(numericValue)) return;
+      setThreeDObjects((objects) =>
+        objects.map((object) => {
+          if (object.id !== selectedThreeDObjectId || object.locked) return object;
+          const nextVector = [...object[key]] as [number, number, number];
+          nextVector[index] = numericValue;
+          return { ...object, [key]: nextVector };
+        }),
+      );
+    },
+    [selectedThreeDObjectId],
+  );
   const formatNodeTreeLabel = useCallback((node: Node) => {
     const typeLabels: Record<string, string> = {
       modelAssetNode: "模型资产",
@@ -7376,10 +7525,10 @@ export default function App() {
     );
   };
   const professionalModes = [
-    { id: "node", label: "无限画布", active: true },
-    { id: "3d", label: "三维视窗", active: false },
-    { id: "reference", label: "参考修图", active: false },
-    { id: "compose", label: "剪辑合成", active: false },
+    { id: "node" as const, label: "无限画布" },
+    { id: "3d" as const, label: "三维视窗" },
+    { id: "reference" as const, label: "参考修图" },
+    { id: "compose" as const, label: "剪辑合成" },
   ];
   const hiddenNodePropertyPattern =
     /(url|uri|href|path|preview|thumbnail|dataurl|base64|blob|output|result|error|status|local|remote|cache|file|image|video|glb|fbx|obj)$/i;
@@ -7854,8 +8003,8 @@ export default function App() {
                                 </span>
                               </button>
                               {isHistoryProjects && (
-                                <div className="invisible absolute left-full top-0 ml-1 w-[360px] rounded-[4px] border border-[#151619] bg-[#252629]/98 p-1 shadow-2xl opacity-0 backdrop-blur-xl transition-all group-hover/menuitem:visible group-hover/menuitem:opacity-100">
-                                  <div className="border-b border-[#34363a] px-2 py-1.5 text-[10px] font-bold tracking-wide text-neutral-500">
+                                <div className="invisible absolute left-full top-0 ml-1 w-[440px] rounded-[4px] border border-[#151619] bg-[#252629]/98 p-1 shadow-2xl opacity-0 backdrop-blur-xl transition-all group-hover/menuitem:visible group-hover/menuitem:opacity-100">
+                                  <div className="px-2 py-1 text-[10px] font-bold tracking-wide text-neutral-500">
                                     历史工程
                                   </div>
                                   {cloudProjects.length === 0 ? (
@@ -7863,15 +8012,18 @@ export default function App() {
                                       暂无历史工程
                                     </div>
                                   ) : (
-                                    <div className="max-h-[320px] overflow-y-auto">
-                                      {cloudProjects.map((project) => {
-                                        const saveLocation =
+                                    <div>
+                                      {cloudProjects.slice(0, 5).map((project) => {
+                                        const projectPath = String(
+                                          (project as any).filePath ||
+                                          (project as any).bundlePath ||
                                           (project as any).path ||
                                           (project as any).localPath ||
                                           (project as any).directory ||
                                           (projectsLocal
-                                            ? "本机 · 本地工程档案"
-                                            : "云端 · Jepow 账户");
+                                            ? "本机工程索引"
+                                            : "Jepow 云端工程"),
+                                        );
                                         return (
                                           <button
                                             key={project.id}
@@ -7880,24 +8032,15 @@ export default function App() {
                                               setActiveTopMenu(null);
                                               void handleLoadCloudProject(project.id);
                                             }}
-                                            className="w-full rounded-[3px] px-2 py-2 text-left hover:bg-[#3a3d42]"
+                                            title={`${project.name || "未命名工程"} · ${projectPath}`}
+                                            className="flex h-7 w-full items-center gap-3 rounded-[3px] px-2 text-left hover:bg-[#3a3d42]"
                                           >
-                                            <div className="truncate text-[12px] font-semibold text-neutral-100">
+                                            <span className="w-[116px] shrink-0 truncate text-[12px] font-semibold text-neutral-100">
                                               {project.name || "未命名工程"}
-                                            </div>
-                                            <div className="mt-1 truncate text-[10px] text-neutral-500">
-                                              保存位置：{saveLocation}
-                                            </div>
-                                            <div className="mt-0.5 text-[10px] text-neutral-500">
-                                              最新保存：
-                                              {new Date(project.updatedAt).toLocaleString("zh-CN", {
-                                                year: "numeric",
-                                                month: "2-digit",
-                                                day: "2-digit",
-                                                hour: "2-digit",
-                                                minute: "2-digit",
-                                              })}
-                                            </div>
+                                            </span>
+                                            <span className="min-w-0 flex-1 truncate text-[10px] text-neutral-500">
+                                              {projectPath}
+                                            </span>
                                           </button>
                                         );
                                       })}
@@ -7919,8 +8062,9 @@ export default function App() {
                   <button
                     key={mode.id}
                     type="button"
-                      className={`h-6 px-2.5 rounded-sm text-[10px] font-bold tracking-wide transition-all ${
-                      mode.active
+                    onClick={() => setActiveWorkspace(mode.id)}
+                    className={`h-6 px-2.5 rounded-sm text-[10px] font-bold tracking-wide transition-all ${
+                      activeWorkspace === mode.id
                         ? "bg-[#4772b3] text-white"
                         : "text-neutral-400 hover:text-white hover:bg-white/[0.08]"
                     }`}
@@ -7952,6 +8096,25 @@ export default function App() {
             <div className="flex flex-1 min-h-0 bg-[#1f2023]">
               <main className="relative min-w-0 flex-1 p-0.5">
                 <div className="absolute inset-0.5 overflow-hidden rounded-[12px] border border-[#25272b] bg-[#3b3d40] shadow-none">
+              {activeWorkspace === "3d" ? (
+                <ThreeDWorkspace
+                  objects={threeDObjects}
+                  selectedObjectId={selectedThreeDObjectId}
+                  onSelectObject={setSelectedThreeDObjectId}
+                  onSyncObjects={setThreeDObjects}
+                  onAddObject={addThreeDObject}
+                  onDuplicateObject={duplicateThreeDObject}
+                  onDeleteObject={deleteThreeDObject}
+                  onResetObject={resetThreeDObject}
+                  onUpdateObject={(id, patch) =>
+                    setThreeDObjects((objects) =>
+                      objects.map((object) =>
+                        object.id === id ? { ...object, ...patch } : object,
+                      ),
+                    )
+                  }
+                />
+              ) : (
               <ShotContext.Provider
                 value={{
                   globalImageModel: imageModel,
@@ -8758,6 +8921,7 @@ export default function App() {
                   )}
                 </ReactFlow>
               </ShotContext.Provider>
+              )}
                 </div>
               </main>
 
@@ -8788,7 +8952,73 @@ export default function App() {
                         <ChevronDown className="h-3 w-3" />
                         集合
                       </div>
-                      {sceneRootNodes.map((node) => renderSceneTreeNode(node))}
+                      {activeWorkspace === "3d" ? (
+                        <div className="p-1">
+                          <div className="mb-1 rounded-[3px] px-2 py-1 text-[11px] text-neutral-300">
+                            ▾ Collection
+                          </div>
+                          {threeDObjects.map((object) => (
+                            <div
+                              key={object.id}
+                              className={`ml-3 flex h-6 w-[calc(100%-0.75rem)] items-center gap-1 rounded-[3px] px-1 text-left text-[11px] ${
+                                selectedThreeDObjectId === object.id
+                                  ? "bg-blue-500/20 text-blue-100"
+                                  : "text-neutral-400 hover:bg-white/[0.06] hover:text-neutral-200"
+                              }`}
+                            >
+                              <button
+                                type="button"
+                                title={object.visible === false ? "显示" : "隐藏"}
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  toggleThreeDObjectVisible(object.id);
+                                }}
+                                className={`h-5 w-5 rounded-[3px] text-[10px] ${
+                                  object.visible === false
+                                    ? "text-neutral-600 hover:bg-white/[0.06] hover:text-neutral-300"
+                                    : "text-neutral-400 hover:bg-white/[0.06] hover:text-white"
+                                }`}
+                              >
+                                {object.visible === false ? "○" : "●"}
+                              </button>
+                              <button
+                                type="button"
+                                title={object.locked ? "解锁" : "锁定"}
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  toggleThreeDObjectLocked(object.id);
+                                }}
+                                className={`h-5 w-5 rounded-[3px] text-[10px] ${
+                                  object.locked
+                                    ? "text-amber-300 hover:bg-white/[0.06]"
+                                    : "text-neutral-600 hover:bg-white/[0.06] hover:text-neutral-300"
+                                }`}
+                              >
+                                {object.locked ? "锁" : "开"}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setSelectedThreeDObjectId(object.id)}
+                                className="flex min-w-0 flex-1 items-center gap-2 text-left"
+                              >
+                                <span className={object.visible === false ? "text-neutral-600" : object.color}>◆</span>
+                                <span className={`min-w-0 flex-1 truncate ${
+                                  object.visible === false
+                                    ? "text-neutral-600"
+                                    : object.locked
+                                      ? "text-neutral-500"
+                                      : ""
+                                }`}>
+                                  {object.name}
+                                </span>
+                                <span className="text-[10px] text-neutral-500">{object.type}</span>
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        sceneRootNodes.map((node) => renderSceneTreeNode(node))
+                      )}
                     </div>
                   </div>
                 </div>
@@ -8805,7 +9035,7 @@ export default function App() {
                       { id: "properties" as const, label: "属性", icon: Settings2 },
                       { id: "ai" as const, label: "AI 助手", icon: Sparkles },
                     ].map(({ id, label, icon: Icon }) => (
-                      <button
+                        <button
                         key={id}
                         type="button"
                         title={label}
@@ -8817,7 +9047,7 @@ export default function App() {
                         }`}
                       >
                         <Icon className="h-3.5 w-3.5" />
-                      </button>
+                        </button>
                     ))}
                   </div>
 
@@ -8901,7 +9131,105 @@ export default function App() {
                     </div>
                   ) : (
                     <>
-                  {!selectedPrimaryNode ? (
+                  {activeWorkspace === "3d" ? (
+                    <div className="space-y-2">
+                      <section className="rounded-[8px] border border-[#2b2d31] bg-[#1f2023]">
+                        <div className="border-b border-[#2b2d31] px-2 py-1 text-[10px] font-bold text-neutral-300">
+                          对象属性
+                        </div>
+                        <div className="space-y-2 p-2">
+                          <label className="block">
+                            <span className="mb-1 block text-[9px] font-bold text-neutral-500">
+                              名称
+                            </span>
+                            <input
+                              value={selectedThreeDObject?.name || ""}
+                              onChange={(event) =>
+                                setThreeDObjects((objects) =>
+                                  objects.map((object) =>
+                                    object.id === selectedThreeDObjectId
+                                      ? { ...object, name: event.target.value }
+                                      : object,
+                                  ),
+                                )
+                              }
+                              className="h-7 w-full rounded-[4px] border border-[#25272b] bg-[#141519] px-2 text-[11px] text-neutral-200 outline-none focus:border-[#4772b3]"
+                            />
+                          </label>
+                          {[
+                            ["位置", "position"],
+                            ["旋转", "rotation"],
+                            ["缩放", "scale"],
+                          ].map(([label, key]) => (
+                            <div key={key}>
+                              <div className="mb-1 text-[9px] font-bold text-neutral-500">
+                                {label}
+                              </div>
+                              <div className="grid grid-cols-3 gap-1">
+                                {(["X", "Y", "Z"] as const).map((axis, index) => (
+                                  <label key={axis} className="flex h-7 items-center rounded-[4px] border border-[#25272b] bg-[#141519] px-1">
+                                    <span className="w-3 text-[9px] font-bold text-neutral-500">
+                                      {axis}
+                                    </span>
+                                    <input
+                                      type="number"
+                                      step="0.1"
+                                      value={
+                                        selectedThreeDObject?.[
+                                          key as "position" | "rotation" | "scale"
+                                        ][index] || 0
+                                      }
+                                      onChange={(event) =>
+                                        updateThreeDObjectVector(
+                                          key as "position" | "rotation" | "scale",
+                                          index,
+                                          event.target.value,
+                                        )
+                                      }
+                                      className="min-w-0 flex-1 bg-transparent text-[10px] text-neutral-200 outline-none"
+                                    />
+                                  </label>
+                                ))}
+                              </div>
+                            </div>
+                          ))}
+                          <label className="block">
+                            <span className="mb-1 block text-[9px] font-bold text-neutral-500">
+                              材质颜色
+                            </span>
+                            <div className="flex h-7 items-center gap-2 rounded-[4px] border border-[#25272b] bg-[#141519] px-2">
+                              <input
+                                type="color"
+                                value={selectedThreeDObject?.materialColor || "#b9bdc5"}
+                                disabled={selectedThreeDObject?.locked}
+                                onChange={(event) =>
+                                  setThreeDObjects((objects) =>
+                                    objects.map((object) =>
+                                      object.id === selectedThreeDObjectId && !object.locked
+                                        ? { ...object, materialColor: event.target.value }
+                                        : object,
+                                    ),
+                                  )
+                                }
+                                className="h-5 w-8 cursor-pointer rounded border-0 bg-transparent p-0 disabled:cursor-not-allowed disabled:opacity-40"
+                              />
+                              <span className="text-[10px] uppercase text-neutral-400">
+                                {selectedThreeDObject?.materialColor || "#b9bdc5"}
+                              </span>
+                            </div>
+                          </label>
+                          <div>
+                            <div className="mb-1 text-[9px] font-bold text-neutral-500">
+                              渲染器
+                            </div>
+                            <div className="h-7 rounded-[4px] border border-[#25272b] bg-[#141519] px-2 text-[11px] leading-7 text-neutral-300">
+                              Cycles / CL
+                            </div>
+                          </div>
+                        </div>
+                      </section>
+                    </div>
+                  ) : !selectedPrimaryNode ? (
                     <div className="h-full min-h-[420px] rounded-xl border border-dashed border-white/10 bg-black/20 px-5 py-8 text-center flex flex-col items-center justify-center">
                       <MousePointer2 className="mb-3 h-8 w-8 text-neutral-600" />
                       <div className="text-[12px] font-black text-neutral-300">
@@ -9096,7 +9424,7 @@ export default function App() {
                                         ))}
                                       </select>
                                     </label>
-                                  ) : null}
+                  ) : null}
                                 </div>
                               </section>
                             );
@@ -9114,7 +9442,7 @@ export default function App() {
                                 <div className="flex items-center gap-2 text-[11px] font-bold text-neutral-100">
                                   <Video className="h-3.5 w-3.5 text-blue-300" />
                                   视频生成参数
-                                </div>
+                    </div>
                                 <Button
                                   type="button"
                                   size="sm"
@@ -9353,7 +9681,7 @@ export default function App() {
                                   )}
                                 </label>
                               ))}
-                            </div>
+            </div>
                           </section>
                         ))
                       )}
@@ -9554,17 +9882,17 @@ export default function App() {
           onMouseDown={(event) => event.stopPropagation()}
           onContextMenu={(event) => event.preventDefault()}
         >
-          <button
+                <button
             type="button"
             className="flex h-7 w-full items-center rounded-[4px] px-2 text-left text-[11px] font-medium text-neutral-200 hover:bg-[#34363a]"
-            onClick={() => {
+                  onClick={() => {
               setRenamingNodeId(sceneRenameMenu.nodeId);
               setRenamingNodeLabel(sceneRenameMenu.label);
               setSceneRenameMenu(null);
             }}
           >
             重命名
-          </button>
+                </button>
         </div>
       )}
 

@@ -197,6 +197,249 @@ function daemonRequest(payload, timeoutMs = 120000) {
 
 let engineQueue = Promise.resolve();
 
+/** @type {import('child_process').ChildProcessWithoutNullStreams | null} */
+let viewportHostProc = null;
+let viewportHostBuf = '';
+let viewportHostReqId = 0;
+/** @type {Map<number, { resolve: Function, reject: Function, timer: NodeJS.Timeout }>} */
+const viewportHostPending = new Map();
+let viewportHostStarting = null;
+
+function flushViewportHostBuffer() {
+  const lines = viewportHostBuf.split('\n');
+  viewportHostBuf = lines.pop() || '';
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    let msg;
+    try {
+      msg = JSON.parse(trimmed);
+    } catch {
+      continue;
+    }
+    const reqId = msg.id;
+    if (reqId == null) continue;
+    const pending = viewportHostPending.get(reqId);
+    if (!pending) continue;
+    clearTimeout(pending.timer);
+    viewportHostPending.delete(reqId);
+    pending.resolve(msg);
+  }
+}
+
+function killViewportHost() {
+  if (viewportHostProc && !viewportHostProc.killed) {
+    try {
+      viewportHostProc.stdin.write(`${JSON.stringify({ cmd: 'shutdown', id: 0 })}\n`);
+    } catch {
+      /* ignore */
+    }
+    viewportHostProc.kill('SIGTERM');
+  }
+  viewportHostProc = null;
+  viewportHostBuf = '';
+  viewportHostStarting = null;
+  for (const [, p] of viewportHostPending) {
+    clearTimeout(p.timer);
+    p.reject(new Error('viewport host stopped'));
+  }
+  viewportHostPending.clear();
+}
+
+function ensureViewportHost() {
+  if (viewportHostProc && !viewportHostProc.killed) {
+    return Promise.resolve(true);
+  }
+  if (viewportHostStarting) return viewportHostStarting;
+
+  viewportHostStarting = new Promise((resolve, reject) => {
+    const executable = getEngineExecutable();
+    if (!executable) {
+      viewportHostStarting = null;
+      return reject(new Error('未找到 jepow-engine'));
+    }
+
+    viewportHostProc = spawn(executable, ['viewport-host'], {
+      windowsHide: true,
+      stdio: ['pipe', 'pipe', 'pipe'],
+    });
+
+    viewportHostProc.stdout.on('data', (d) => {
+      viewportHostBuf += d.toString();
+      flushViewportHostBuffer();
+    });
+
+    viewportHostProc.stderr.on('data', (d) => {
+      const text = d.toString();
+      if (text.trim()) console.warn('[jepow viewport-host]', text.trim().slice(-600));
+    });
+
+    viewportHostProc.on('error', (err) => {
+      viewportHostStarting = null;
+      reject(err);
+    });
+
+    viewportHostProc.on('close', () => {
+      viewportHostProc = null;
+      viewportHostStarting = null;
+      for (const [, p] of viewportHostPending) {
+        clearTimeout(p.timer);
+        p.reject(new Error('viewport host exited'));
+      }
+      viewportHostPending.clear();
+    });
+
+    viewportHostRequest({ cmd: 'ping' }, 30000)
+      .then((r) => {
+        viewportHostStarting = null;
+        if (!r.ok) reject(new Error(r.error || 'viewport host ping failed'));
+        else resolve(true);
+      })
+      .catch((e) => {
+        viewportHostStarting = null;
+        reject(e);
+      });
+  });
+
+  return viewportHostStarting;
+}
+
+function viewportHostRequest(payload, timeoutMs = 60000) {
+  return ensureViewportHost().then(
+    () =>
+      new Promise((resolve, reject) => {
+        const id = ++viewportHostReqId;
+        const timer = setTimeout(() => {
+          viewportHostPending.delete(id);
+          reject(new Error(`viewport host 超时 (${payload.cmd})`));
+        }, timeoutMs);
+        viewportHostPending.set(id, { resolve, reject, timer });
+        try {
+          viewportHostProc.stdin.write(`${JSON.stringify({ ...payload, id })}\n`);
+        } catch (e) {
+          clearTimeout(timer);
+          viewportHostPending.delete(id);
+          reject(e);
+        }
+      }),
+  );
+}
+
+async function startViewportHost(opts = {}) {
+  try {
+    await ensureViewportHost();
+    if (opts.bounds) {
+      await viewportHostRequest({ cmd: 'set_bounds', ...opts.bounds }, 30000);
+    }
+    await viewportHostRequest({ cmd: 'set_visible', visible: opts.visible !== false }, 30000);
+    return { ok: true, mode: 'viewport-host', nativeSurface: true };
+  } catch (e) {
+    return { ok: false, error: e.message || String(e) };
+  }
+}
+
+async function setViewportHostBounds(bounds = {}) {
+  try {
+    await ensureViewportHost();
+    return await viewportHostRequest({ cmd: 'set_bounds', ...bounds }, 30000);
+  } catch (e) {
+    return { ok: false, error: e.message || String(e) };
+  }
+}
+
+async function setViewportHostVisible(visible) {
+  try {
+    await ensureViewportHost();
+    return await viewportHostRequest({ cmd: 'set_visible', visible: !!visible }, 30000);
+  } catch (e) {
+    return { ok: false, error: e.message || String(e) };
+  }
+}
+
+async function setViewportHostScene(payload = {}) {
+  try {
+    await ensureViewportHost();
+    return await viewportHostRequest({ cmd: 'set_scene', ...payload }, 30000);
+  } catch (e) {
+    return { ok: false, error: e.message || String(e) };
+  }
+}
+
+async function setViewportHostTool(tool) {
+  try {
+    await ensureViewportHost();
+    return await viewportHostRequest({ cmd: 'set_tool', tool }, 30000);
+  } catch (e) {
+    return { ok: false, error: e.message || String(e) };
+  }
+}
+
+async function setViewportHostCamera(camera = {}) {
+  try {
+    await ensureViewportHost();
+    return await viewportHostRequest({ cmd: 'set_camera', ...camera }, 30000);
+  } catch (e) {
+    return { ok: false, error: e.message || String(e) };
+  }
+}
+
+async function setViewportHostDisplayMode(mode) {
+  try {
+    await ensureViewportHost();
+    return await viewportHostRequest({ cmd: 'set_display_mode', mode }, 30000);
+  } catch (e) {
+    return { ok: false, error: e.message || String(e) };
+  }
+}
+
+async function setViewportHostSnap(snap = {}) {
+  try {
+    await ensureViewportHost();
+    return await viewportHostRequest({ cmd: 'set_snap', ...snap }, 30000);
+  } catch (e) {
+    return { ok: false, error: e.message || String(e) };
+  }
+}
+
+async function focusViewportHostSelection() {
+  try {
+    await ensureViewportHost();
+    return await viewportHostRequest({ cmd: 'focus_selection' }, 30000);
+  } catch (e) {
+    return { ok: false, error: e.message || String(e) };
+  }
+}
+
+async function setViewportHostSelection(objectId) {
+  try {
+    await ensureViewportHost();
+    return await viewportHostRequest({ cmd: 'set_selection', objectId }, 30000);
+  } catch (e) {
+    return { ok: false, error: e.message || String(e) };
+  }
+}
+
+async function setViewportHostObjectTransform(objectId, transform) {
+  try {
+    await ensureViewportHost();
+    return await viewportHostRequest(
+      { cmd: 'set_object_transform', objectId, transform },
+      30000,
+    );
+  } catch (e) {
+    return { ok: false, error: e.message || String(e) };
+  }
+}
+
+async function getViewportHostState() {
+  try {
+    await ensureViewportHost();
+    return await viewportHostRequest({ cmd: 'get_state' }, 30000);
+  } catch (e) {
+    return { ok: false, error: e.message || String(e) };
+  }
+}
+
 function runEngineCommand(command, payload = {}, timeoutMs = 300000) {
   const run = () =>
     new Promise((resolve, reject) => {
@@ -484,4 +727,17 @@ module.exports = {
   readCachedImageByName,
   ensureDaemon,
   killDaemon,
+  startViewportHost,
+  setViewportHostBounds,
+  setViewportHostVisible,
+  setViewportHostScene,
+  setViewportHostTool,
+  setViewportHostCamera,
+  setViewportHostDisplayMode,
+  setViewportHostSnap,
+  focusViewportHostSelection,
+  setViewportHostSelection,
+  setViewportHostObjectTransform,
+  getViewportHostState,
+  killViewportHost,
 };

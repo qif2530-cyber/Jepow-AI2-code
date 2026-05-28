@@ -5,6 +5,7 @@ mod jobs;
 mod mesh_loader;
 mod render;
 mod scene;
+mod viewport_host;
 mod viewport_session;
 
 use std::env;
@@ -27,6 +28,10 @@ fn main() {
     let args: Vec<String> = env::args().collect();
     if args.get(1).map(|s| s.as_str()) == Some("daemon") {
         daemon::run_daemon_loop();
+        return;
+    }
+    if args.get(1).map(|s| s.as_str()) == Some("viewport-host") {
+        viewport_host::run_viewport_host();
         return;
     }
     let cmd = args.get(1).map(|s| s.as_str()).unwrap_or("ping");

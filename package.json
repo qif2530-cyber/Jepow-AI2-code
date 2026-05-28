@@ -1,5 +1,5 @@
 {
-  "name": "react-example",
+  "name": "jepow-ai",
   "private": true,
   "version": "0.0.0",
   "type": "module",
@@ -119,9 +119,16 @@
       "node_modules/@esbuild/**/*"
     ],
     "win": {
+      "icon": "public/jepow-logo.png",
       "target": [
         "nsis"
       ]
+    },
+    "mac": {
+      "icon": "public/jepow-logo.png"
+    },
+    "linux": {
+      "icon": "public/jepow-logo.png"
     },
     "nsis": {
       "oneClick": false,

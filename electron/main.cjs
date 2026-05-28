@@ -22,6 +22,8 @@ function resolveWebUrl() {
 const WEB_URL = resolveWebUrl();
 const useLocalApi = WEB_URL === `http://127.0.0.1:${API_PORT}`;
 
+app.setName('Jepow AI');
+
 process.env.JEPOW_WEB_URL = WEB_URL;
 
 let mainWindow = null;
@@ -177,6 +179,7 @@ function startFrontendServer() {
 }
 
 function createWindow() {
+  const appIcon = path.join(getAppRoot(), 'public', 'jepow-logo.png');
   mainWindow = new BrowserWindow({
     width: 1440,
     height: 900,
@@ -184,7 +187,8 @@ function createWindow() {
     minHeight: 640,
     show: false,
     autoHideMenuBar: true,
-    title: 'Jepow AI 画布',
+    title: 'Jepow AI',
+    icon: fs.existsSync(appIcon) ? appIcon : undefined,
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),
       contextIsolation: true,

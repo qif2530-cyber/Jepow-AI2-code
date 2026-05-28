@@ -55,4 +55,20 @@ contextBridge.exposeInMainWorld('jepowDesktop', {
     renderBlenderCycles: (opts) => ipcRenderer.invoke('viewport:renderBlenderCycles', opts),
     getBlenderStatus: () => ipcRenderer.invoke('viewport:getBlenderStatus'),
   },
+  viewportHost: {
+    start: (opts) => ipcRenderer.invoke('viewportHost:start', opts),
+    setBounds: (bounds) => ipcRenderer.invoke('viewportHost:setBounds', bounds),
+    setVisible: (visible) => ipcRenderer.invoke('viewportHost:setVisible', visible),
+    setScene: (payload) => ipcRenderer.invoke('viewportHost:setScene', payload),
+    setTool: (tool) => ipcRenderer.invoke('viewportHost:setTool', tool),
+    setCamera: (camera) => ipcRenderer.invoke('viewportHost:setCamera', camera),
+    setDisplayMode: (mode) => ipcRenderer.invoke('viewportHost:setDisplayMode', mode),
+    setSnap: (snap) => ipcRenderer.invoke('viewportHost:setSnap', snap),
+    focusSelection: () => ipcRenderer.invoke('viewportHost:focusSelection'),
+    setSelection: (objectId) => ipcRenderer.invoke('viewportHost:setSelection', objectId),
+    setObjectTransform: (objectId, transform) =>
+      ipcRenderer.invoke('viewportHost:setObjectTransform', objectId, transform),
+    getState: () => ipcRenderer.invoke('viewportHost:getState'),
+    stop: () => ipcRenderer.invoke('viewportHost:stop'),
+  },
 });
