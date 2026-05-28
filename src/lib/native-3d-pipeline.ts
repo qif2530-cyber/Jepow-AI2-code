@@ -70,6 +70,7 @@ export interface Resolved3DModel {
   nativeScenePath?: string;
   modelName?: string;
   blendSourcePath?: string;
+  blendImported?: boolean;
   sourceNodeId: string;
   sourceType: string;
 }
@@ -531,6 +532,7 @@ export function resolveModelFromSourceNode(
       nativeScenePath,
       modelName: data.modelName as string | undefined,
       blendSourcePath: data.blendSourcePath as string | undefined,
+      blendImported: data.blendImported === true,
       sourceNodeId: sourceNode.id,
       sourceType: sourceNode.type,
     };

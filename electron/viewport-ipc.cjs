@@ -2,16 +2,23 @@ const { dialog } = require('electron');
 const nativeEngine = require('./native-engine-bridge.cjs');
 
 /**
- * 3D 视口：仅走 jepow-engine（Rust/wgpu），不调用 blender.exe。
- * 导入规则对齐 Blender io_scene_fbx（坐标、节点矩阵、三角化），见 native/jepow-engine。
- * 可选：JEPOW_USE_BLENDER_VIEWPORT=1 时回退 Blender 子进程（仅调试，非产品路径）。
+ * 桌面 3D 产品路径（参考 Blender 架构，自研实现，不调用 blender.exe）：
+ *   - 视口预览：jepow-engine（Rust/wgpu，FBX 规则对齐 Blender io_scene_fbx）
+ *   - Cycles 渲染：jepow-cycles（GPL libcycles 独立进程）
+ *
+ * blender-bridge 仅用于：
+ *   - assets-ipc 一次性解析 .blend → GLB + 节点数据（导入工具，非实时视口）
+ *   - JEPOW_USE_BLENDER_VIEWPORT=1 时的 A/B 对照调试
  */
-const blenderBridgeModule = require('./blender-bridge.cjs');
 const blenderBridge =
-  process.env.JEPOW_USE_BLENDER_VIEWPORT === '1' ? blenderBridgeModule : null;
+  process.env.JEPOW_USE_BLENDER_VIEWPORT === '1'
+    ? require('./blender-bridge.cjs')
+    : null;
 
-/** GPL offline renderer (route A) — never blender.exe, never viewport daemon */
+/** GPL offline renderer — libcycles，非 blender.exe */
 const cyclesBridge = require('./jepow-cycles-bridge.cjs');
+/** 仅 .blend 导入后可选对照渲，非默认 */
+const blenderBridgeImport = require('./blender-bridge.cjs');
 
 function normalizeScenePath(scenePath) {
   if (!scenePath || typeof scenePath !== 'string') return '';
@@ -44,13 +51,13 @@ async function getCombinedStatus() {
   const nativeAvailable = !!nativeSt.available;
   const blenderAvailable = !!blenderSt?.available;
   const cyclesAvailable = !!cyclesSt?.available;
-  const useBlender = blenderBridge && blenderAvailable;
+  const useBlenderDebug = blenderBridge && blenderAvailable;
   const renderEngines = ['jepow-viewport'];
   if (cyclesAvailable) renderEngines.push('cycles-gpl');
   return {
     ok: true,
     available: nativeAvailable || blenderAvailable,
-    backend: useBlender ? 'blender' : nativeAvailable ? 'jepow-native' : 'none',
+    backend: useBlenderDebug ? 'blender-debug' : nativeAvailable ? 'jepow-native' : 'none',
     blenderAvailable,
     nativeAvailable,
     cyclesAvailable,
@@ -65,7 +72,7 @@ async function getCombinedStatus() {
     buildHint: nativeSt.buildHint || 'npm run native:build',
     renderEngines,
     message: nativeAvailable
-      ? `Jepow 原生引擎 ${nativeSt.version || ''}（FBX 导入规则对齐 Blender，非调用 Blender）`
+      ? `Jepow 自研引擎 ${nativeSt.version || ''}（架构参考 Blender，非调用 Blender）`
       : '请执行 npm run native:build 编译 jepow-engine',
     native: nativeSt,
     blender: blenderSt,
@@ -83,7 +90,7 @@ function registerViewportIpc(ipcMain) {
       filters: [
         {
           name: '3D Scene',
-          extensions: ['glb', 'gltf', 'fbx', 'obj'],
+          extensions: ['blend', 'glb', 'gltf', 'fbx', 'obj'],
         },
       ],
     });
@@ -148,15 +155,16 @@ function registerViewportIpc(ipcMain) {
     const name = previewUrl.replace('viewport-cache://', '');
     const fromNative = nativeEngine.readCachedImageByName(name);
     if (fromNative) return fromNative;
-    return blenderBridgeModule.readCachedImageByName(name);
+    return blenderBridgeImport.readCachedImageByName(name);
   });
 
-  /** 高保真：用本机 Blender 后台 Cycles 渲染 .blend（与 Blender 内效果一致） */
+  /** 可选：与 Blender 内 Cycles 逐帧对照（需安装 Blender，非产品默认路径） */
   ipcMain.handle('viewport:renderBlenderCycles', async (_e, opts) => {
     const o = opts || {};
     const blendPath = normalizeScenePath(o.blendPath);
-    const rendered = await blenderBridgeModule.renderBlenderCycles({
+    const rendered = await blenderBridgeImport.renderBlenderCycles({
       blendPath,
+      scenePath: normalizeScenePath(o.scenePath),
       width: o.width,
       height: o.height,
       samples: o.samples,
@@ -166,23 +174,23 @@ function registerViewportIpc(ipcMain) {
     if (!rendered.ok) return rendered;
     let previewDataUrl = rendered.previewDataUrl;
     if (!previewDataUrl && rendered.previewUrl) {
-      previewDataUrl = blenderBridgeModule.readCachedImageByName(
+      previewDataUrl = blenderBridgeImport.readCachedImageByName(
         rendered.previewUrl.replace('viewport-cache://', ''),
       );
     }
     return {
       ...rendered,
       previewDataUrl,
-      renderer: 'blender-cycles',
+      renderer: 'blender-cycles-reference',
     };
   });
 
   ipcMain.handle('viewport:getBlenderStatus', async () => {
-    const exe = blenderBridgeModule.getBlenderExecutable();
+    const exe = blenderBridgeImport.getBlenderExecutable();
     if (!exe) {
       return { ok: true, available: false, error: 'Blender executable not found' };
     }
-    const ping = await blenderBridgeModule.runBlenderCommand('ping', {}, 30000);
+    const ping = await blenderBridgeImport.runBlenderCommand('ping', {}, 30000);
     return {
       ok: true,
       available: !!ping?.ok,

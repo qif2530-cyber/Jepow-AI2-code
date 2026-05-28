@@ -452,8 +452,20 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
     data.texturedModel?.glbUrl ||
     (data.sceneData as { glbUrl?: string } | undefined)?.glbUrl ||
     "";
+  const sceneDataRecord = data.sceneData as
+    | {
+        glbUrl?: string;
+        nativeScenePath?: string;
+        modelName?: string;
+        blendImported?: boolean;
+      }
+    | undefined;
   const activeModelName =
     editorPipeline.model?.modelName ||
+    sceneDataRecord?.modelName ||
+    (sceneDataRecord?.nativeScenePath
+      ? sceneDataRecord.nativeScenePath.split(/[/\\]/).pop()
+      : undefined) ||
     (data.texturedModel as { modelName?: string } | undefined)?.modelName ||
     "";
   const activeMaterial = editorPipeline.materialPreview;
@@ -478,17 +490,16 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
     editorPipeline.model?.blendSourcePath ||
     (data.blendSourcePath as string | undefined) ||
     "";
-  const useBlenderFidelityRender =
-    !!blendSourcePath &&
-    (data.blendFidelityRender === true || !!editorPipeline.model?.blendSourcePath) &&
-    !!window.jepowDesktop?.viewport?.renderBlenderCycles;
   const {
     scenePath: resolvedScenePath,
     resolving: scenePathResolving,
     error: scenePathError,
   } = useDesktopScenePath(getLocalUserId(), {
-    nativeScenePath: editorPipeline.model?.nativeScenePath,
-    localAssetPath: editorPipeline.model?.nativeScenePath,
+    nativeScenePath:
+      editorPipeline.model?.nativeScenePath || sceneDataRecord?.nativeScenePath,
+    localAssetPath:
+      editorPipeline.model?.nativeScenePath ||
+      sceneDataRecord?.nativeScenePath,
     glbUrl: glbToRender,
     modelName: activeModelName,
     projectId: getCurrentProjectId(),
@@ -530,7 +541,6 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
   }, [hasNativeScene, modelNode, id, data.renderActive, updateNodeData]);
 
   const highPerfDynamic = perfProfile === "high";
-  /** The native viewport is the single interactive surface; pause only stops Cycles. */
   const showLiveViewport = hasNativeScene;
   const showPausedOverlay = hasNativeScene && !renderActive;
 
@@ -847,8 +857,9 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
     ) => {
       if (cancelled || cyclesRenderSeqRef.current !== seq) return false;
       if (frameCameraVersion !== cameraVersionRef.current) return false;
+      const previewDataUrl = res.previewDataUrl as string | undefined;
       const triCount = Number((res as { triangleCount?: number }).triangleCount ?? 0);
-      if (res.ok && res.previewDataUrl) {
+      if (res.ok && previewDataUrl) {
         if ((res as { convertedScene?: boolean }).convertedScene && triCount <= 0) {
           setCyclesFrame({
             status: "error",
@@ -863,7 +874,7 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
         );
         setCyclesFrame({
           status: finalFrame ? "done" : "rendering",
-          previewDataUrl: res.previewDataUrl,
+          previewDataUrl,
           renderSeconds: res.renderSeconds,
           cameraVersion: frameCameraVersion,
           error: undefined,
@@ -886,46 +897,17 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
         ...prev,
         status: "rendering",
         error: undefined,
-        detail: useBlenderFidelityRender
-          ? "Blender Cycles 高保真渲染中..."
-          : "启动 Cycles session...",
+        detail: "jepow-cycles 渲染中...",
       }));
-
-      if (useBlenderFidelityRender) {
-        try {
-          const stableRenderSettings = JSON.parse(renderSettingsKey);
-          const finalWidth = Number(stableRenderSettings.width) || 2048;
-          const finalHeight = Number(stableRenderSettings.height) || 1536;
-          const finalSamples = Math.max(
-            16,
-            Number(stableRenderSettings.samples) || 128,
-          );
-          const res = await window.jepowDesktop!.viewport!.renderBlenderCycles!({
-            blendPath: blendSourcePath,
-            width: finalWidth,
-            height: finalHeight,
-            samples: finalSamples,
-            useGpu: stableRenderSettings.device !== "CPU",
-          });
-          applyCyclesResult(res, true, cameraVersionRef.current);
-        } catch (err: unknown) {
-          if (cancelled || cyclesRenderSeqRef.current !== seq) return;
-          setCyclesFrame({
-            status: "error",
-            error: err instanceof Error ? err.message : "Blender Cycles 渲染失败",
-          });
-        }
-        return;
-      }
 
       const engine = getViewportEngine();
       if (!engine.renderCyclesFrame && !engine.startCyclesSession) {
-        setCyclesFrame({ status: "error", error: "Cycles 渲染入口不可用" });
+        setCyclesFrame({ status: "error", error: "Cycles 渲染入口不可用（请 npm run native:cycles:build）" });
         return;
       }
-      const scenePath = resolvedScenePath || glbToRender || "";
+      const scenePath = resolvedScenePath || "";
       if (!scenePath) {
-        setCyclesFrame({ status: "error", error: "未找到可渲染的模型路径" });
+        setCyclesFrame({ status: "error", error: "未找到可渲染的场景路径" });
         return;
       }
 
@@ -934,6 +916,8 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
       const stableTransform = JSON.parse(transformKey);
       const baseRequest = {
         scenePath,
+        blendPath: blendSourcePath || (scenePath.endsWith(".blend") ? scenePath : ""),
+        blendSourcePath,
         material: stableCyclesMaterial as any,
         cyclesMaterial: stableCyclesMaterial,
         renderSettings: JSON.parse(renderSettingsKey),
@@ -1071,7 +1055,6 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
     nativeLightingKey,
     viewportPixelSize,
     blendSourcePath,
-    useBlenderFidelityRender,
   ]);
 
   useEffect(() => {
@@ -1319,7 +1302,7 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
           </div>
         </div>
 
-        {isDesktopApp() && modelNode && !resolvedScenePath && !scenePathResolving ? (
+        {isDesktopApp() && (modelNode || glbToRender) && !resolvedScenePath && !scenePathResolving ? (
           <div className="absolute inset-0 z-20 flex flex-col items-center justify-center p-6 text-center bg-neutral-950">
             <Compass className="w-10 h-10 text-amber-400 mb-3" />
             <span className="text-[11px] font-bold text-amber-300 mb-2">

@@ -454,7 +454,7 @@ export function JepowViewportPreview({
         if (!caps.nativeAvailable) {
           setEngineError(
             caps.message ||
-              "未检测到 Blender 或 jepow-engine。FBX 请安装 Blender 到应用程序文件夹。",
+              "请执行 npm run native:build 编译 jepow-engine。",
           );
         }
       })
@@ -476,8 +476,8 @@ export function JepowViewportPreview({
       .openScene(scenePath)
       .then((info) => {
         if (cancelled) return;
-        if (info.ok) {
-          const tris = info.triangleCount ?? 0;
+        const tris = Number(info.triangleCount ?? 0);
+        if (info.ok && tris > 0) {
           setHeavyScene(tris > 80_000);
           setSceneLabel(
             `${info.extension?.toUpperCase() || "3D"} · ${info.meshCount ?? 0} 网格 · ${info.nodeCount ?? 0} 节点${
@@ -491,11 +491,23 @@ export function JepowViewportPreview({
             }`,
           );
           onSceneInfo?.(info);
+          setEngineError(null);
+          setSceneMetaReady(true);
+          return;
         }
-        setSceneMetaReady(true);
+        setEngineError(
+          info.error ||
+            (tris <= 0
+              ? "场景中没有可渲染的三角网格（GLB/FBX 可能为空）"
+              : "无法打开场景"),
+        );
+        setSceneMetaReady(false);
       })
-      .catch(() => {
-        if (!cancelled) setSceneMetaReady(true);
+      .catch((e: unknown) => {
+        if (!cancelled) {
+          setEngineError(e instanceof Error ? e.message : "打开场景失败");
+          setSceneMetaReady(false);
+        }
       });
     return () => {
       cancelled = true;
@@ -682,7 +694,7 @@ export function JepowViewportPreview({
           {engineReady === null ? "正在检测自研渲染器…" : "自研渲染器未编译"}
         </span>
         <p className="text-[10px] text-amber-100/90 leading-relaxed max-w-[270px]">
-          {engineError || "需要 Blender 或 jepow-engine"}
+          {engineError || "需要 jepow-engine"}
         </p>
       </div>
     );

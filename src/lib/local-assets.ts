@@ -108,7 +108,7 @@ export type IngestedModelNodeData = {
   nativeScenePath: string;
   localAssetPath: string;
   modelName: string;
-  viewportBackend: 'jepow-native';
+  viewportBackend: 'jepow-native' | 'blender';
   localPreviewUrl: '';
   blendSourcePath?: string;
   blendImported?: boolean;

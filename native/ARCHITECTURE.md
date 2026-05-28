@@ -68,7 +68,16 @@ npm run native:build
 | 三角化 | `ufbx::triangulate_face`（失败的面跳过，不做错误扇形剖分） |
 | 法线 | `generate_missing_normals` |
 
-**不**在运行时 `exec blender`；`electron/blender-bridge` 仅保留给 `.blend` 离线工具或 `JEPOW_USE_BLENDER_VIEWPORT=1` 调试。
+**不**在运行时 `exec blender` 做视口/Cycles 成片。
+
+| 用途 | 是否调用 `blender.exe` |
+|------|------------------------|
+| 实时白膜视口 | ❌ → `jepow-engine` (wgpu) |
+| Cycles 点击渲染 | ❌ → `jepow-cycles` (libcycles) |
+| 导入 `.blend` 解析材质/灯光/导出 GLB | ✅ 一次性 headless（`assets:importBlendProject`） |
+| `JEPOW_USE_BLENDER_VIEWPORT=1` | ✅ 仅开发对照 |
+
+「参考 Blender 架构」= 抄 **分工与算法思路**（场景图、FBX 规则、Principled、Cycles），不是把 Blender 当运行时。
 
 ## 明确不做
 

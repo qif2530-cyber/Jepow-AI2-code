@@ -32,5 +32,5 @@ export function invalidateViewportCache() {
 }
 
 export function isNativeScenePath(filePathOrName: string): boolean {
-  return /\.(glb|gltf|fbx|obj)$/i.test(filePathOrName);
+  return /\.(blend|glb|gltf|fbx|obj)$/i.test(filePathOrName);
 }

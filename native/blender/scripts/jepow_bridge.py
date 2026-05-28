@@ -339,6 +339,14 @@ def cmd_render_scene(payload: dict) -> None:
         except Exception:
             pass
 
+        if engine == "CYCLES" and hasattr(scene, "cycles"):
+            scene.cycles.samples = int(payload.get("samples", 32))
+            if payload.get("useGpu", True) and hasattr(scene.cycles, "device"):
+                try:
+                    scene.cycles.device = "GPU"
+                except Exception:
+                    pass
+
         width = int(payload.get("width", 640))
         height = int(payload.get("height", 480))
         scene.render.resolution_x = width
@@ -356,7 +364,7 @@ def cmd_render_scene(payload: dict) -> None:
                 "engine": scene.render.engine,
                 "width": width,
                 "height": height,
-                "renderer": "blender-clay",
+                "renderer": "blender-cycles" if engine == "CYCLES" else "blender-clay",
             }
         )
     except Exception as e:
@@ -854,11 +862,30 @@ def cmd_import_blend_project(payload: dict) -> None:
 
     bpy.ops.wm.open_mainfile(filepath=blend_path)
     os.makedirs(os.path.dirname(os.path.abspath(output_glb)), exist_ok=True)
-    bpy.ops.export_scene.gltf(
-        filepath=output_glb,
-        export_format="GLB",
-        export_apply=True,
-    )
+
+    for obj in bpy.data.objects:
+        if obj.type != "MESH":
+            continue
+        obj.hide_viewport = False
+        obj.hide_render = False
+
+    export_kw = {
+        "filepath": output_glb,
+        "export_format": "GLB",
+        "export_apply": True,
+        "export_texcoords": True,
+        "export_normals": True,
+    }
+    exported = False
+    for visible_key in ("use_visible", "export_visible"):
+        try:
+            bpy.ops.export_scene.gltf(**{**export_kw, visible_key: True})
+            exported = True
+            break
+        except TypeError:
+            continue
+    if not exported:
+        bpy.ops.export_scene.gltf(**export_kw)
 
     scene = bpy.context.scene
     principled = _extract_principled_material()
@@ -883,6 +910,12 @@ def cmd_import_blend_project(payload: dict) -> None:
         "farclip": 100000,
     }
     render_settings = _extract_render_settings(scene)
+    mesh_objects = [o for o in bpy.data.objects if o.type == "MESH"]
+    glb_byte_size = 0
+    try:
+        glb_byte_size = os.path.getsize(output_glb)
+    except OSError:
+        pass
 
     _emit(
         {
@@ -891,6 +924,8 @@ def cmd_import_blend_project(payload: dict) -> None:
             "glbPath": output_glb,
             "sceneName": scene.name,
             "blendFileName": os.path.basename(blend_path),
+            "meshCount": len(mesh_objects),
+            "glbByteSize": glb_byte_size,
             "principled": principled,
             "cyclesLight": {"type": "cycles_light_rig", **light_rig},
             "cyclesCamera": cycles_cam,

@@ -3,6 +3,7 @@ const path = require('path');
 const crypto = require('crypto');
 const { app, dialog } = require('electron');
 const bundle = require('./ai-project-bundle.cjs');
+/** 仅用于一次性解析 .blend → GLB + 节点蓝图，不参与实时视口 */
 const blenderBridge = require('./blender-bridge.cjs');
 const { loadIndex, findEntry, entryBundlePath } = require('./projects-ipc.cjs');
 
@@ -91,6 +92,23 @@ function registerAssetsIpc(ipcMain) {
     });
     if (!extracted.ok) {
       return extracted;
+    }
+
+    if (!fs.existsSync(glbDest)) {
+      return { ok: false, error: 'Blender 未生成 GLB 文件' };
+    }
+    const glbSize = fs.statSync(glbDest).size;
+    if (glbSize < 256) {
+      return {
+        ok: false,
+        error: '导出的 GLB 过小或为空，请确认 Blender 场景中有可见网格物体',
+      };
+    }
+    if (Number(extracted.meshCount) === 0) {
+      return {
+        ok: false,
+        error: 'Blender 场景中未发现 MESH 物体，无法预览或渲染',
+      };
     }
 
     const assetRef =

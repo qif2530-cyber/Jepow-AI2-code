@@ -2,8 +2,11 @@ import * as THREE from "three";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { OBJLoader } from "three/examples/jsm/loaders/OBJLoader.js";
 import { FBXLoader } from "three/examples/jsm/loaders/FBXLoader.js";
+import { AI_ASSET_PREFIX } from "./ai-project-format";
 import { readLocalModelBuffer, parseLocalAssetRef } from "./local-assets";
+import { resolveNativeScenePath } from "./desktop-scene-path";
 import { getAppOrigin, shouldUseLocalCanvasAssets } from "./runtime";
+import { getLocalUserId } from "./local-user-id";
 
 export function resolveModelAssetUrl(url: string): string {
   if (!url) return url;
@@ -16,9 +19,17 @@ export function getExtensionFromUrlOrName(
   url: string,
   modelName?: string,
 ): string {
+  const urlExt = (() => {
+    const clean = url.split("?")[0].split("#")[0];
+    const dot = clean.lastIndexOf(".");
+    if (dot !== -1) return clean.substring(dot).toLowerCase();
+    return "";
+  })();
+  if (urlExt && urlExt !== ".blend") return urlExt;
+
   if (modelName) {
     const ext = modelName.substring(modelName.lastIndexOf(".")).toLowerCase();
-    if (ext) return ext;
+    if (ext && ext !== ".blend") return ext;
   }
   if (url.includes("/api/media/")) {
     try {
@@ -45,6 +56,14 @@ export async function fetchModelArrayBuffer(url: string): Promise<ArrayBuffer> {
   const localPath = parseLocalAssetRef(url);
   if (localPath) {
     return readLocalModelBuffer(localPath);
+  }
+
+  if (url.startsWith(AI_ASSET_PREFIX) && shouldUseLocalCanvasAssets()) {
+    const resolved = await resolveNativeScenePath(getLocalUserId(), { glbUrl: url });
+    if (resolved.ok && resolved.scenePath) {
+      return readLocalModelBuffer(resolved.scenePath);
+    }
+    throw new Error(resolved.error || "无法解析工程内模型路径");
   }
 
   if (shouldUseLocalCanvasAssets() && /^[a-zA-Z]:[\\/]/.test(url)) {

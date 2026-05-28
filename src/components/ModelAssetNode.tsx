@@ -15,7 +15,12 @@ import {
   importBlendProjectFromPath,
   ingestBlendProjectFile,
 } from "../lib/local-assets";
-import { buildBlendProjectGraph, mergeBlendImportGraph } from "../lib/blend-project-import";
+import {
+  buildBlendCompanionGraph,
+  buildBlendProjectGraph,
+  mergeBlendImportGraph,
+  modelNodeDataFromBlueprint,
+} from "../lib/blend-project-import";
 import { isDesktopApp, shouldUseLocalCanvasAssets } from "../lib/runtime";
 import { loadModelGroup } from "../lib/model-asset-loader";
 import { JepowViewportPreview, PREVIEW_CAM_45 } from "./JepowViewportPreview";
@@ -36,6 +41,9 @@ interface ModelAssetNodeProps {
     nativeScenePath?: string;
     viewportBackend?: "web" | "jepow-native";
     renderActive?: boolean;
+    blendImported?: boolean;
+    blendSourcePath?: string;
+    previewMode?: "webgl" | "native";
   };
   selected?: boolean;
 }
@@ -242,10 +250,14 @@ export function ModelAssetNode({ id, data, selected }: ModelAssetNodeProps) {
     updateNodeData,
   ]);
 
-  /** 桌面端：自研 jepow-engine（FBX 导入规则对齐 Blender，非调用 Blender） */
-  const useDesktopNativeRenderer = desktop3d && !!scenePathForNative;
+  /** 桌面端：jepow-engine 视口（显示用导出的 GLB/FBX，.blend 仅作工程源文件） */
+  const useDesktopNativeRenderer =
+    desktop3d && !!scenePathForNative && !scenePathResolving;
 
-  const renderActive = data.renderActive === true;
+  const renderActive =
+    data.blendImported === true
+      ? data.renderActive !== false
+      : data.renderActive === true;
   const toggleRenderActive = () => {
     updateNodeData(id, { renderActive: !renderActive });
   };
@@ -287,7 +299,7 @@ export function ModelAssetNode({ id, data, selected }: ModelAssetNodeProps) {
       localPreviewUrl: "",
     });
     setLoadError(null);
-    toast.success("已导入本地场景，由 Jepow 原生渲染器加载");
+    toast.success("已导入本地场景，由 Jepow 自研引擎加载");
   };
 
   const handleImportBlendProject = async (file?: File) => {
@@ -321,12 +333,13 @@ export function ModelAssetNode({ id, data, selected }: ModelAssetNodeProps) {
       if (!imported.ok || !imported.blueprint) {
         throw new Error(imported.error || "Blender 工程解析失败");
       }
-      const graph = buildBlendProjectGraph(imported.blueprint, {
-        x: position.x + 40,
-        y: position.y + 40,
+      updateNodeData(id, modelNodeDataFromBlueprint(imported.blueprint));
+      const graph = buildBlendCompanionGraph(id, imported.blueprint, {
+        x: position.x,
+        y: position.y,
       });
       mergeBlendImportGraph(setNodes, setEdges, graph);
-      toast.success(`已导入 ${imported.blueprint.blendFileName}`);
+      toast.success(`已导入 ${imported.blueprint.blendFileName}，已连线到 3D 编辑器`);
     } catch (err: unknown) {
       toast.error(err instanceof Error ? err.message : "Blender 工程导入失败");
     } finally {
@@ -475,10 +488,10 @@ export function ModelAssetNode({ id, data, selected }: ModelAssetNodeProps) {
           className="absolute top-2 right-2 h-7 w-7 bg-black/75 hover:bg-black border border-neutral-800 text-neutral-400 hover:text-white pointer-events-auto backdrop-blur-sm rounded z-20 transition-all cursor-pointer shadow-md"
           title={
             useDesktopNativeRenderer
-              ? "素材节点为静态预览；连线到 3D 编辑器后点 ▶ 启动渲染器"
+              ? "Jepow 自研视口；连线到 3D 编辑器进行 Cycles 渲染"
               : renderActive
-                ? "暂停 WebGL 预览"
-                : "启动 WebGL 预览"
+                ? "暂停预览"
+                : "启动预览"
           }
         >
           {renderActive ? <Pause className="w-3.5 h-3.5 text-emerald-400" /> : <Play className="w-3.5 h-3.5 text-neutral-400 animate-pulse" />}
@@ -625,13 +638,10 @@ export function ModelAssetNode({ id, data, selected }: ModelAssetNodeProps) {
             </span>
           </div>
         )}
-      {desktop3d &&
-        fileExtension &&
-        (fileExtension === ".fbx" || fileExtension === ".obj") && (
+      {desktop3d && (
           <div className="mt-2 bg-emerald-500/10 border border-emerald-500/25 rounded p-2 text-[10px] text-emerald-200/90 select-none leading-relaxed text-left">
             <span>
-              桌面端模型保存在本机，由 <strong>Jepow 自研 wgpu 内核</strong> 绘制白膜（FBX
-              导入规则参照 Blender <code>io_scene_fbx</code>，不启动 Blender 程序）。
+              桌面端 3D：<strong>jepow-engine</strong> 视口 + <strong>jepow-cycles</strong> 渲染（架构参考 Blender，不调用 blender.exe）。导入 .blend 时仅用 Blender 解析一次。
             </span>
           </div>
         )}

@@ -303,15 +303,43 @@ async function importBlendProject({ blendPath, outputGlbPath }) {
 async function renderBlenderCycles(opts = {}) {
   const {
     blendPath,
+    scenePath,
     width = 1920,
     height = 1080,
     samples = 128,
     frame,
     useGpu = true,
+    cameraYaw,
+    cameraPitch,
+    cameraDistance,
+    panX,
+    panY,
   } = opts;
-  const resolved = normalizeScenePath(blendPath);
-  if (!resolved || path.extname(resolved).toLowerCase() !== '.blend') {
-    return { ok: false, error: 'blendPath (.blend) required for Blender Cycles render' };
+  const resolvedBlend = normalizeScenePath(blendPath);
+  const resolvedScene = normalizeScenePath(scenePath);
+  const resolved =
+    resolvedBlend && path.extname(resolvedBlend).toLowerCase() === '.blend'
+      ? resolvedBlend
+      : resolvedScene;
+  if (!resolved) {
+    return { ok: false, error: 'blendPath (.blend) or scenePath required for Blender Cycles' };
+  }
+  const ext = path.extname(resolved).toLowerCase();
+  if (ext !== '.blend') {
+    return renderPreview({
+      scenePath: resolved,
+      engine: 'cycles',
+      width,
+      height,
+      samples,
+      frame,
+      useGpu,
+      cameraYaw,
+      cameraPitch,
+      cameraDistance,
+      panX,
+      panY,
+    });
   }
   const id = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   const outputPath = path.join(getViewportCacheDir(), `cycles-blend-${id}.png`);
@@ -326,6 +354,11 @@ async function renderBlenderCycles(opts = {}) {
       samples,
       frame,
       useGpu,
+      cameraYaw,
+      cameraPitch,
+      cameraDistance,
+      panX,
+      panY,
     },
     DEFAULT_TIMEOUT_MS,
   );

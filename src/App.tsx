@@ -3586,7 +3586,7 @@ export default function App() {
               }
               mergeBlendImportGraph(setNodes, setEdges, ingested.graph);
               toast.success(
-                `已导入 Blender 工程并生成 Cycles 节点图`,
+                "已导入 Blender 工程：请将绿色模型线连到 3D 编辑器，或直接使用自动生成的编辑器节点",
               );
             } catch (err: unknown) {
               console.error("Blend project drop failed:", err);

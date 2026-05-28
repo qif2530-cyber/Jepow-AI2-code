@@ -15,16 +15,16 @@ export const webViewportEngine: ViewportEngine = {
       supportsBlendImport: false,
       supportsLargeScenes: false,
       renderEngines: [],
-      message: 'WebGL 回退预览。请编译 jepow-engine 启用自研原生视口。',
+      message: '浏览器环境请使用 Jepow 桌面端（jepow-engine + jepow-cycles）。',
     };
   },
 
   async openScene(): Promise<SceneInfo> {
-    return { ok: false, error: '需要 Jepow 原生引擎（npm run native:build）' };
+    return { ok: false, error: '需要 Jepow 桌面端（npm run native:build）' };
   },
 
   async renderPreview(): Promise<RenderPreviewResult> {
-    return { ok: false, error: '需要 Jepow 原生引擎' };
+    return { ok: false, error: '需要 Jepow 桌面端（npm run native:build）' };
   },
 
   async readPreviewDataUrl() {
