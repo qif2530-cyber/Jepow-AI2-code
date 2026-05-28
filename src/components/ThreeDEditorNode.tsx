@@ -634,6 +634,8 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
   const cyclesPatchInFlightRef = useRef(false);
   const pendingCameraRenderRef = useRef(false);
   const cyclesInteractLoopRef = useRef<number | null>(null);
+  const cyclesRestartTimerRef = useRef<number | null>(null);
+  const [cyclesRestartNonce, setCyclesRestartNonce] = useState(0);
   const viewportContainerRef = useRef<HTMLDivElement | null>(null);
   const [viewportPixelSize, setViewportPixelSize] = useState({ width: 640, height: 360 });
 
@@ -794,9 +796,23 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
         samples: target.samples,
         renderSettings: stableRenderSettings,
         cameraVersion: cameraVersionRef.current,
-      } as any)) as { frame?: { previewDataUrl?: string; ok?: boolean; renderSeconds?: number } };
+      } as any)) as {
+        frame?: {
+          previewDataUrl?: string;
+          ok?: boolean;
+          renderSeconds?: number;
+          cameraVersion?: number;
+        };
+        frameCaptured?: boolean;
+      };
       const patchFrame = update?.frame;
-      if (patchFrame && applyCyclesFrameUpdate(patchFrame)) return;
+      if (
+        patchFrame &&
+        (update?.frameCaptured || patchFrame.cameraVersion === cameraVersionRef.current) &&
+        applyCyclesFrameUpdate(patchFrame)
+      ) {
+        return;
+      }
       const state = (await engine.readCyclesSession?.(sessionId)) as {
         frame?: { previewDataUrl?: string; ok?: boolean; renderSeconds?: number };
       };
@@ -817,6 +833,21 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
     cyclesCameraPatchTimerRef.current = window.setTimeout(() => {
       cyclesCameraPatchTimerRef.current = null;
       void flushCyclesCameraPatch(quality);
+    }, delayMs);
+  };
+
+  const scheduleCyclesSessionRestart = (delayMs = 120) => {
+    if (cyclesRestartTimerRef.current != null) {
+      window.clearTimeout(cyclesRestartTimerRef.current);
+    }
+    cyclesRestartTimerRef.current = window.setTimeout(() => {
+      cyclesRestartTimerRef.current = null;
+      lastCyclesSessionPatchKeyRef.current = "";
+      if (activeCyclesSessionRef.current) {
+        void getViewportEngine().stopCyclesSession?.(activeCyclesSessionRef.current);
+        activeCyclesSessionRef.current = null;
+      }
+      setCyclesRestartNonce((n) => n + 1);
     }, delayMs);
   };
 
@@ -844,7 +875,6 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
       Math.abs((current.fov ?? Math.PI / 4) - (next.fov ?? Math.PI / 4)) > 0.0001;
     viewportCameraRef.current = next;
     setViewportCamera(next);
-    const nextCyclesCamera = getLiveCyclesCamera();
     const nextCameraVersion = changed ? cameraVersionRef.current + 1 : cameraVersionRef.current;
     if (changed) {
       cameraVersionRef.current = nextCameraVersion;
@@ -855,6 +885,7 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
         pendingCameraRenderRef.current = true;
         lastCyclesSessionPatchKeyRef.current = "";
         scheduleCyclesCameraPatch("interactive", 16);
+        scheduleCyclesSessionRestart(viewportInteractingRef.current ? 180 : 80);
         if (cyclesCameraSettleTimerRef.current != null) {
           window.clearTimeout(cyclesCameraSettleTimerRef.current);
         }
@@ -862,6 +893,7 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
           cyclesCameraSettleTimerRef.current = null;
           if (!cyclesWantsInteractivePatch()) {
             scheduleCyclesCameraPatch("final", 0);
+            scheduleCyclesSessionRestart(0);
           }
         }, 850);
       }
@@ -926,6 +958,9 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
       }
       if (cyclesInteractLoopRef.current != null) {
         window.clearInterval(cyclesInteractLoopRef.current);
+      }
+      if (cyclesRestartTimerRef.current != null) {
+        window.clearTimeout(cyclesRestartTimerRef.current);
       }
     },
     [],
@@ -1236,7 +1271,7 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
           error: err instanceof Error ? err.message : "Cycles 渲染失败",
         });
       }
-    }, 180);
+    }, Date.now() - lastCameraChangeAtRef.current < 3000 ? 40 : 140);
     return () => {
       cancelled = true;
       if (pollTimer != null) window.clearTimeout(pollTimer);
@@ -1259,6 +1294,8 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
     nativeLightingKey,
     viewportPixelSize,
     blendSourcePath,
+    cameraVersion,
+    cyclesRestartNonce,
   ]);
 
   useEffect(() => {
@@ -1655,18 +1692,15 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
           )
         )}
 
-        {viewportMode === "render" && cyclesFrame.previewDataUrl && (
-          <div className="absolute inset-0 z-[13] bg-transparent pointer-events-none">
+        {viewportMode === "render" &&
+          cyclesFrame.previewDataUrl &&
+          cyclesFrameMatchesCamera &&
+          !viewportInteracting && (
+          <div className="absolute inset-0 z-[13] bg-neutral-950 pointer-events-none">
             <img
               src={cyclesFrame.previewDataUrl}
               alt="Cycles Render"
-              className={`w-full h-full object-cover transition-opacity duration-200 ${
-                viewportInteracting
-                  ? "opacity-25"
-                  : cyclesFrameMatchesCamera
-                    ? "opacity-70"
-                    : "opacity-35"
-              }`}
+              className="w-full h-full object-cover opacity-100"
               onError={() =>
                 setCyclesFrame({
                   status: "error",
