@@ -29,6 +29,7 @@ import { useDesktopScenePath } from "../hooks/useDesktopScenePath";
 import { scenePathToNodePatch } from "../lib/desktop-scene-path";
 import { getLocalUserId } from "../lib/local-user-id";
 import { getCurrentProjectId } from "../lib/current-project";
+import type { ViewportCamera } from "../lib/viewport-engine/types";
 
 interface ModelAssetNodeProps {
   id: string;
@@ -44,6 +45,7 @@ interface ModelAssetNodeProps {
     blendImported?: boolean;
     blendSourcePath?: string;
     previewMode?: "webgl" | "native";
+    previewCamera?: ViewportCamera;
   };
   selected?: boolean;
 }
@@ -192,6 +194,8 @@ export function ModelAssetNode({ id, data, selected }: ModelAssetNodeProps) {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [isUploading, setIsUploading] = useState(false);
   const [canvasMounted, setCanvasMounted] = useState(false);
+  const previewCameraRef = useRef<ViewportCamera>(data.previewCamera || PREVIEW_CAM_45);
+  const previewCameraTimerRef = useRef<number | null>(null);
   const fileInputId = `model-file-uploader-${id}`;
 
   const zoom = useStore((s) => s.transform[2]);
@@ -261,6 +265,25 @@ export function ModelAssetNode({ id, data, selected }: ModelAssetNodeProps) {
   const toggleRenderActive = () => {
     updateNodeData(id, { renderActive: !renderActive });
   };
+  const persistPreviewCamera = (camera: ViewportCamera) => {
+    previewCameraRef.current = camera;
+    if (previewCameraTimerRef.current != null) {
+      window.clearTimeout(previewCameraTimerRef.current);
+    }
+    previewCameraTimerRef.current = window.setTimeout(() => {
+      previewCameraTimerRef.current = null;
+      updateNodeData(id, { previewCamera: previewCameraRef.current });
+    }, 80);
+  };
+
+  useEffect(
+    () => () => {
+      if (previewCameraTimerRef.current != null) {
+        window.clearTimeout(previewCameraTimerRef.current);
+      }
+    },
+    [],
+  );
 
   // Reset errors when URLs change
   useEffect(() => {
@@ -518,6 +541,8 @@ export function ModelAssetNode({ id, data, selected }: ModelAssetNodeProps) {
               liveRender
               lockRenderSize
               defaultCamera={PREVIEW_CAM_45}
+              viewCamera={data.previewCamera || PREVIEW_CAM_45}
+              onCameraChange={persistPreviewCamera}
               lighting={{
                 yaw: 45,
                 pitch: 35,

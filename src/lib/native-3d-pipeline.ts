@@ -71,6 +71,7 @@ export interface Resolved3DModel {
   modelName?: string;
   blendSourcePath?: string;
   blendImported?: boolean;
+  previewCamera?: Record<string, unknown>;
   sourceNodeId: string;
   sourceType: string;
 }
@@ -533,6 +534,7 @@ export function resolveModelFromSourceNode(
       modelName: data.modelName as string | undefined,
       blendSourcePath: data.blendSourcePath as string | undefined,
       blendImported: data.blendImported === true,
+        previewCamera: data.previewCamera as Record<string, unknown> | undefined,
       sourceNodeId: sourceNode.id,
       sourceType: sourceNode.type,
     };

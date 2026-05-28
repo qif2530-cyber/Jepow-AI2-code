@@ -468,6 +468,9 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
       ),
     [id, nodes, edges],
   );
+  const modelPreviewCamera = editorPipeline.model?.previewCamera as
+    | ViewportCamera
+    | undefined;
 
   const activeGlb =
     editorPipeline.model?.glbUrl ||
@@ -635,6 +638,7 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
   const pendingCameraRenderRef = useRef(false);
   const cyclesInteractLoopRef = useRef<number | null>(null);
   const cyclesRestartTimerRef = useRef<number | null>(null);
+  const lastAppliedModelPreviewCameraKeyRef = useRef("");
   const [cyclesRestartNonce, setCyclesRestartNonce] = useState(0);
   const viewportContainerRef = useRef<HTMLDivElement | null>(null);
   const [viewportPixelSize, setViewportPixelSize] = useState({ width: 640, height: 360 });
@@ -953,6 +957,18 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [viewportMode, renderActive, viewportInteracting, cameraVersion]);
+
+  useEffect(() => {
+    if (!modelPreviewCamera) return;
+    const cameraKey = JSON.stringify(modelPreviewCamera);
+    if (lastAppliedModelPreviewCameraKeyRef.current === cameraKey) return;
+    lastAppliedModelPreviewCameraKeyRef.current = cameraKey;
+    handleViewportCameraChange({
+      ...viewportCameraRef.current,
+      ...modelPreviewCamera,
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [modelPreviewCamera]);
 
   useEffect(
     () => () => {
@@ -1707,7 +1723,7 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
             <img
               src={cyclesFrame.previewDataUrl}
               alt="Cycles Render"
-              className="w-full h-full object-cover opacity-100"
+              className="w-full h-full object-cover opacity-100 pointer-events-none"
               onError={() =>
                 setCyclesFrame({
                   status: "error",
