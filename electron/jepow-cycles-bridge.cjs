@@ -1082,11 +1082,14 @@ async function runProgressiveSession(session) {
     const noNewDaemonFrame = status.ok && currentDaemonFrameVersion === lastDaemonFrameVersion;
     const waitingForFirstDaemonFrame = status.ok && currentDaemonFrameVersion === 0 && !session.frame;
     const forceFrameRead = !!session.forceFrameRead;
+    const minDaemonFrameVersion = Number(session.minDaemonFrameVersion) || 0;
     if ((noNewDaemonFrame && !forceFrameRead) || waitingForFirstDaemonFrame) {
       const now = Date.now();
       const shouldProbeFrame =
         (waitingForFirstDaemonFrame && now - lastFrameReadAttemptAt > 1400) ||
-        (forceFrameRead && now - lastFrameReadAttemptAt > 120);
+        (forceFrameRead &&
+          currentDaemonFrameVersion > minDaemonFrameVersion &&
+          now - lastFrameReadAttemptAt > 120);
       if (currentDaemonFrameVersion === 0 && Date.now() - started > 45000 && !session.frame) {
         session.status = 'error';
         session.frameVersion += 1;
@@ -1099,8 +1102,13 @@ async function runProgressiveSession(session) {
       }
       lastFrameReadAttemptAt = now;
     }
+    if (forceFrameRead && currentDaemonFrameVersion <= minDaemonFrameVersion) {
+      await new Promise((resolve) => setTimeout(resolve, session.device === 'METAL' ? 120 : 180));
+      continue;
+    }
     if (forceFrameRead) {
       session.forceFrameRead = false;
+      session.minDaemonFrameVersion = 0;
     }
     const framePath = path.join(cacheDir, `cycles-resident-${id}-${Date.now()}.png`);
     const frame = await readResidentFrameViaDaemon(session, framePath);
@@ -1260,15 +1268,18 @@ async function updateSession(sessionId, patch = {}) {
     1536,
   );
   const samples = clampNumber(session.opts.samples || session.opts.renderSettings?.samples, 1, 4096, 64);
+  const beforeStatus = await runDaemonCommand('status', { sessionId: session.id }, 1200);
+  const beforeDaemonFrameVersion = Number(beforeStatus.frameVersion) || 0;
   const res = await updateResidentCamera(session.id, session.opts, width, height, samples);
   if (res.ok) {
     session.status = 'navigating';
     session.forceFrameRead = true;
+    session.minDaemonFrameVersion = beforeDaemonFrameVersion;
     session.updatedAt = Date.now();
     scheduleNavigationSettle(session.id);
     let capturedFrame = null;
     if (patch.camera || patch.cameraVersion != null) {
-      capturedFrame = await captureResidentFrameAfterCamera(session);
+      capturedFrame = await captureResidentFrameAfterCamera(session, beforeDaemonFrameVersion);
     }
     return {
       ...res,
@@ -1288,18 +1299,26 @@ async function updateSession(sessionId, patch = {}) {
   };
 }
 
-async function captureResidentFrameAfterCamera(session) {
+async function captureResidentFrameAfterCamera(session, minDaemonFrameVersion = 0) {
   if (!session.loaded || session.stopped) return null;
   const framePath = path.join(
     getCyclesCacheDir(),
     `cycles-capture-${session.id}-${Date.now()}.png`,
   );
   let frame = { ok: false };
-  const attempts = 8;
+  const attempts = 18;
   for (let i = 0; i < attempts; i += 1) {
     if (session.stopped) return frame;
+    const status = await runDaemonCommand('status', { sessionId: session.id }, 1200);
+    const daemonFrameVersion = Number(status.frameVersion) || 0;
+    if (status.ok && daemonFrameVersion <= minDaemonFrameVersion) {
+      await new Promise((resolve) =>
+        setTimeout(resolve, session.device === 'METAL' ? 90 : 130),
+      );
+      continue;
+    }
     await new Promise((resolve) =>
-      setTimeout(resolve, session.device === 'METAL' ? 120 : 180),
+      setTimeout(resolve, session.device === 'METAL' ? 60 : 90),
     );
     frame = await readResidentFrameViaDaemon(session, framePath, true);
     if (frame.ok) break;
