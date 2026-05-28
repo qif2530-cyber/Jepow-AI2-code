@@ -745,12 +745,19 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
     previewDataUrl?: string;
     renderSeconds?: number;
     ok?: boolean;
+    cameraVersion?: number;
   }) => {
     if (!res?.ok || !res.previewDataUrl) return false;
+    if (
+      res.cameraVersion != null &&
+      Number(res.cameraVersion) !== cameraVersionRef.current
+    ) {
+      return false;
+    }
     setCyclesFrame({
       status: "rendering",
       previewDataUrl: res.previewDataUrl,
-      cameraVersion: cameraVersionRef.current,
+      cameraVersion: Number(res.cameraVersion ?? cameraVersionRef.current),
       renderSeconds: res.renderSeconds,
       error: undefined,
       detail: undefined,
@@ -814,7 +821,12 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
         return;
       }
       const state = (await engine.readCyclesSession?.(sessionId)) as {
-        frame?: { previewDataUrl?: string; ok?: boolean; renderSeconds?: number };
+        frame?: {
+          previewDataUrl?: string;
+          ok?: boolean;
+          renderSeconds?: number;
+          cameraVersion?: number;
+        };
       };
       if (state?.frame) applyCyclesFrameUpdate(state.frame);
     } finally {
@@ -1074,12 +1086,7 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
       frameCameraVersion = cameraVersionRef.current,
     ) => {
       if (cancelled || cyclesRenderSeqRef.current !== seq) return false;
-      if (
-        finalFrame &&
-        frameCameraVersion !== cameraVersionRef.current &&
-        !viewportInteractingRef.current &&
-        Date.now() - lastCameraChangeAtRef.current > 2800
-      ) {
+      if (frameCameraVersion !== cameraVersionRef.current) {
         return false;
       }
       const previewDataUrl = res.previewDataUrl as string | undefined;
@@ -1101,7 +1108,7 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
           status: finalFrame ? "done" : "rendering",
           previewDataUrl,
           renderSeconds: res.renderSeconds,
-          cameraVersion: cameraVersionRef.current,
+          cameraVersion: frameCameraVersion,
           error: undefined,
         });
         return true;
