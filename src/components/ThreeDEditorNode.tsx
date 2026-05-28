@@ -631,6 +631,9 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
   const cyclesCameraSettleTimerRef = useRef<number | null>(null);
   const persistCameraTimerRef = useRef<number | null>(null);
   const sceneCameraFramedRef = useRef(false);
+  const cyclesPatchInFlightRef = useRef(false);
+  const pendingCameraRenderRef = useRef(false);
+  const cyclesInteractLoopRef = useRef<number | null>(null);
   const viewportContainerRef = useRef<HTMLDivElement | null>(null);
   const [viewportPixelSize, setViewportPixelSize] = useState({ width: 640, height: 360 });
 
@@ -736,9 +739,31 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
     viewportInteractingRef.current ||
     Date.now() - lastCameraChangeAtRef.current < 2800;
 
+  const applyCyclesFrameUpdate = (res: {
+    previewDataUrl?: string;
+    renderSeconds?: number;
+    ok?: boolean;
+  }) => {
+    if (!res?.ok || !res.previewDataUrl) return false;
+    setCyclesFrame({
+      status: "rendering",
+      previewDataUrl: res.previewDataUrl,
+      cameraVersion: cameraVersionRef.current,
+      renderSeconds: res.renderSeconds,
+      error: undefined,
+      detail: undefined,
+    });
+    return true;
+  };
+
   const flushCyclesCameraPatch = async (quality: "interactive" | "final") => {
+    if (viewportMode !== "render" || !renderActive) return;
     const sessionId = activeCyclesSessionRef.current;
-    if (!sessionId || viewportMode !== "render" || !renderActive) return;
+    if (!sessionId) {
+      pendingCameraRenderRef.current = true;
+      return;
+    }
+    if (cyclesPatchInFlightRef.current && quality === "interactive") return;
     const stableRenderSettings = JSON.parse(renderSettingsKey);
     const target = getCyclesViewportTarget(
       Number(stableRenderSettings.width) || 2048,
@@ -759,14 +784,27 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
     });
     if (lastCyclesSessionPatchKeyRef.current === patchKey) return;
     lastCyclesSessionPatchKeyRef.current = patchKey;
-    await getViewportEngine().updateCyclesSession?.(sessionId, {
-      camera: cam,
-      width: target.width,
-      height: target.height,
-      samples: target.samples,
-      renderSettings: stableRenderSettings,
-      cameraVersion: cameraVersionRef.current,
-    } as any);
+    cyclesPatchInFlightRef.current = true;
+    try {
+      const engine = getViewportEngine();
+      const update = (await engine.updateCyclesSession?.(sessionId, {
+        camera: cam,
+        width: target.width,
+        height: target.height,
+        samples: target.samples,
+        renderSettings: stableRenderSettings,
+        cameraVersion: cameraVersionRef.current,
+      } as any)) as { frame?: { previewDataUrl?: string; ok?: boolean; renderSeconds?: number } };
+      const patchFrame = update?.frame;
+      if (patchFrame && applyCyclesFrameUpdate(patchFrame)) return;
+      const state = (await engine.readCyclesSession?.(sessionId)) as {
+        frame?: { previewDataUrl?: string; ok?: boolean; renderSeconds?: number };
+      };
+      if (state?.frame) applyCyclesFrameUpdate(state.frame);
+    } finally {
+      cyclesPatchInFlightRef.current = false;
+      pendingCameraRenderRef.current = false;
+    }
   };
 
   const scheduleCyclesCameraPatch = (
@@ -814,17 +852,9 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
       lastCameraChangeAtRef.current = Date.now();
       persistCyclesViewportCamera(next);
       if (viewportMode === "render") {
-        setCyclesFrame((prev) => ({
-          status: "rendering",
-          cameraVersion: prev.cameraVersion,
-          previewDataUrl: undefined,
-          error: undefined,
-          detail: "CL 相机已更新，路径追踪重渲中…",
-        }));
-      }
-      if (viewportMode === "render" && activeCyclesSessionRef.current) {
+        pendingCameraRenderRef.current = true;
         lastCyclesSessionPatchKeyRef.current = "";
-        scheduleCyclesCameraPatch("interactive", 24);
+        scheduleCyclesCameraPatch("interactive", 16);
         if (cyclesCameraSettleTimerRef.current != null) {
           window.clearTimeout(cyclesCameraSettleTimerRef.current);
         }
@@ -848,22 +878,37 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
     viewportInteractingRef.current = interacting;
     setViewportInteracting(interacting);
     if (interacting && viewportMode === "render") {
-      setCyclesFrame((prev) =>
-        prev.status !== "idle"
-          ? {
-              ...prev,
-              status: "rendering",
-              error: undefined,
-            }
-          : prev,
-      );
+      lastCyclesSessionPatchKeyRef.current = "";
+      scheduleCyclesCameraPatch("interactive", 0);
       viewportInteractionTimerRef.current = window.setTimeout(() => {
         viewportInteractionTimerRef.current = null;
         viewportInteractingRef.current = false;
         setViewportInteracting(false);
-      }, 1100);
+        scheduleCyclesCameraPatch("final", 80);
+      }, 700);
     }
   };
+
+  useEffect(() => {
+    if (viewportMode !== "render" || !renderActive || !viewportInteracting) {
+      if (cyclesInteractLoopRef.current != null) {
+        window.clearInterval(cyclesInteractLoopRef.current);
+        cyclesInteractLoopRef.current = null;
+      }
+      return;
+    }
+    cyclesInteractLoopRef.current = window.setInterval(() => {
+      lastCyclesSessionPatchKeyRef.current = "";
+      void flushCyclesCameraPatch("interactive");
+    }, 160);
+    return () => {
+      if (cyclesInteractLoopRef.current != null) {
+        window.clearInterval(cyclesInteractLoopRef.current);
+        cyclesInteractLoopRef.current = null;
+      }
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [viewportMode, renderActive, viewportInteracting, cameraVersion]);
 
   useEffect(
     () => () => {
@@ -878,6 +923,9 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
       }
       if (persistCameraTimerRef.current != null) {
         window.clearTimeout(persistCameraTimerRef.current);
+      }
+      if (cyclesInteractLoopRef.current != null) {
+        window.clearInterval(cyclesInteractLoopRef.current);
       }
     },
     [],
@@ -912,6 +960,19 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
     [nativeLighting],
   );
   const transformKey = useMemo(() => JSON.stringify(transform), [transform]);
+
+  const cameraYawDeg = Math.round(
+    THREE.MathUtils.radToDeg(viewportCamera.yaw ?? 0.55),
+  );
+  const cameraPitchDeg = Math.round(
+    THREE.MathUtils.radToDeg(viewportCamera.pitch ?? 0.38),
+  );
+  const updateCyclesOrbitCamera = (patch: Partial<ViewportCamera>) => {
+    handleViewportCameraChange({
+      ...viewportCameraRef.current,
+      ...patch,
+    });
+  };
 
   const updateLightAngle = (newYaw: number, newPitch: number) => {
     const radius = 8.6;
@@ -1095,6 +1156,10 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
             samples: interactiveTarget.samples,
             cameraVersion: sessionCameraVersion,
           });
+          if (pendingCameraRenderRef.current) {
+            lastCyclesSessionPatchKeyRef.current = "";
+            scheduleCyclesCameraPatch("interactive", 0);
+          }
           let lastFrameVersion = -1;
           let lastDaemonFrameVersion = -1;
           const poll = async () => {
@@ -1438,7 +1503,7 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
           </div>
         ) : showLiveViewport ? (
           <div
-            className={`absolute inset-0 ${viewportMode === "render" ? "z-[14]" : "z-0"}`}
+            className={`absolute inset-0 ${viewportMode === "render" ? "z-[10]" : "z-0"}`}
             onMouseDown={(e) => e.stopPropagation()}
             onTouchStart={(e) => e.stopPropagation()}
           >
@@ -1450,11 +1515,7 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
               lockRenderSize
               highPerformanceMode={highPerfDynamic}
               shading="clay"
-              ghostOverlay={
-                viewportMode === "render" &&
-                cyclesFrameMatchesCamera &&
-                !viewportInteracting
-              }
+              ghostOverlay={false}
               transform={{
                 x: transform.x,
                 y: transform.y,
@@ -1594,12 +1655,18 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
           )
         )}
 
-        {viewportMode === "render" && cyclesFrameMatchesCamera && !viewportInteracting && (
-          <div className="absolute inset-0 z-[6] bg-neutral-950 pointer-events-none">
+        {viewportMode === "render" && cyclesFrame.previewDataUrl && (
+          <div className="absolute inset-0 z-[13] bg-transparent pointer-events-none">
             <img
               src={cyclesFrame.previewDataUrl}
               alt="Cycles Render"
-              className="w-full h-full object-cover opacity-100"
+              className={`w-full h-full object-cover transition-opacity duration-200 ${
+                viewportInteracting
+                  ? "opacity-25"
+                  : cyclesFrameMatchesCamera
+                    ? "opacity-70"
+                    : "opacity-35"
+              }`}
               onError={() =>
                 setCyclesFrame({
                   status: "error",
@@ -1611,7 +1678,7 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
         )}
 
         {viewportMode === "render" && showLiveViewport && (
-          <div className="absolute left-3 top-14 z-[16] pointer-events-none flex flex-col gap-1">
+          <div className="absolute left-3 top-14 z-[20] pointer-events-none flex flex-col gap-1">
             <span className="text-[8px] font-bold uppercase px-1.5 py-0.5 rounded bg-cyan-950/80 text-cyan-200 border border-cyan-900/60">
               CL 相机视窗
             </span>
@@ -1741,11 +1808,73 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
               {hasNativeScene && (
                 <p className="text-[9px] text-amber-300/90 leading-snug truncate">
                   {viewportMode === "render"
-                    ? `${renderSettings.samples}spp / ${renderSettings.bounces} bounces / ${renderSettings.denoise ? "denoise on" : "denoise off"}`
+                    ? `${renderSettings.samples}spp / ${renderSettings.bounces} bounces · 视口拖拽=CL相机`
                     : "Preview clay mode"}
                 </p>
               )}
             </div>
+
+            {viewportMode === "render" && (
+              <div className="grid grid-cols-3 gap-2 pb-1 border-b border-cyan-900/40">
+                <div className="editor-param-card flex flex-col gap-1.5 bg-cyan-950/20 p-2 rounded-md border border-cyan-900/40 col-span-3">
+                  <span className="text-[10px] font-bold text-cyan-300">CL 相机（与视口拖拽同步）</span>
+                </div>
+                <div className="editor-param-card flex flex-col gap-1.5 bg-neutral-900/40 p-2 rounded-md border border-cyan-900/30">
+                  <span className="text-[9px] text-neutral-400">距离</span>
+                  <span className="text-cyan-400 font-mono text-[10px]">
+                    {(viewportCamera.distance ?? 2.45).toFixed(2)}
+                  </span>
+                  <input
+                    type="range"
+                    min="0.8"
+                    max="24"
+                    step="0.05"
+                    value={viewportCamera.distance ?? 2.45}
+                    onChange={(e) =>
+                      updateCyclesOrbitCamera({ distance: parseFloat(e.target.value) })
+                    }
+                    onMouseDown={(e) => e.stopPropagation()}
+                    className="w-full h-1 accent-cyan-500 nodrag"
+                  />
+                </div>
+                <div className="editor-param-card flex flex-col gap-1.5 bg-neutral-900/40 p-2 rounded-md border border-cyan-900/30">
+                  <span className="text-[9px] text-neutral-400">水平°</span>
+                  <span className="text-cyan-400 font-mono text-[10px]">{cameraYawDeg}°</span>
+                  <input
+                    type="range"
+                    min="0"
+                    max="360"
+                    step="1"
+                    value={((cameraYawDeg % 360) + 360) % 360}
+                    onChange={(e) =>
+                      updateCyclesOrbitCamera({
+                        yaw: THREE.MathUtils.degToRad(parseFloat(e.target.value)),
+                      })
+                    }
+                    onMouseDown={(e) => e.stopPropagation()}
+                    className="w-full h-1 accent-cyan-500 nodrag"
+                  />
+                </div>
+                <div className="editor-param-card flex flex-col gap-1.5 bg-neutral-900/40 p-2 rounded-md border border-cyan-900/30">
+                  <span className="text-[9px] text-neutral-400">俯仰°</span>
+                  <span className="text-cyan-400 font-mono text-[10px]">{cameraPitchDeg}°</span>
+                  <input
+                    type="range"
+                    min="-75"
+                    max="75"
+                    step="1"
+                    value={cameraPitchDeg}
+                    onChange={(e) =>
+                      updateCyclesOrbitCamera({
+                        pitch: THREE.MathUtils.degToRad(parseFloat(e.target.value)),
+                      })
+                    }
+                    onMouseDown={(e) => e.stopPropagation()}
+                    className="w-full h-1 accent-cyan-500 nodrag"
+                  />
+                </div>
+              </div>
+            )}
 
             <div className="grid grid-cols-2 gap-2">
               {/* Card 1: Ambient Intensity */}
@@ -1849,7 +1978,7 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
                 <div className="flex items-center justify-between text-[11px] font-medium text-neutral-300">
                   <span className="flex items-center gap-1.5 font-sans text-xs">
                     <Sliders className="w-3.5 h-3.5 text-blue-400" />
-                    水平方位角
+                    主光方位角
                   </span>
                   <span className="text-blue-400 font-mono text-[10px] font-bold bg-blue-950/40 px-1.5 py-0.5 rounded border border-blue-900/30">
                     {lights.yaw}°
@@ -1873,7 +2002,7 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
                 <div className="flex items-center justify-between text-[11px] font-medium text-neutral-300">
                   <span className="flex items-center gap-1.5 font-sans text-xs">
                     <Sliders className="w-3.5 h-3.5 text-emerald-400" />
-                    垂直高度角
+                    主光高度角
                   </span>
                   <span className="text-emerald-400 font-mono text-[10px] font-bold bg-emerald-950/40 px-1.5 py-0.5 rounded border border-emerald-900/30">
                     {lights.pitch}°

@@ -850,10 +850,10 @@ async function renderFrameViaDaemon(opts = {}, prepared, outputPath) {
   };
 }
 
-async function readResidentFrameViaDaemon(session, outputPath) {
+async function readResidentFrameViaDaemon(session, outputPath, forceRetry = false) {
   const started = Date.now();
   let res = null;
-  const attempts = session.frame ? 1 : 10;
+  const attempts = forceRetry ? 6 : session.frame ? 1 : 10;
   for (let i = 0; i < attempts; i += 1) {
     res = await runDaemonCommand(
       'read_frame',
@@ -1266,29 +1266,44 @@ async function updateSession(sessionId, patch = {}) {
     session.forceFrameRead = true;
     session.updatedAt = Date.now();
     scheduleNavigationSettle(session.id);
+    let capturedFrame = null;
     if (patch.camera || patch.cameraVersion != null) {
-      void captureResidentFrameAfterCamera(session).catch(() => {});
+      capturedFrame = await captureResidentFrameAfterCamera(session);
     }
+    return {
+      ...res,
+      sessionId,
+      status: session.status,
+      cameraVersion: Number(session.opts.cameraVersion) || 0,
+      frame: session.frame,
+      frameCaptured: !!capturedFrame?.ok,
+    };
   }
   return {
     ...res,
     sessionId,
     status: session.status,
     cameraVersion: Number(session.opts.cameraVersion) || 0,
+    frame: session.frame,
   };
 }
 
 async function captureResidentFrameAfterCamera(session) {
   if (!session.loaded || session.stopped) return null;
-  await new Promise((resolve) =>
-    setTimeout(resolve, session.device === 'METAL' ? 240 : 420),
-  );
-  if (session.stopped) return null;
   const framePath = path.join(
     getCyclesCacheDir(),
     `cycles-capture-${session.id}-${Date.now()}.png`,
   );
-  const frame = await readResidentFrameViaDaemon(session, framePath);
+  let frame = { ok: false };
+  const attempts = 8;
+  for (let i = 0; i < attempts; i += 1) {
+    if (session.stopped) return frame;
+    await new Promise((resolve) =>
+      setTimeout(resolve, session.device === 'METAL' ? 120 : 180),
+    );
+    frame = await readResidentFrameViaDaemon(session, framePath, true);
+    if (frame.ok) break;
+  }
   if (!frame.ok || session.stopped) return frame;
   session.frameVersion += 1;
   session.frame = buildFramePayload(session, frame, 'converging', 'preview');
