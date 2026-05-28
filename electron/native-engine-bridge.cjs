@@ -524,6 +524,7 @@ async function getStatus() {
       version: ping.version,
       mode: ping.mode || 'daemon',
       cpuJobs: ping.cpuJobs,
+      architecture: ping.architecture,
       cacheDir: getViewportCacheDir(),
       ping,
     };
@@ -537,6 +538,7 @@ async function getStatus() {
       version: ping.version,
       mode: 'oneshot',
       cpuJobs: ping.cpuJobs,
+      architecture: ping.architecture,
       cacheDir: getViewportCacheDir(),
       ping,
       daemonError: e.message,
@@ -707,6 +709,33 @@ async function meshForCycles(scenePath) {
   }
 }
 
+function getImportPipelineStatus() {
+  return runEngineCommand('import_pipeline_status', {}, 60000);
+}
+
+function importScenePipeline(opts = {}) {
+  return runEngineCommand(
+    'import_scene_pipeline',
+    {
+      ...opts,
+      scenePath: normalizeScenePath(opts.scenePath),
+    },
+    120000,
+  );
+}
+
+function getPhysicsPipelineStatus() {
+  return runEngineCommand('physics_pipeline_status', {}, 60000);
+}
+
+function createPhysicsWorld(opts = {}) {
+  return runEngineCommand('physics_create_world', opts, 60000);
+}
+
+function stepPhysicsWorld(opts = {}) {
+  return runEngineCommand('physics_step_world', opts, 60000);
+}
+
 function readCachedImageByName(fileName) {
   const safe = path.basename(fileName.split('?')[0]);
   const full = path.join(getViewportCacheDir(), safe);
@@ -724,6 +753,11 @@ module.exports = {
   openScene,
   renderPreview,
   meshForCycles,
+  getImportPipelineStatus,
+  importScenePipeline,
+  getPhysicsPipelineStatus,
+  createPhysicsWorld,
+  stepPhysicsWorld,
   readCachedImageByName,
   ensureDaemon,
   killDaemon,

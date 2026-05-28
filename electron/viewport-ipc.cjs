@@ -1,5 +1,9 @@
 const { dialog } = require('electron');
 const nativeEngine = require('./native-engine-bridge.cjs');
+const {
+  ARCHITECTURE_CONTRACT,
+  buildArchitectureStatus,
+} = require('./native-architecture-contract.cjs');
 
 /**
  * 桌面 3D 产品路径（参考 Blender 架构，自研实现，不调用 blender.exe）：
@@ -54,6 +58,12 @@ async function getCombinedStatus() {
   const useBlenderDebug = blenderBridge && blenderAvailable;
   const renderEngines = ['jepow-viewport'];
   if (cyclesAvailable) renderEngines.push('cycles-gpl');
+  const nativeArchitecture = nativeSt.architecture || {};
+  const architecture = buildArchitectureStatus({
+    nativeAvailable,
+    cyclesAvailable,
+    nativeArchitecture,
+  });
   return {
     ok: true,
     available: nativeAvailable || blenderAvailable,
@@ -71,6 +81,21 @@ async function getCombinedStatus() {
     cacheDir: nativeSt.cacheDir,
     buildHint: nativeSt.buildHint || 'npm run native:build',
     renderEngines,
+    architectureContract: ARCHITECTURE_CONTRACT,
+    architecture,
+    nativeArchitecture,
+    architectureReady:
+      architecture.ui.status &&
+      architecture.viewport.status &&
+      architecture.renderer.status &&
+      architecture.importers.status &&
+      architecture.physics.status,
+    architectureProductionReady:
+      architecture.ui.productionReady &&
+      architecture.viewport.productionReady &&
+      architecture.renderer.productionReady &&
+      architecture.importers.productionReady &&
+      architecture.physics.productionReady,
     message: nativeAvailable
       ? `Jepow 自研引擎 ${nativeSt.version || ''}（架构参考 Blender，非调用 Blender）`
       : '请执行 npm run native:build 编译 jepow-engine',
@@ -197,6 +222,30 @@ function registerViewportIpc(ipcMain) {
       executable: exe,
       blenderVersion: ping?.blender_version,
     };
+  });
+
+  ipcMain.handle('viewport:getImportPipelineStatus', async () => {
+    return nativeEngine.getImportPipelineStatus();
+  });
+
+  ipcMain.handle('viewport:importScenePipeline', async (_e, opts) => {
+    const o = opts || {};
+    return nativeEngine.importScenePipeline({
+      ...o,
+      scenePath: normalizeScenePath(o.scenePath),
+    });
+  });
+
+  ipcMain.handle('viewport:getPhysicsPipelineStatus', async () => {
+    return nativeEngine.getPhysicsPipelineStatus();
+  });
+
+  ipcMain.handle('viewport:createPhysicsWorld', async (_e, opts) => {
+    return nativeEngine.createPhysicsWorld(opts || {});
+  });
+
+  ipcMain.handle('viewport:stepPhysicsWorld', async (_e, opts) => {
+    return nativeEngine.stepPhysicsWorld(opts || {});
   });
 
   ipcMain.handle('viewportHost:start', async (_e, opts) => {

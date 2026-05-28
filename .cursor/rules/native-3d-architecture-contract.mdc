@@ -1,0 +1,19 @@
+---
+description: Preserve Jepow native 3D architecture contract
+alwaysApply: true
+---
+
+# Native 3D Architecture Contract
+
+The Jepow 3D editor architecture is fixed:
+
+`React/Electron UI + Rust/wgpu Core Viewport + Cycles/CL Render + Assimp/USD Import + Bullet/Jolt Physics`
+
+Rules:
+
+- Keep React/Electron as the UI and command/IPC layer.
+- Keep Rust/wgpu as the primary interactive 3D viewport. Do not replace it with Three.js as the product viewport.
+- Keep Cycles/CL rendering isolated behind the render bridge/process boundary. Do not link GPL Cycles into the MIT `jepow-engine`.
+- Keep Assimp/USD and Bullet/Jolt as required architecture slots, even while runtime implementations are incremental.
+- Keep the required command/API surface: `architecture_status`, `import_pipeline_status`, `import_scene_pipeline`, `physics_pipeline_status`, `physics_create_world`, `physics_step_world`.
+- For architecture changes, update `ARCHITECTURE_CONTRACT.md`, `electron/native-architecture-contract.cjs`, and run `npm run architecture:verify`.

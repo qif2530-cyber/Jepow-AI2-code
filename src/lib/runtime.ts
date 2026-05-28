@@ -51,6 +51,11 @@ declare global {
         readPreview: (previewUrl: string) => Promise<string | null>;
         renderBlenderCycles?: (opts: Record<string, unknown>) => Promise<Record<string, unknown>>;
         getBlenderStatus?: () => Promise<Record<string, unknown>>;
+        getImportPipelineStatus?: () => Promise<Record<string, unknown>>;
+        importScenePipeline?: (opts: Record<string, unknown>) => Promise<Record<string, unknown>>;
+        getPhysicsPipelineStatus?: () => Promise<Record<string, unknown>>;
+        createPhysicsWorld?: (opts: Record<string, unknown>) => Promise<Record<string, unknown>>;
+        stepPhysicsWorld?: (opts: Record<string, unknown>) => Promise<Record<string, unknown>>;
       };
       viewportHost?: {
         start: (opts?: Record<string, unknown>) => Promise<Record<string, unknown>>;

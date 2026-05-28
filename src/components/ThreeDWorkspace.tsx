@@ -13,16 +13,33 @@ export type ThreeDObject = {
   materialColor?: string;
 };
 
+type NativeArchitectureFeature = {
+  label?: string;
+  status?: boolean;
+  productionReady?: boolean;
+  detail?: string;
+};
+
+type NativeArchitectureStatus = {
+  architectureReady?: boolean;
+  architectureProductionReady?: boolean;
+  architecture?: Record<string, NativeArchitectureFeature>;
+};
+
 interface ThreeDWorkspaceProps {
   objects: ThreeDObject[];
   selectedObjectId: string;
   onSelectObject: (id: string) => void;
   onUpdateObject: (id: string, patch: Partial<ThreeDObject>) => void;
-  onSyncObjects?: (objects: ThreeDObject[]) => void;
+  onSyncObjects?: (objects: ThreeDObject[], selectedObjectId?: string) => void;
   onAddObject?: (type: ThreeDObject["type"]) => void;
   onDuplicateObject?: () => void;
   onDeleteObject?: () => void;
   onResetObject?: () => void;
+  onUndo?: () => void;
+  onRedo?: () => void;
+  canUndo?: boolean;
+  canRedo?: boolean;
 }
 
 const toolToHost: Record<string, string> = {
@@ -37,6 +54,16 @@ const displayToHost: Record<string, string> = {
   实体: "solid",
   材质: "material",
   CL: "cl",
+};
+
+const viewPresets: Record<
+  string,
+  { yaw: number; pitch: number; distance?: number; projection: "orthographic" | "perspective" }
+> = {
+  前: { yaw: 0, pitch: 0, projection: "orthographic" },
+  右: { yaw: Math.PI / 2, pitch: 0, projection: "orthographic" },
+  顶: { yaw: 0, pitch: 1.52, projection: "orthographic" },
+  透: { yaw: 0.72, pitch: 0.52, projection: "perspective" },
 };
 
 const typeToHost: Record<ThreeDObject["type"], string> = {
@@ -94,18 +121,60 @@ export function ThreeDWorkspace({
   onDuplicateObject,
   onDeleteObject,
   onResetObject,
+  onUndo,
+  onRedo,
+  canUndo,
+  canRedo,
 }: ThreeDWorkspaceProps) {
   const mountRef = useRef<HTMLDivElement>(null);
   const [activeTool, setActiveTool] = useState("选择");
   const [displayMode, setDisplayMode] = useState("CL");
   const [snapEnabled, setSnapEnabled] = useState(false);
   const [snapStep, setSnapStep] = useState(0.5);
+  const [cameraProjection, setCameraProjection] = useState<"perspective" | "orthographic">(
+    "perspective",
+  );
+  const [nativeStatus, setNativeStatus] = useState<NativeArchitectureStatus | null>(null);
   const [hostReady, setHostReady] = useState(false);
   const [hostError, setHostError] = useState<string | null>(null);
   const selectedObject = useMemo(
     () => objects.find((object) => object.id === selectedObjectId) || objects[0],
     [objects, selectedObjectId],
   );
+  const applyViewPreset = (preset: keyof typeof viewPresets) => {
+    const nextProjection = viewPresets[preset].projection;
+    setCameraProjection(nextProjection);
+    window.jepowDesktop?.viewportHost?.setCamera?.({
+      ...viewPresets[preset],
+      distance: viewPresets[preset].distance || 7,
+      projection: nextProjection,
+      speed: activeTool === "游走" ? 1.65 : 1,
+    });
+  };
+  const toggleProjection = () => {
+    const nextProjection = cameraProjection === "perspective" ? "orthographic" : "perspective";
+    setCameraProjection(nextProjection);
+    window.jepowDesktop?.viewportHost?.setCamera?.({
+      projection: nextProjection,
+      speed: activeTool === "游走" ? 1.65 : 1,
+    });
+  };
+
+  useEffect(() => {
+    let stopped = false;
+    const loadStatus = async () => {
+      const status = await window.jepowDesktop?.viewport?.getStatus?.().catch(() => null);
+      if (!stopped && status) {
+        setNativeStatus(status as NativeArchitectureStatus);
+      }
+    };
+    loadStatus();
+    const timer = window.setInterval(loadStatus, 3500);
+    return () => {
+      stopped = true;
+      window.clearInterval(timer);
+    };
+  }, []);
 
   useEffect(() => {
     const host = window.jepowDesktop?.viewportHost;
@@ -201,6 +270,10 @@ export function ThreeDWorkspace({
       if (event.key === "e" || event.key === "E") setActiveTool("旋转");
       if (event.key === "r" || event.key === "R") setActiveTool("缩放");
       if (event.key === "v" || event.key === "V") setActiveTool("选择");
+      if (event.code === "Numpad1" || event.key === "1") applyViewPreset("前");
+      if (event.code === "Numpad3" || event.key === "3") applyViewPreset("右");
+      if (event.code === "Numpad7" || event.key === "7") applyViewPreset("顶");
+      if (event.code === "Numpad5" || event.key === "5") toggleProjection();
       if (event.shiftKey && event.key.toLowerCase() === "s") {
         event.preventDefault();
         setSnapEnabled((current) => !current);
@@ -224,7 +297,7 @@ export function ThreeDWorkspace({
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [onDeleteObject, onDuplicateObject, onResetObject]);
+  }, [activeTool, cameraProjection, onDeleteObject, onDuplicateObject, onResetObject]);
 
   useEffect(() => {
     if (!selectedObject) return;
@@ -257,9 +330,11 @@ export function ThreeDWorkspace({
           materialColor: typeof raw.materialColor === "string" ? raw.materialColor : undefined,
         } as ThreeDObject;
       });
-      onSyncObjects(synced);
-      if (typeof state.selectedObjectId === "string") {
-        onSelectObject(state.selectedObjectId);
+      const syncedSelectedObjectId =
+        typeof state.selectedObjectId === "string" ? state.selectedObjectId : undefined;
+      onSyncObjects(synced, syncedSelectedObjectId);
+      if (syncedSelectedObjectId) {
+        onSelectObject(syncedSelectedObjectId);
       }
     }, 280);
     return () => window.clearInterval(timer);
@@ -288,6 +363,29 @@ export function ThreeDWorkspace({
       <div className="flex min-w-0 flex-1 flex-col">
         <div className="flex h-7 shrink-0 items-center justify-between border-b border-[#25272b] bg-[#303236] px-2 text-[11px]">
           <div className="flex items-center gap-1">
+            {(["前", "右", "顶", "透"] as const).map((item) => (
+              <button
+                key={item}
+                type="button"
+                onClick={() => applyViewPreset(item)}
+                className="rounded-[3px] px-2 py-0.5 text-neutral-300 hover:bg-white/[0.08] hover:text-white"
+                title="小键盘 1/3/7/5 切换视图"
+              >
+                {item}
+              </button>
+            ))}
+            <button
+              type="button"
+              onClick={toggleProjection}
+              className={`rounded-[3px] px-2 py-0.5 ${
+                cameraProjection === "orthographic"
+                  ? "bg-[#4772b3] text-white"
+                  : "text-neutral-300 hover:bg-white/[0.08] hover:text-white"
+              }`}
+              title="小键盘 5 切换正交/透视"
+            >
+              正交
+            </button>
             {[
               { label: "网格", action: () => onAddObject?.("网格") },
               { label: "相机", action: () => onAddObject?.("相机") },
@@ -306,6 +404,24 @@ export function ThreeDWorkspace({
                 {item.label}
               </button>
             ))}
+            <button
+              type="button"
+              onClick={onUndo}
+              disabled={!canUndo}
+              className="rounded-[3px] px-2 py-0.5 text-neutral-300 hover:bg-white/[0.08] hover:text-white disabled:cursor-not-allowed disabled:opacity-35"
+              title="Ctrl/Cmd+Z"
+            >
+              撤销
+            </button>
+            <button
+              type="button"
+              onClick={onRedo}
+              disabled={!canRedo}
+              className="rounded-[3px] px-2 py-0.5 text-neutral-300 hover:bg-white/[0.08] hover:text-white disabled:cursor-not-allowed disabled:opacity-35"
+              title="Ctrl/Cmd+Shift+Z"
+            >
+              重做
+            </button>
           </div>
           <div className="flex items-center gap-1 rounded-[3px] bg-[#252629] p-0.5">
             <button
@@ -362,8 +478,42 @@ export function ThreeDWorkspace({
           <div className="pointer-events-none absolute left-3 top-3 rounded bg-black/35 px-2 py-1 text-[10px] text-neutral-300">
             原生透视 · Collection | {selectedObject?.name || "对象"} · {activeTool}
           </div>
+          {nativeStatus?.architecture && (
+            <div className="pointer-events-none absolute left-3 top-10 max-w-[560px] rounded bg-black/35 px-2 py-1 text-[10px] text-neutral-300 backdrop-blur">
+              <div className="mb-1 font-bold text-neutral-200">
+                架构状态 ·{" "}
+                {nativeStatus.architectureProductionReady
+                  ? "生产能力就绪"
+                  : nativeStatus.architectureReady
+                    ? "骨架完成 / 功能填充中"
+                    : "核心就绪 / 扩展接入中"}
+              </div>
+              <div className="flex flex-wrap gap-1">
+                {Object.entries(nativeStatus.architecture).map(([key, feature]) => (
+                  <span
+                    key={key}
+                    title={feature.detail}
+                    className={`rounded border px-1.5 py-0.5 ${
+                      feature.productionReady
+                        ? "border-emerald-400/30 bg-emerald-400/10 text-emerald-200"
+                        : feature.status
+                          ? "border-blue-400/30 bg-blue-400/10 text-blue-200"
+                        : "border-amber-400/30 bg-amber-400/10 text-amber-200"
+                    }`}
+                  >
+                    {feature.productionReady
+                      ? "可用"
+                      : feature.status
+                        ? "骨架已接入"
+                        : "待接入"}{" "}
+                    · {feature.label || key}
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
           <div className="pointer-events-none absolute bottom-3 left-3 rounded bg-black/35 px-2 py-1 text-[10px] text-neutral-300 backdrop-blur">
-            W/E/R 变换 · Shift+S 吸附 · F 聚焦 · Alt+R 重置
+            W/E/R 变换 · Ctrl+Z 撤销 · Shift+S 吸附 · F 聚焦
           </div>
           {!hostReady && (
             <div className="absolute inset-0 grid place-items-center bg-[#30343a] text-center">

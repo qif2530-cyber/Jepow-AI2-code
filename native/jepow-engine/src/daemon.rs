@@ -147,6 +147,26 @@ pub fn run_daemon_loop() {
                     "mode": "daemon",
                     "version": env!("CARGO_PKG_VERSION"),
                     "cpuJobs": jobs::parallel_job_count(),
+                    "architecture": {
+                        "uiBridge": {
+                            "architectureWired": true,
+                            "productionReady": true,
+                            "label": "React/Electron UI IPC",
+                        },
+                        "viewport": {
+                            "architectureWired": true,
+                            "productionReady": true,
+                            "label": "Rust/wgpu Core Viewport",
+                        },
+                        "render": {
+                            "architectureWired": true,
+                            "productionReady": false,
+                            "label": "Cycles/CL Render Bridge",
+                            "note": "Cycles 独立进程桥接已存在，材质/场景闭环继续完善。",
+                        },
+                        "importers": crate::import_pipeline::status(),
+                        "physics": crate::physics_pipeline::status(),
+                    },
                 }),
             ),
             "shutdown" => {

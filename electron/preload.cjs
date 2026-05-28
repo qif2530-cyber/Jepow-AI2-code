@@ -54,6 +54,11 @@ contextBridge.exposeInMainWorld('jepowDesktop', {
     readPreview: (previewUrl) => ipcRenderer.invoke('viewport:readPreview', previewUrl),
     renderBlenderCycles: (opts) => ipcRenderer.invoke('viewport:renderBlenderCycles', opts),
     getBlenderStatus: () => ipcRenderer.invoke('viewport:getBlenderStatus'),
+    getImportPipelineStatus: () => ipcRenderer.invoke('viewport:getImportPipelineStatus'),
+    importScenePipeline: (opts) => ipcRenderer.invoke('viewport:importScenePipeline', opts),
+    getPhysicsPipelineStatus: () => ipcRenderer.invoke('viewport:getPhysicsPipelineStatus'),
+    createPhysicsWorld: (opts) => ipcRenderer.invoke('viewport:createPhysicsWorld', opts),
+    stepPhysicsWorld: (opts) => ipcRenderer.invoke('viewport:stepPhysicsWorld', opts),
   },
   viewportHost: {
     start: (opts) => ipcRenderer.invoke('viewportHost:start', opts),

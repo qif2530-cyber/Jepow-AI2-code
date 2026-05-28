@@ -265,6 +265,33 @@ export const parseDataUri = (uri: string) => {
 
 let lastCursorEmitTimestamp = 0;
 
+type ThreeDSceneSnapshot = {
+  objects: ThreeDObject[];
+  selectedObjectId: string;
+};
+
+const THREE_D_HISTORY_LIMIT = 80;
+
+const cloneThreeDObjects = (objects: ThreeDObject[]) =>
+  objects.map((object) => ({
+    ...object,
+    position: [...object.position] as [number, number, number],
+    rotation: [...object.rotation] as [number, number, number],
+    scale: [...object.scale] as [number, number, number],
+  }));
+
+const cloneThreeDSceneSnapshot = (
+  snapshot: ThreeDSceneSnapshot,
+): ThreeDSceneSnapshot => ({
+  objects: cloneThreeDObjects(snapshot.objects),
+  selectedObjectId: snapshot.selectedObjectId,
+});
+
+const areThreeDScenesEqual = (
+  a: ThreeDSceneSnapshot,
+  b: ThreeDSceneSnapshot,
+) => JSON.stringify(a) === JSON.stringify(b);
+
 export default function App() {
   const [viewMode, setViewMode] = useState<"node" | "video">("node");
   const [activeWorkspace, setActiveWorkspace] = useState<
@@ -1957,6 +1984,85 @@ export default function App() {
     },
   ]);
   const [selectedThreeDObjectId, setSelectedThreeDObjectId] = useState("cube");
+  const threeDObjectsRef = useRef<ThreeDObject[]>(threeDObjects);
+  const selectedThreeDObjectIdRef = useRef(selectedThreeDObjectId);
+  const threeDHistoryRef = useRef<{
+    past: ThreeDSceneSnapshot[];
+    future: ThreeDSceneSnapshot[];
+  }>({ past: [], future: [] });
+  const [threeDHistoryVersion, setThreeDHistoryVersion] = useState(0);
+  const restoreThreeDScene = useCallback((snapshot: ThreeDSceneSnapshot) => {
+    const next = cloneThreeDSceneSnapshot(snapshot);
+    threeDObjectsRef.current = next.objects;
+    selectedThreeDObjectIdRef.current = next.selectedObjectId;
+    setThreeDObjects(next.objects);
+    setSelectedThreeDObjectId(next.selectedObjectId);
+  }, []);
+  const commitThreeDScene = useCallback(
+    (
+      nextObjectsOrUpdater:
+        | ThreeDObject[]
+        | ((objects: ThreeDObject[]) => ThreeDObject[]),
+      nextSelectedObjectId?: string,
+      options?: { record?: boolean },
+    ) => {
+      const previous: ThreeDSceneSnapshot = {
+        objects: cloneThreeDObjects(threeDObjectsRef.current),
+        selectedObjectId: selectedThreeDObjectIdRef.current,
+      };
+      const resolvedObjects =
+        typeof nextObjectsOrUpdater === "function"
+          ? nextObjectsOrUpdater(threeDObjectsRef.current)
+          : nextObjectsOrUpdater;
+      const resolvedSelectedObjectId =
+        nextSelectedObjectId ?? selectedThreeDObjectIdRef.current;
+      const next: ThreeDSceneSnapshot = {
+        objects: cloneThreeDObjects(resolvedObjects),
+        selectedObjectId: resolvedSelectedObjectId,
+      };
+      if (areThreeDScenesEqual(previous, next)) return;
+      if (options?.record !== false) {
+        threeDHistoryRef.current.past.push(previous);
+        if (threeDHistoryRef.current.past.length > THREE_D_HISTORY_LIMIT) {
+          threeDHistoryRef.current.past.shift();
+        }
+        threeDHistoryRef.current.future = [];
+        setThreeDHistoryVersion((version) => version + 1);
+      }
+      restoreThreeDScene(next);
+    },
+    [restoreThreeDScene],
+  );
+  const undoThreeDScene = useCallback(() => {
+    const previous = threeDHistoryRef.current.past.pop();
+    if (!previous) return;
+    threeDHistoryRef.current.future.push({
+      objects: cloneThreeDObjects(threeDObjectsRef.current),
+      selectedObjectId: selectedThreeDObjectIdRef.current,
+    });
+    restoreThreeDScene(previous);
+    setThreeDHistoryVersion((version) => version + 1);
+  }, [restoreThreeDScene]);
+  const redoThreeDScene = useCallback(() => {
+    const next = threeDHistoryRef.current.future.pop();
+    if (!next) return;
+    threeDHistoryRef.current.past.push({
+      objects: cloneThreeDObjects(threeDObjectsRef.current),
+      selectedObjectId: selectedThreeDObjectIdRef.current,
+    });
+    restoreThreeDScene(next);
+    setThreeDHistoryVersion((version) => version + 1);
+  }, [restoreThreeDScene]);
+  const canUndoThreeDScene =
+    threeDHistoryVersion >= 0 && threeDHistoryRef.current.past.length > 0;
+  const canRedoThreeDScene =
+    threeDHistoryVersion >= 0 && threeDHistoryRef.current.future.length > 0;
+  useEffect(() => {
+    threeDObjectsRef.current = threeDObjects;
+  }, [threeDObjects]);
+  useEffect(() => {
+    selectedThreeDObjectIdRef.current = selectedThreeDObjectId;
+  }, [selectedThreeDObjectId]);
   const [renamingNodeId, setRenamingNodeId] = useState<string | null>(null);
   const [renamingNodeLabel, setRenamingNodeLabel] = useState("");
   const [sceneRenameMenu, setSceneRenameMenu] = useState<{
@@ -3065,6 +3171,14 @@ export default function App() {
 
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "z") {
         e.preventDefault();
+        if (activeWorkspace === "3d") {
+          if (e.shiftKey) {
+            redoThreeDScene();
+          } else {
+            undoThreeDScene();
+          }
+          return;
+        }
         if (e.shiftKey) {
           // Redo: Ctrl+Shift+Z
           const nextState = redo();
@@ -3083,6 +3197,10 @@ export default function App() {
       } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "y") {
         // Redo: Ctrl+Y
         e.preventDefault();
+        if (activeWorkspace === "3d") {
+          redoThreeDScene();
+          return;
+        }
         const nextState = redo();
         if (nextState) {
           setNodes(nextState.nodes);
@@ -3114,6 +3232,9 @@ export default function App() {
   }, [
     undo,
     redo,
+    activeWorkspace,
+    undoThreeDScene,
+    redoThreeDScene,
     reactFlowInstance,
     selectedNodes,
     nodes,
@@ -7261,29 +7382,24 @@ export default function App() {
   const addThreeDObject = useCallback(
     (type: ThreeDObject["type"]) => {
       const object = createThreeDObject(type);
-      setThreeDObjects((objects) => [...objects, object]);
-      setSelectedThreeDObjectId(object.id);
+      commitThreeDScene((objects) => [...objects, object], object.id);
     },
-    [createThreeDObject],
+    [commitThreeDScene, createThreeDObject],
   );
   const duplicateThreeDObject = useCallback(() => {
     if (!selectedThreeDObject) return;
     const object = createThreeDObject(selectedThreeDObject.type, selectedThreeDObject);
-    setThreeDObjects((objects) => [...objects, object]);
-    setSelectedThreeDObjectId(object.id);
-  }, [createThreeDObject, selectedThreeDObject]);
+    commitThreeDScene((objects) => [...objects, object], object.id);
+  }, [commitThreeDScene, createThreeDObject, selectedThreeDObject]);
   const deleteThreeDObject = useCallback(() => {
     if (!selectedThreeDObjectId) return;
-    setThreeDObjects((objects) => {
-      const nextObjects = objects.filter((object) => object.id !== selectedThreeDObjectId);
-      const nextSelected = nextObjects[0]?.id || "";
-      setSelectedThreeDObjectId(nextSelected);
-      return nextObjects;
-    });
-  }, [selectedThreeDObjectId]);
+    const nextObjects = threeDObjects.filter((object) => object.id !== selectedThreeDObjectId);
+    if (nextObjects.length === threeDObjects.length) return;
+    commitThreeDScene(nextObjects, nextObjects[0]?.id || "");
+  }, [commitThreeDScene, selectedThreeDObjectId, threeDObjects]);
   const resetThreeDObject = useCallback(() => {
     if (!selectedThreeDObjectId) return;
-    setThreeDObjects((objects) =>
+    commitThreeDScene((objects) =>
       objects.map((object) =>
         object.id === selectedThreeDObjectId && !object.locked
           ? {
@@ -7295,21 +7411,27 @@ export default function App() {
           : object,
       ),
     );
-  }, [selectedThreeDObjectId]);
-  const toggleThreeDObjectVisible = useCallback((objectId: string) => {
-    setThreeDObjects((objects) =>
-      objects.map((object) =>
-        object.id === objectId ? { ...object, visible: object.visible === false } : object,
-      ),
-    );
-  }, []);
-  const toggleThreeDObjectLocked = useCallback((objectId: string) => {
-    setThreeDObjects((objects) =>
-      objects.map((object) =>
-        object.id === objectId ? { ...object, locked: object.locked !== true } : object,
-      ),
-    );
-  }, []);
+  }, [commitThreeDScene, selectedThreeDObjectId]);
+  const toggleThreeDObjectVisible = useCallback(
+    (objectId: string) => {
+      commitThreeDScene((objects) =>
+        objects.map((object) =>
+          object.id === objectId ? { ...object, visible: object.visible === false } : object,
+        ),
+      );
+    },
+    [commitThreeDScene],
+  );
+  const toggleThreeDObjectLocked = useCallback(
+    (objectId: string) => {
+      commitThreeDScene((objects) =>
+        objects.map((object) =>
+          object.id === objectId ? { ...object, locked: object.locked !== true } : object,
+        ),
+      );
+    },
+    [commitThreeDScene],
+  );
   const updateThreeDObjectVector = useCallback(
     (
       key: "position" | "rotation" | "scale",
@@ -7318,7 +7440,7 @@ export default function App() {
     ) => {
       const numericValue = Number(value);
       if (!Number.isFinite(numericValue)) return;
-      setThreeDObjects((objects) =>
+      commitThreeDScene((objects) =>
         objects.map((object) => {
           if (object.id !== selectedThreeDObjectId || object.locked) return object;
           const nextVector = [...object[key]] as [number, number, number];
@@ -7327,7 +7449,43 @@ export default function App() {
         }),
       );
     },
-    [selectedThreeDObjectId],
+    [commitThreeDScene, selectedThreeDObjectId],
+  );
+  const syncThreeDObjectsFromHost = useCallback(
+    (objects: ThreeDObject[], selectedObjectId?: string) => {
+      commitThreeDScene(objects, selectedObjectId, { record: true });
+    },
+    [commitThreeDScene],
+  );
+  const updateThreeDObject = useCallback(
+    (id: string, patch: Partial<ThreeDObject>) => {
+      commitThreeDScene((objects) =>
+        objects.map((object) => (object.id === id ? { ...object, ...patch } : object)),
+      );
+    },
+    [commitThreeDScene],
+  );
+  const updateThreeDObjectName = useCallback(
+    (name: string) => {
+      commitThreeDScene((objects) =>
+        objects.map((object) =>
+          object.id === selectedThreeDObjectId ? { ...object, name } : object,
+        ),
+      );
+    },
+    [commitThreeDScene, selectedThreeDObjectId],
+  );
+  const updateThreeDObjectMaterialColor = useCallback(
+    (materialColor: string) => {
+      commitThreeDScene((objects) =>
+        objects.map((object) =>
+          object.id === selectedThreeDObjectId && !object.locked
+            ? { ...object, materialColor }
+            : object,
+        ),
+      );
+    },
+    [commitThreeDScene, selectedThreeDObjectId],
   );
   const formatNodeTreeLabel = useCallback((node: Node) => {
     const typeLabels: Record<string, string> = {
@@ -7899,8 +8057,12 @@ export default function App() {
                       {
                         label: "撤销",
                         shortcut: "⌘ Z",
-                        disabled: !canUndo,
+                        disabled: activeWorkspace === "3d" ? !canUndoThreeDScene : !canUndo,
                         action: () => {
+                          if (activeWorkspace === "3d") {
+                            undoThreeDScene();
+                            return;
+                          }
                           const prevState = undo();
                           if (prevState) {
                             setNodes(prevState.nodes);
@@ -7911,8 +8073,12 @@ export default function App() {
                       {
                         label: "重做",
                         shortcut: "⇧ ⌘ Z",
-                        disabled: !canRedo,
+                        disabled: activeWorkspace === "3d" ? !canRedoThreeDScene : !canRedo,
                         action: () => {
+                          if (activeWorkspace === "3d") {
+                            redoThreeDScene();
+                            return;
+                          }
                           const nextState = redo();
                           if (nextState) {
                             setNodes(nextState.nodes);
@@ -8101,18 +8267,16 @@ export default function App() {
                   objects={threeDObjects}
                   selectedObjectId={selectedThreeDObjectId}
                   onSelectObject={setSelectedThreeDObjectId}
-                  onSyncObjects={setThreeDObjects}
+                  onSyncObjects={syncThreeDObjectsFromHost}
                   onAddObject={addThreeDObject}
                   onDuplicateObject={duplicateThreeDObject}
                   onDeleteObject={deleteThreeDObject}
                   onResetObject={resetThreeDObject}
-                  onUpdateObject={(id, patch) =>
-                    setThreeDObjects((objects) =>
-                      objects.map((object) =>
-                        object.id === id ? { ...object, ...patch } : object,
-                      ),
-                    )
-                  }
+                  onUndo={undoThreeDScene}
+                  onRedo={redoThreeDScene}
+                  canUndo={canUndoThreeDScene}
+                  canRedo={canRedoThreeDScene}
+                  onUpdateObject={updateThreeDObject}
                 />
               ) : (
               <ShotContext.Provider
@@ -9145,13 +9309,7 @@ export default function App() {
                             <input
                               value={selectedThreeDObject?.name || ""}
                               onChange={(event) =>
-                                setThreeDObjects((objects) =>
-                                  objects.map((object) =>
-                                    object.id === selectedThreeDObjectId
-                                      ? { ...object, name: event.target.value }
-                                      : object,
-                                  ),
-                                )
+                                updateThreeDObjectName(event.target.value)
                               }
                               className="h-7 w-full rounded-[4px] border border-[#25272b] bg-[#141519] px-2 text-[11px] text-neutral-200 outline-none focus:border-[#4772b3]"
                             />
@@ -9203,13 +9361,7 @@ export default function App() {
                                 value={selectedThreeDObject?.materialColor || "#b9bdc5"}
                                 disabled={selectedThreeDObject?.locked}
                                 onChange={(event) =>
-                                  setThreeDObjects((objects) =>
-                                    objects.map((object) =>
-                                      object.id === selectedThreeDObjectId && !object.locked
-                                        ? { ...object, materialColor: event.target.value }
-                                        : object,
-                                    ),
-                                  )
+                                  updateThreeDObjectMaterialColor(event.target.value)
                                 }
                                 className="h-5 w-8 cursor-pointer rounded border-0 bg-transparent p-0 disabled:cursor-not-allowed disabled:opacity-40"
                               />

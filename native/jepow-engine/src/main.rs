@@ -1,8 +1,10 @@
 mod cycles_mesh;
 mod daemon;
 mod gpu;
+mod import_pipeline;
 mod jobs;
 mod mesh_loader;
+mod physics_pipeline;
 mod render;
 mod scene;
 mod viewport_host;
@@ -43,6 +45,12 @@ fn main() {
     match cmd {
         "ping" => cmd_ping(),
         "gpu_info" => cmd_gpu_info(),
+        "architecture_status" => cmd_architecture_status(),
+        "import_pipeline_status" => cmd_import_pipeline_status(),
+        "import_scene_pipeline" => cmd_import_scene_pipeline(&payload),
+        "physics_pipeline_status" => cmd_physics_pipeline_status(),
+        "physics_create_world" => cmd_physics_create_world(&payload),
+        "physics_step_world" => cmd_physics_step_world(&payload),
         "open_scene" | "scene_info" => cmd_open_scene(&payload),
         "render_frame" => cmd_render_frame(&payload),
         "mesh_stats" => cmd_mesh_stats(&payload),
@@ -59,7 +67,57 @@ fn cmd_ping() {
         "version": env!("CARGO_PKG_VERSION"),
         "cpuJobs": jobs::parallel_job_count(),
         "gpu": gpu,
+        "architecture": engine_architecture_status(),
     }));
+}
+
+fn engine_architecture_status() -> serde_json::Value {
+    let importers = import_pipeline::status();
+    let physics = physics_pipeline::status();
+    serde_json::json!({
+        "uiBridge": {
+            "architectureWired": true,
+            "productionReady": true,
+            "label": "React/Electron UI IPC",
+        },
+        "viewport": {
+            "architectureWired": true,
+            "productionReady": true,
+            "label": "Rust/wgpu Core Viewport",
+        },
+        "render": {
+            "architectureWired": true,
+            "productionReady": false,
+            "label": "Cycles/CL Render Bridge",
+            "note": "Cycles 独立进程桥接已存在，材质/场景闭环继续完善。",
+        },
+        "importers": importers,
+        "physics": physics,
+    })
+}
+
+fn cmd_architecture_status() {
+    emit(engine_architecture_status());
+}
+
+fn cmd_import_pipeline_status() {
+    emit(serde_json::to_value(import_pipeline::status()).unwrap());
+}
+
+fn cmd_import_scene_pipeline(payload: &serde_json::Value) {
+    emit(import_pipeline::import_scene(payload));
+}
+
+fn cmd_physics_pipeline_status() {
+    emit(serde_json::to_value(physics_pipeline::status()).unwrap());
+}
+
+fn cmd_physics_create_world(payload: &serde_json::Value) {
+    emit(physics_pipeline::create_world(payload));
+}
+
+fn cmd_physics_step_world(payload: &serde_json::Value) {
+    emit(physics_pipeline::step_world(payload));
 }
 
 fn cmd_gpu_info() {

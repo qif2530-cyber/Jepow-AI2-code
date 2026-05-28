@@ -46,6 +46,13 @@ enum HostDisplayMode {
     Cl,
 }
 
+#[derive(Clone, Copy, Debug, Deserialize)]
+#[serde(rename_all = "lowercase")]
+enum HostProjection {
+    Perspective,
+    Orthographic,
+}
+
 impl Default for HostDisplayMode {
     fn default() -> Self {
         Self::Cl
@@ -152,6 +159,8 @@ struct HostCamera {
     pitch: Option<f32>,
     #[serde(default)]
     distance: Option<f32>,
+    #[serde(default)]
+    projection: Option<HostProjection>,
     #[serde(default = "one_f32")]
     speed: f32,
 }
@@ -463,6 +472,7 @@ struct HostApp {
     camera_yaw: f32,
     camera_pitch: f32,
     camera_distance: f32,
+    camera_projection: HostProjection,
     camera_speed: f32,
     camera_pan: [f32; 2],
     last_cursor: Option<(f64, f64)>,
@@ -488,6 +498,7 @@ impl HostApp {
             camera_yaw: 0.72,
             camera_pitch: 0.52,
             camera_distance: 7.0,
+            camera_projection: HostProjection::Perspective,
             camera_speed: 1.0,
             camera_pan: [0.0, 0.0],
             last_cursor: None,
@@ -596,6 +607,7 @@ impl HostApp {
                         "yaw": self.camera_yaw,
                         "pitch": self.camera_pitch,
                         "distance": self.camera_distance,
+                        "projection": format!("{:?}", self.camera_projection).to_lowercase(),
                         "pan": self.camera_pan,
                     },
                 })
@@ -607,10 +619,13 @@ impl HostApp {
                             self.camera_yaw = yaw;
                         }
                         if let Some(pitch) = camera.pitch {
-                            self.camera_pitch = pitch.clamp(-1.2, 1.2);
+                            self.camera_pitch = pitch.clamp(-1.52, 1.52);
                         }
                         if let Some(distance) = camera.distance {
                             self.camera_distance = distance.clamp(1.2, 80.0);
+                        }
+                        if let Some(projection) = camera.projection {
+                            self.camera_projection = projection;
                         }
                         self.camera_speed = camera.speed.clamp(0.1, 5.0);
                         json!({ "ok": true, "id": id })
@@ -650,6 +665,7 @@ impl HostApp {
                     "yaw": self.camera_yaw,
                     "pitch": self.camera_pitch,
                     "distance": self.camera_distance,
+                    "projection": format!("{:?}", self.camera_projection).to_lowercase(),
                     "pan": self.camera_pan,
                 },
                 "objects": self.objects.iter().map(|object| {
@@ -738,6 +754,7 @@ impl HostApp {
         let camera_yaw = self.camera_yaw;
         let camera_pitch = self.camera_pitch;
         let camera_distance = self.camera_distance;
+        let camera_projection = self.camera_projection;
         let camera_pan = self.camera_pan;
         let display_mode = self.display_mode;
         let Some(gpu) = &mut self.gpu else { return };
@@ -780,8 +797,14 @@ impl HostApp {
                 timestamp_writes: None,
             });
             let aspect = gpu.config.width as f32 / gpu.config.height.max(1) as f32;
-            let (_, _, vp) =
-                build_camera_matrices(camera_yaw, camera_pitch, camera_distance, camera_pan, aspect);
+            let (_, _, vp) = build_camera_matrices(
+                camera_yaw,
+                camera_pitch,
+                camera_distance,
+                camera_projection,
+                camera_pan,
+                aspect,
+            );
 
             pass.set_bind_group(0, &gpu.bind_group, &[]);
 
@@ -874,6 +897,7 @@ impl HostApp {
             self.camera_yaw,
             self.camera_pitch,
             self.camera_distance,
+            self.camera_projection,
             self.camera_pan,
             aspect,
         )
@@ -1068,7 +1092,7 @@ impl HostApp {
                 }
                 HostTool::Select => {
                     self.camera_yaw += dx as f32 * 0.008 * self.camera_speed;
-                    self.camera_pitch = (self.camera_pitch + dy as f32 * 0.006 * self.camera_speed).clamp(-1.2, 1.2);
+                    self.camera_pitch = (self.camera_pitch + dy as f32 * 0.006 * self.camera_speed).clamp(-1.52, 1.52);
                 }
             },
             Some(MouseButton::Right) | Some(MouseButton::Middle) => {
@@ -1341,11 +1365,19 @@ fn build_camera_matrices(
     yaw: f32,
     pitch: f32,
     distance: f32,
+    projection: HostProjection,
     pan: [f32; 2],
     aspect: f32,
 ) -> (Mat4, Mat4, Mat4) {
-    let proj = Mat4::perspective_rh_gl(45.0_f32.to_radians(), aspect, 0.05, 200.0);
-    let pitch = pitch.clamp(-1.2, 1.2);
+    let proj = match projection {
+        HostProjection::Perspective => Mat4::perspective_rh_gl(45.0_f32.to_radians(), aspect, 0.05, 200.0),
+        HostProjection::Orthographic => {
+            let half_height = (distance * 0.42).clamp(1.0, 80.0);
+            let half_width = half_height * aspect.max(0.01);
+            Mat4::orthographic_rh_gl(-half_width, half_width, -half_height, half_height, -200.0, 200.0)
+        }
+    };
+    let pitch = pitch.clamp(-1.52, 1.52);
     let center = Vec3::new(pan[0], pan[1], 0.0);
     let eye = center
         + Vec3::new(
