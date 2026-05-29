@@ -92,9 +92,11 @@ type PhysicsStats = {
   angularEnergy: number;
   maxLinearSpeed: number;
   maxAngularSpeed: number;
-  clampedBodyCount: number;
-  speedLimitHitCount: number;
   contactCount: number;
+  bodyContactCount: number;
+  contactPairCount: number;
+  deepestContactLabel: string;
+  wokenBodyCount: number;
   maxPenetration: number;
 };
 
@@ -262,7 +264,6 @@ const toPhysicsBodies = (objects: ThreeDObject[]) =>
         angularDamping: object.assetPath ? 0.22 : 0.18,
         maxLinearSpeed: object.assetPath ? 28 : 35,
         maxAngularSpeed: object.assetPath ? 14 : 18,
-        velocityClamped: false,
         grounded: false,
         halfExtents,
         mass: physicsBodyMass(halfExtents, object),
@@ -276,6 +277,16 @@ const toPhysicsBodies = (objects: ThreeDObject[]) =>
 const physicsBodiesFromSnapshot = (snapshot: Record<string, unknown> | null) => {
   const bodies = snapshot?.bodies;
   return Array.isArray(bodies) ? bodies : [];
+};
+
+const physicsContactLabel = (contact: unknown) => {
+  if (!contact || typeof contact !== "object") return "";
+  const raw = contact as Record<string, unknown>;
+  const a = typeof raw.a === "string" ? raw.a : "";
+  const b = typeof raw.b === "string" ? raw.b : "";
+  const axis = typeof raw.axis === "string" ? raw.axis : "?";
+  const penetration = Number(raw.penetration) || 0;
+  return a && b ? `${a}/${b}:${axis}:${penetration.toFixed(2)}` : "";
 };
 
 const physicsColliderSignature = (objects: ThreeDObject[]) =>
@@ -661,8 +672,10 @@ export function ThreeDWorkspace({
     angularEnergy = physicsStats?.angularEnergy ?? 0,
     maxLinearSpeed = physicsStats?.maxLinearSpeed ?? 0,
     maxAngularSpeed = physicsStats?.maxAngularSpeed ?? 0,
-    clampedBodyCount = physicsStats?.clampedBodyCount ?? 0,
-    speedLimitHitCount = physicsStats?.speedLimitHitCount ?? 0,
+    bodyContactCount = physicsStats?.bodyContactCount ?? contactCount,
+    contactPairCount = physicsStats?.contactPairCount ?? 0,
+    deepestContactLabel = physicsStats?.deepestContactLabel ?? "",
+    wokenBodyCount = physicsStats?.wokenBodyCount ?? 0,
   ) => {
     const bodies = physicsBodiesFromSnapshot(snapshot);
     const bodyCount = bodies.length;
@@ -679,9 +692,6 @@ export function ThreeDWorkspace({
       const halfExtents = toVec3((body as Record<string, unknown>).halfExtents, [0.5, 0.5, 0.5]);
       return position[1] <= Math.max(0, halfExtents[1]) + 1e-6;
     }).length;
-    const derivedClampedBodyCount = bodies.filter(
-      (body) => typeof body === "object" && body && (body as Record<string, unknown>).velocityClamped === true,
-    ).length;
     const derivedMovingBodyCount = bodies.filter((body) => {
       if (typeof body !== "object" || !body || (body as Record<string, unknown>).dynamic === false) return false;
       const velocity = toVec3((body as Record<string, unknown>).velocity, [0, 0, 0]);
@@ -745,9 +755,11 @@ export function ThreeDWorkspace({
       angularEnergy,
       maxLinearSpeed: maxLinearSpeed || derivedMaxLinearSpeed,
       maxAngularSpeed: maxAngularSpeed || derivedMaxAngularSpeed,
-      clampedBodyCount: clampedBodyCount || derivedClampedBodyCount,
-      speedLimitHitCount: speedLimitHitCount || derivedClampedBodyCount,
       contactCount,
+      bodyContactCount,
+      contactPairCount,
+      deepestContactLabel,
+      wokenBodyCount,
       maxPenetration,
     });
   };
@@ -797,8 +809,10 @@ export function ThreeDWorkspace({
         Number(stepped.angularEnergy) || 0,
         Number(stepped.maxLinearSpeed) || 0,
         Number(stepped.maxAngularSpeed) || 0,
-        Number(stepped.clampedBodyCount) || 0,
-        Number(stepped.speedLimitHitCount) || 0,
+        Number(stepped.bodyContactCount) || Number(stepped.contactCount) || 0,
+        Array.isArray(stepped.contactPairs) ? stepped.contactPairs.length : 0,
+        physicsContactLabel(stepped.deepestContact),
+        Number(stepped.wokenBodyCount) || 0,
       );
       applyPhysicsSnapshotToScene(physicsWorldRef.current, sourceObjects);
     }
@@ -1599,13 +1613,14 @@ export function ThreeDWorkspace({
               {physicsStats?.sleepingBodyCount ?? 0} · grounded {physicsStats?.groundedBodyCount ?? 0} · floor{" "}
               {physicsStats?.floorContactCount ?? 0} · step{" "}
               {physicsStats?.stepCount ?? 0} · t{" "}
-              {(physicsStats?.time ?? 0).toFixed(2)}s · contacts {physicsStats?.contactCount ?? 0} · pen{" "}
+              {(physicsStats?.time ?? 0).toFixed(2)}s · contacts {physicsStats?.contactCount ?? 0} · pairs{" "}
+              {physicsStats?.contactPairCount ?? 0} · wake {physicsStats?.wokenBodyCount ?? 0} · pen{" "}
               {(physicsStats?.maxPenetration ?? 0).toFixed(3)} · com{" "}
               {(physicsStats?.centerOfMass ?? [0, 0, 0]).map((value) => value.toFixed(1)).join("/")} · E{" "}
               {((physicsStats?.kineticEnergy ?? 0) + (physicsStats?.angularEnergy ?? 0)).toFixed(2)} · vmax{" "}
               {(physicsStats?.maxLinearSpeed ?? 0).toFixed(1)} · wmax{" "}
-              {(physicsStats?.maxAngularSpeed ?? 0).toFixed(1)} · clamp {physicsStats?.clampedBodyCount ?? 0}/
-              {physicsStats?.speedLimitHitCount ?? 0}
+              {(physicsStats?.maxAngularSpeed ?? 0).toFixed(1)}
+              {physicsStats?.deepestContactLabel ? ` · deep ${physicsStats.deepestContactLabel}` : ""}
             </div>
           )}
           {diagnostics?.checks && (

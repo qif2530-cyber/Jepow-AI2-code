@@ -9154,8 +9154,8 @@ export default function App() {
                                   ? "bg-blue-500/20 text-blue-100"
                                   : "text-neutral-400 hover:bg-white/[0.06] hover:text-neutral-200"
                               }`}
-                            >
-                              <button
+                    >
+                      <button
                                 type="button"
                                 title={object.visible === false ? "显示" : "隐藏"}
                                 onClick={(event) => {
@@ -9169,7 +9169,7 @@ export default function App() {
                                 }`}
                               >
                                 {object.visible === false ? "○" : "●"}
-                              </button>
+                      </button>
                               <button
                                 type="button"
                                 title={object.locked ? "解锁" : "锁定"}
@@ -9185,7 +9185,7 @@ export default function App() {
                               >
                                 {object.locked ? "锁" : "开"}
                               </button>
-                              <button
+                        <button
                                 type="button"
                                 onClick={() => setSelectedThreeDObjectId(object.id)}
                                 className="flex min-w-0 flex-1 items-center gap-2 text-left"
@@ -9201,7 +9201,7 @@ export default function App() {
                                   {object.name}
                                 </span>
                                 <span className="text-[10px] text-neutral-500">{object.type}</span>
-                              </button>
+                        </button>
                             </div>
                           ))}
                         </div>
@@ -9224,7 +9224,7 @@ export default function App() {
                       { id: "properties" as const, label: "属性", icon: Settings2 },
                       { id: "ai" as const, label: "AI 助手", icon: Sparkles },
                     ].map(({ id, label, icon: Icon }) => (
-                        <button
+                          <button
                         key={id}
                         type="button"
                         title={label}
@@ -9236,7 +9236,7 @@ export default function App() {
                         }`}
                       >
                         <Icon className="h-3.5 w-3.5" />
-                        </button>
+                          </button>
                     ))}
                   </div>
 
@@ -9595,7 +9595,7 @@ export default function App() {
                                         ))}
                                       </select>
                                     </label>
-                                  </div>
+            </div>
 
                                   <label className="block">
                                     <span className={labelClass}>生成数量</span>

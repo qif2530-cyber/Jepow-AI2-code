@@ -51,11 +51,11 @@ This is not a temporary implementation detail. Future changes must optimize with
 - Minimal physics bodies must carry rotation, angular velocity, and angular damping so the runtime snapshot can drive rigid body orientation before full Jolt/Bullet rotation solvers are linked.
 - Minimal physics bodies must carry per-body gravity scale and linear damping so authors can diagnose object-specific falling and settling behavior before full Jolt/Bullet body parameters are linked.
 - Minimal physics bodies must carry max linear/angular speed clamps and the runtime/HUD must report current max speeds so unstable simulations are bounded and diagnosable before full Jolt/Bullet solvers are linked.
-- Physics runtime and HUD must report per-body velocity clamp hits (`velocityClamped`) plus clamped body and speed limit hit counts so clamp-driven stability can be diagnosed instead of hidden.
 - Minimal physics body-body collision must use body mass/inverse mass when separating dynamic overlaps so heavy bodies move less than light bodies before full Jolt/Bullet solvers are linked.
 - Physics runtime and HUD must report sleeping body counts so simulation settling can be diagnosed during continuous playback.
 - Physics runtime and HUD must report moving and rotating body counts so motion activity can be diagnosed separately from collision contact counts.
 - Physics runtime and HUD must report grounded body counts and floor contact counts so settled-on-floor state can be diagnosed separately from body-body collision contacts and sleeping state.
+- Physics runtime and HUD must report body contact pair counts, deepest body contact details, and collision wake counts so object-object collision stability can be diagnosed beyond aggregate contact totals.
 - Physics runtime and HUD must report total dynamic mass so collider size and material-density heuristics can be diagnosed while authoring simulation scenes.
 - Physics runtime and HUD must report dynamic center of mass and linear/angular kinetic energy so unstable simulations and drifting mass distributions can be diagnosed before full Jolt/Bullet solvers are linked.
 - The minimal physics runtime must support deterministic AABB body-body collision resolution and report `contactCount` until Jolt/Bullet replaces it.

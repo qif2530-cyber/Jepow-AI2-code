@@ -105,7 +105,7 @@ for (const expected of ['material_color', 'material_tint', 'metallic_factor', 'r
 }
 
 const physicsPipeline = read('native/jepow-engine/src/physics_pipeline.rs');
-for (const expected of ['Jolt Physics', 'Bullet Physics', 'architecture_wired', 'create_world', 'step_world', 'native-minimal-runtime', 'worldSnapshot', 'step_body', 'resolve_body_collisions', 'aabb_overlap', 'contactCount', 'substeps', 'damping', 'native_runtime_capabilities', 'world-snapshot-create-step', 'aabb-body-body-collision', 'viewport-playback-sync', 'static-dynamic-collision-resolution', 'collision-penetration-diagnostics', 'body-restitution-friction', 'body-sleep-threshold', 'angular-velocity-integration', 'angular-damping', 'rotation-snapshot-sync', 'moving-rotating-body-diagnostics', 'mass-weighted-collision-resolution', 'dynamic-mass-diagnostics', 'center-of-mass-diagnostics', 'kinetic-energy-diagnostics', 'per-body-gravity-scale', 'per-body-linear-damping', 'velocity-clamp-stability', 'max-speed-diagnostics', 'velocity-clamp-diagnostics', 'grounded-body-diagnostics', 'floor-contact-counting', 'write_body_bool', 'body_restitution', 'body_mass', 'body_inverse_mass', 'total_dynamic_mass', 'dynamic_center_of_mass', 'total_kinetic_energy', 'total_angular_energy', 'approximate_angular_energy', 'max_body_speed', 'clamp_vec3_magnitude', 'body_velocity_clamped', 'count_clamped_bodies', 'body_grounded', 'count_grounded_bodies', 'count_sleeping_bodies', 'count_moving_bodies', 'count_rotating_bodies', 'sleepingBodyCount', 'groundedBodyCount', 'floorContactCount', 'clampedBodyCount', 'speedLimitHitCount', 'movingBodyCount', 'rotatingBodyCount', 'totalDynamicMass', 'centerOfMass', 'kineticEnergy', 'angularEnergy', 'gravityScale', 'linearDamping', 'maxLinearSpeed', 'maxAngularSpeed', 'velocityClamped', 'grounded', 'sleepThreshold', 'sleeping', 'restitution', 'friction', 'angularVelocity', 'angularDamping', 'rotation', 'mass', 'maxPenetration', 'dynamicBodyCount', 'staticBodyCount']) {
+for (const expected of ['Jolt Physics', 'Bullet Physics', 'architecture_wired', 'create_world', 'step_world', 'native-minimal-runtime', 'worldSnapshot', 'step_body', 'resolve_body_collisions', 'aabb_overlap', 'contactCount', 'substeps', 'damping', 'native_runtime_capabilities', 'world-snapshot-create-step', 'aabb-body-body-collision', 'viewport-playback-sync', 'static-dynamic-collision-resolution', 'collision-penetration-diagnostics', 'body-restitution-friction', 'body-sleep-threshold', 'angular-velocity-integration', 'angular-damping', 'rotation-snapshot-sync', 'moving-rotating-body-diagnostics', 'mass-weighted-collision-resolution', 'dynamic-mass-diagnostics', 'center-of-mass-diagnostics', 'kinetic-energy-diagnostics', 'per-body-gravity-scale', 'per-body-linear-damping', 'velocity-clamp-stability', 'max-speed-diagnostics', 'grounded-body-diagnostics', 'floor-contact-counting', 'contact-pair-diagnostics', 'deepest-contact-diagnostics', 'collision-wake-counting', 'write_body_bool', 'body_restitution', 'body_mass', 'body_inverse_mass', 'total_dynamic_mass', 'dynamic_center_of_mass', 'total_kinetic_energy', 'total_angular_energy', 'approximate_angular_energy', 'max_body_speed', 'clamp_vec3_magnitude', 'body_grounded', 'body_sleeping', 'body_id', 'axis_label', 'count_grounded_bodies', 'count_sleeping_bodies', 'count_moving_bodies', 'count_rotating_bodies', 'sleepingBodyCount', 'groundedBodyCount', 'floorContactCount', 'bodyContactCount', 'contactPairs', 'deepestContact', 'wokenBodyCount', 'movingBodyCount', 'rotatingBodyCount', 'totalDynamicMass', 'centerOfMass', 'kineticEnergy', 'angularEnergy', 'gravityScale', 'linearDamping', 'maxLinearSpeed', 'maxAngularSpeed', 'grounded', 'sleepThreshold', 'sleeping', 'restitution', 'friction', 'angularVelocity', 'angularDamping', 'rotation', 'mass', 'maxPenetration', 'dynamicBodyCount', 'staticBodyCount']) {
   assert(physicsPipeline.includes(expected), `physics_pipeline missing required contract text: ${expected}`);
 }
 
@@ -176,6 +176,11 @@ for (const expected of [
   'sleepingBodyCount',
   'groundedBodyCount',
   'floorContactCount',
+  'bodyContactCount',
+  'contactPairCount',
+  'deepestContactLabel',
+  'wokenBodyCount',
+  'physicsContactLabel',
   'movingBodyCount',
   'rotatingBodyCount',
   'totalDynamicMass',
@@ -184,8 +189,6 @@ for (const expected of [
   'angularEnergy',
   'maxLinearSpeed',
   'maxAngularSpeed',
-  'clampedBodyCount',
-  'speedLimitHitCount',
   'physicsBodyMass',
   'physicsHalfExtents',
   'restitution',
