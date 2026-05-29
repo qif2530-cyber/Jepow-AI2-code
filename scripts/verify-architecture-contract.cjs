@@ -57,6 +57,26 @@ assert(
   viewportIpc.includes('getArchitectureDiagnostics'),
   'viewport-ipc must expose architecture diagnostics.',
 );
+assert(viewportIpc.includes('UI_RUNTIME_CAPABILITIES'), 'viewport-ipc must expose UI runtime capabilities.');
+assert(viewportIpc.includes('uiRuntimeCapabilities'), 'viewport-ipc must include UI runtime capabilities in status.');
+assert(viewportIpc.includes('VIEWPORT_RUNTIME_CAPABILITIES'), 'viewport-ipc must expose viewport runtime capabilities.');
+assert(viewportIpc.includes('viewportRuntimeCapabilities'), 'viewport-ipc must include viewport runtime capabilities in status.');
+for (const expected of ['scene-sync-acknowledgement', 'selection-validation', 'transform-hit-diagnostics']) {
+  assert(viewportIpc.includes(expected), `viewport-ipc missing viewport sync runtime capability: ${expected}`);
+}
+assert(viewportIpc.includes('cyclesRuntimeCapabilities'), 'viewport-ipc must expose cycles runtime capabilities.');
+assert(viewportIpc.includes('importRuntimeCapabilities'), 'viewport-ipc must expose import runtime capabilities.');
+assert(viewportIpc.includes('physicsRuntimeCapabilities'), 'viewport-ipc must expose physics runtime capabilities.');
+
+const archContract = read('electron/native-architecture-contract.cjs');
+for (const expected of ['cyclesStatus', 'Cycles/CL runtime 可用', 'cyclesStatus.activeBackend', 'runtimeReady', 'runtimePercent', 'runtimeCount']) {
+  assert(archContract.includes(expected), `native architecture contract missing renderer status hook: ${expected}`);
+}
+
+const cyclesBridge = read('electron/jepow-cycles-bridge.cjs');
+for (const expected of ['buildCyclesRuntimeCapabilities', 'runtimeCapabilities', 'renderDevices', 'cycles-xml-scene-export', 'resident-daemon-session-api', 'empty-frame-detection', 'metal-render-device-ready']) {
+  assert(cyclesBridge.includes(expected), `jepow-cycles bridge missing renderer capability: ${expected}`);
+}
 
 const mainRs = read('native/jepow-engine/src/main.rs');
 for (const expected of [
@@ -75,17 +95,17 @@ for (const expected of [
 }
 
 const importPipeline = read('native/jepow-engine/src/import_pipeline.rs');
-for (const expected of ['Assimp Import', 'USD Import', 'architecture_wired', 'import_scene', 'native_existing_import', 'load_scene_stats', 'load_meshes', 'boundsMin', 'boundsMax', 'boundsSize', 'materialColor', 'hasBaseColorTexture', 'hasMetallicRoughnessTexture', 'metallicFactor', 'roughnessFactor']) {
+for (const expected of ['Assimp Import', 'USD Import', 'architecture_wired', 'import_scene', 'native_existing_import', 'load_scene_stats', 'load_meshes', 'boundsMin', 'boundsMax', 'boundsSize', 'materialColor', 'hasBaseColorTexture', 'hasMetallicRoughnessTexture', 'metallicFactor', 'roughnessFactor', 'stl', 'ply', 'native_runtime_capabilities', 'ply-ascii-binary-little-endian-binary-big-endian', 'ply-uv-color-alpha', 'ply-ordered-face-properties', 'ply-bounds-checked-scalars', 'ply-index-range-validation']) {
   assert(importPipeline.includes(expected), `import_pipeline missing required contract text: ${expected}`);
 }
 
 const meshLoader = read('native/jepow-engine/src/mesh_loader.rs');
-for (const expected of ['material_color', 'material_tint', 'metallic_factor', 'roughness_factor', 'base_color_texture', 'metallic_roughness_texture', 'read_tex_coords', 'diffuse_texture', 'gltf_image_to_rgba']) {
+for (const expected of ['material_color', 'material_tint', 'metallic_factor', 'roughness_factor', 'base_color_texture', 'metallic_roughness_texture', 'read_tex_coords', 'diffuse_texture', 'gltf_image_to_rgba', 'generate_missing_normals', 'normalize_normal_or_zero', 'load_stl_mesh', 'parse_binary_stl', 'parse_ascii_stl', 'load_ply_mesh', 'find_ply_header_end', 'parse_ascii_ply', 'parse_binary_little_ply', 'parse_binary_big_ply', 'from_be_bytes', 'apply_ply_vertex_property', 'texture_u', 'texcoord_v', 'normalize_ply_color_component', 'let is_integer = matches!', '"alpha" | "a"', 'PlyFaceProperty', 'face_properties', 'is_ply_face_index_property', 'append_triangulated_face', 'read_ply_scalar_bytes', 'ply scalar out of range', 'PLY face index out of range']) {
   assert(meshLoader.includes(expected), `mesh_loader missing imported material extraction: ${expected}`);
 }
 
 const physicsPipeline = read('native/jepow-engine/src/physics_pipeline.rs');
-for (const expected of ['Jolt Physics', 'Bullet Physics', 'architecture_wired', 'create_world', 'step_world', 'native-minimal-runtime', 'worldSnapshot', 'step_body', 'resolve_body_collisions', 'aabb_overlap', 'contactCount', 'substeps', 'damping']) {
+for (const expected of ['Jolt Physics', 'Bullet Physics', 'architecture_wired', 'create_world', 'step_world', 'native-minimal-runtime', 'worldSnapshot', 'step_body', 'resolve_body_collisions', 'aabb_overlap', 'contactCount', 'substeps', 'damping', 'native_runtime_capabilities', 'world-snapshot-create-step', 'aabb-body-body-collision', 'viewport-playback-sync', 'static-dynamic-collision-resolution', 'collision-penetration-diagnostics', 'body-restitution-friction', 'body-sleep-threshold', 'angular-velocity-integration', 'angular-damping', 'rotation-snapshot-sync', 'moving-rotating-body-diagnostics', 'mass-weighted-collision-resolution', 'dynamic-mass-diagnostics', 'center-of-mass-diagnostics', 'kinetic-energy-diagnostics', 'per-body-gravity-scale', 'per-body-linear-damping', 'velocity-clamp-stability', 'max-speed-diagnostics', 'velocity-clamp-diagnostics', 'grounded-body-diagnostics', 'floor-contact-counting', 'write_body_bool', 'body_restitution', 'body_mass', 'body_inverse_mass', 'total_dynamic_mass', 'dynamic_center_of_mass', 'total_kinetic_energy', 'total_angular_energy', 'approximate_angular_energy', 'max_body_speed', 'clamp_vec3_magnitude', 'body_velocity_clamped', 'count_clamped_bodies', 'body_grounded', 'count_grounded_bodies', 'count_sleeping_bodies', 'count_moving_bodies', 'count_rotating_bodies', 'sleepingBodyCount', 'groundedBodyCount', 'floorContactCount', 'clampedBodyCount', 'speedLimitHitCount', 'movingBodyCount', 'rotatingBodyCount', 'totalDynamicMass', 'centerOfMass', 'kineticEnergy', 'angularEnergy', 'gravityScale', 'linearDamping', 'maxLinearSpeed', 'maxAngularSpeed', 'velocityClamped', 'grounded', 'sleepThreshold', 'sleeping', 'restitution', 'friction', 'angularVelocity', 'angularDamping', 'rotation', 'mass', 'maxPenetration', 'dynamicBodyCount', 'staticBodyCount']) {
   assert(physicsPipeline.includes(expected), `physics_pipeline missing required contract text: ${expected}`);
 }
 
@@ -130,6 +150,7 @@ for (const expected of [
   'architectureProgress',
   'currentPhaseLabel',
   'skeletonPercent',
+  'runtimePercent',
   'productionPercent',
   'probeImportPipeline',
   'pickSceneFile',
@@ -142,18 +163,82 @@ for (const expected of [
   'probePhysicsWorld',
   'probePhysicsStep',
   'physicsWorldRef',
+  'physicsColliderSignature',
+  'physicsColliderSignatureRef',
+  'hostSceneReadyRef',
+  'hostSceneEpochRef',
   'physicsPlaying',
   'physicsStats',
   'contactCount',
+  'maxPenetration',
+  'dynamicBodyCount',
+  'staticBodyCount',
+  'sleepingBodyCount',
+  'groundedBodyCount',
+  'floorContactCount',
+  'movingBodyCount',
+  'rotatingBodyCount',
+  'totalDynamicMass',
+  'centerOfMass',
+  'kineticEnergy',
+  'angularEnergy',
+  'maxLinearSpeed',
+  'maxAngularSpeed',
+  'clampedBodyCount',
+  'speedLimitHitCount',
+  'physicsBodyMass',
   'physicsHalfExtents',
+  'restitution',
+  'friction',
+  'sleepThreshold',
+  'sleeping',
+  'angularVelocity',
+  'gravityScale',
+  'linearDamping',
+  'angularDamping',
+  'rotations',
   'Math.log10(triangles) * 0.22 + 1.45',
   'resetPhysicsWorld',
   'togglePhysicsPlayback',
+  'cycleDisplayMode',
+  'isolateSelection',
+  'revealAllObjects',
+  'selectAdjacentVisibleObject',
+  'nudgeSelectedObject',
+  'rotateSelectedObject',
+  'scaleSelectedObject',
+  'toggleSelectedObjectLock',
+  'unlockAllObjects',
+  'Ctrl+L 锁定',
+  '方向键微移',
+  'Alt+方向旋转',
+  '[/] 缩放',
+  'Tab 切对象',
+  'Shift+A/C/L',
+  'Ctrl+1/3/7',
+  'Alt+Z',
+  'H/Alt+H',
+  '/ 隔离',
   'toPhysicsBodies',
   'applyPhysicsSnapshotToScene',
   '物理播放',
   '物理重置',
   '物理 runtime',
+  'uiRuntimeCapabilities',
+  'uiCapabilityBadges',
+  'UI runtime',
+  'viewportRuntimeCapabilities',
+  'viewportCapabilityBadges',
+  'Viewport runtime',
+  'importRuntimeCapabilities',
+  'importCapabilityBadges',
+  'Import runtime',
+  'cyclesRuntimeCapabilities',
+  'cyclesCapabilityBadges',
+  'Cycles/CL runtime',
+  'physicsRuntimeCapabilities',
+  'physicsCapabilityBadges',
+  'Physics runtime',
   '架构管线控制台',
   '架构诊断报告',
   '架构自检',
@@ -198,6 +283,9 @@ for (const expected of [
   'metallic_factor',
   'roughness_factor',
   'draw_indexed(0..imported_mesh.index_count',
+  'selectedObjectId',
+  'selectionAccepted',
+  'transformApplied',
 ]) {
   assert(viewportHost.includes(expected), `viewport host missing imported asset metadata: ${expected}`);
 }

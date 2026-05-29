@@ -26,7 +26,7 @@ pub fn load_scene_stats(path: &str) -> Result<SceneStats> {
     match ext.as_str() {
         "glb" | "gltf" => load_gltf_stats(path, &ext),
         "fbx" => load_fbx_stats(path, &ext),
-        "obj" => load_obj_stats(path, &ext),
+        "obj" | "stl" | "ply" => load_mesh_loader_stats(path, &ext),
         "blend" => anyhow::bail!("use .fbx/.glb export from Blender for now"),
         _ => anyhow::bail!("unsupported scene extension: .{}", ext),
     }
@@ -54,7 +54,7 @@ fn load_fbx_stats(path: &str, ext: &str) -> Result<SceneStats> {
     })
 }
 
-fn load_obj_stats(path: &str, ext: &str) -> Result<SceneStats> {
+fn load_mesh_loader_stats(path: &str, ext: &str) -> Result<SceneStats> {
     let mesh = crate::mesh_loader::load_meshes(path)?;
     Ok(SceneStats {
         path: path.to_string(),

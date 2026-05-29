@@ -48,6 +48,7 @@ const ARCHITECTURE_CONTRACT = Object.freeze({
 function buildArchitectureProgress(architecture) {
   const entries = Object.entries(architecture);
   const wiredCount = entries.filter(([, feature]) => feature.status).length;
+  const runtimeCount = entries.filter(([, feature]) => feature.runtimeReady || feature.productionReady).length;
   const productionCount = entries.filter(([, feature]) => feature.productionReady).length;
   const total = entries.length || 1;
   const currentPhase =
@@ -61,9 +62,11 @@ function buildArchitectureProgress(architecture) {
     currentPhaseLabel: ARCHITECTURE_CONTRACT.phases[currentPhase].label,
     description: ARCHITECTURE_CONTRACT.phases[currentPhase].description,
     wiredCount,
+    runtimeCount,
     productionCount,
     total,
     skeletonPercent: Math.round((wiredCount / total) * 100),
+    runtimePercent: Math.round((runtimeCount / total) * 100),
     productionPercent: Math.round((productionCount / total) * 100),
     nextMilestone:
       currentPhase === 'production'
@@ -74,35 +77,44 @@ function buildArchitectureProgress(architecture) {
   };
 }
 
-function buildArchitectureStatus({ nativeAvailable, cyclesAvailable, nativeArchitecture }) {
+function buildArchitectureStatus({ nativeAvailable, cyclesAvailable, nativeArchitecture, cyclesStatus }) {
   const importersWired = !!nativeArchitecture?.importers?.architecture_wired;
   const importersReady = !!nativeArchitecture?.importers?.production_ready;
+  const importersRuntimeReady = !!nativeArchitecture?.importers?.native_runtime_capabilities?.length;
   const physicsWired = !!nativeArchitecture?.physics?.architecture_wired;
   const physicsReady = !!nativeArchitecture?.physics?.production_ready;
+  const physicsRuntimeReady = !!nativeArchitecture?.physics?.native_runtime_capabilities?.length;
+  const rendererRuntimeReady = !!cyclesStatus?.runtimeCapabilities?.length || !!cyclesAvailable;
   return {
     ui: {
       ...ARCHITECTURE_CONTRACT.modules.ui,
       status: true,
+      runtimeReady: true,
       productionReady: true,
       detail: 'renderer + Electron IPC 已接入',
     },
     viewport: {
       ...ARCHITECTURE_CONTRACT.modules.viewport,
       status: !!nativeAvailable,
+      runtimeReady: !!nativeAvailable,
       productionReady: !!nativeAvailable,
       detail: nativeAvailable ? 'native viewport-host 可用' : '等待 jepow-engine 编译',
     },
     renderer: {
       ...ARCHITECTURE_CONTRACT.modules.renderer,
       status: true,
-      productionReady: !!cyclesAvailable,
-      detail: cyclesAvailable
+      runtimeReady: rendererRuntimeReady,
+      productionReady: !!cyclesStatus?.productionReady || !!cyclesAvailable,
+      detail: cyclesStatus?.productionReady
+        ? `Cycles/CL runtime 可用：${cyclesStatus.activeBackend || 'cycles'}`
+        : cyclesAvailable
         ? 'jepow-cycles 独立渲染进程可用'
         : '架构桥接已接入，Cycles/CL 渲染进程未就绪',
     },
     importers: {
       ...ARCHITECTURE_CONTRACT.modules.importers,
       status: importersWired,
+      runtimeReady: importersRuntimeReady,
       productionReady: importersReady,
       detail: importersWired
         ? '导入管线模块和状态协议已接入，Assimp/USD runtime 待填充'
@@ -111,6 +123,7 @@ function buildArchitectureStatus({ nativeAvailable, cyclesAvailable, nativeArchi
     physics: {
       ...ARCHITECTURE_CONTRACT.modules.physics,
       status: physicsWired,
+      runtimeReady: physicsRuntimeReady,
       productionReady: physicsReady,
       detail: physicsWired
         ? '物理管线模块和状态协议已接入，Bullet/Jolt runtime 待填充'

@@ -25,6 +25,33 @@ const cyclesBridge = require('./jepow-cycles-bridge.cjs');
 /** 仅 .blend 导入后可选对照渲，非默认 */
 const blenderBridgeImport = require('./blender-bridge.cjs');
 
+const UI_RUNTIME_CAPABILITIES = Object.freeze([
+  'react-electron-workspace',
+  'preload-ipc-command-surface',
+  'architecture-diagnostics-panel',
+  'pipeline-probe-console',
+  'undo-redo-scene-state',
+  'scene-collection-and-properties',
+  'native-status-polling',
+  'runtime-capability-badges',
+]);
+
+const VIEWPORT_RUNTIME_CAPABILITIES = Object.freeze([
+  'native-wgpu-host-window',
+  'orbit-pan-zoom-camera',
+  'perspective-orthographic-camera',
+  'selection-and-transform-tools',
+  'snap-and-focus-selection',
+  'solid-material-wireframe-display',
+  'imported-gpu-mesh-rendering',
+  'imported-mesh-texture-sampling',
+  'imported-mesh-picking-focus',
+  'source-file-gpu-cache-reload',
+  'scene-sync-acknowledgement',
+  'selection-validation',
+  'transform-hit-diagnostics',
+]);
+
 function normalizeScenePath(scenePath) {
   if (!scenePath || typeof scenePath !== 'string') return '';
   let raw = scenePath.trim();
@@ -62,7 +89,10 @@ async function getCombinedStatus() {
   const nativeArchitecture = nativeSt.architecture || {};
   const architecture = buildArchitectureStatus({
     nativeAvailable,
+    viewportBackend: nativeAvailable ? 'rust-wgpu-viewport-host' : 'unavailable',
+    viewportRuntimeCapabilities: nativeAvailable ? VIEWPORT_RUNTIME_CAPABILITIES : [],
     cyclesAvailable,
+    cyclesStatus: cyclesSt,
     nativeArchitecture,
   });
   const architectureProgress = buildArchitectureProgress(architecture);
@@ -72,8 +102,18 @@ async function getCombinedStatus() {
     backend: useBlenderDebug ? 'blender-debug' : nativeAvailable ? 'jepow-native' : 'none',
     blenderAvailable,
     nativeAvailable,
+    uiBackend: 'react-electron-ipc',
+    uiRuntimeCapabilities: UI_RUNTIME_CAPABILITIES,
     cyclesAvailable,
     cyclesLicense: cyclesSt.license,
+    cyclesBackend: cyclesSt.activeBackend,
+    cyclesProductionReady: !!cyclesSt.productionReady,
+    cyclesRuntimeCapabilities: cyclesSt.runtimeCapabilities || [],
+    cyclesRenderDevices: cyclesSt.renderDevices || [],
+    importBackend: nativeArchitecture.importers?.active_backend,
+    importRuntimeCapabilities: nativeArchitecture.importers?.native_runtime_capabilities || [],
+    physicsBackend: nativeArchitecture.physics?.active_backend,
+    physicsRuntimeCapabilities: nativeArchitecture.physics?.native_runtime_capabilities || [],
     executable: nativeSt.executable,
     engine: 'jepow-engine',
     version: nativeSt.version,

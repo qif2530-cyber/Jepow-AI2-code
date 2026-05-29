@@ -25,6 +25,7 @@ pub struct ImportPipelineStatus {
     pub production_ready: bool,
     pub active_backend: &'static str,
     pub existing_native_formats: &'static [&'static str],
+    pub native_runtime_capabilities: &'static [&'static str],
     pub backends: &'static [ImportBackendStatus],
 }
 
@@ -105,7 +106,7 @@ fn native_existing_import(scene_path: &str, extension: &str, requested_backend: 
                 "extension": extension,
                 "requestedBackend": requested_backend,
                 "plannedBackend": "native-existing",
-                "activeBackend": "native-gltf-ufbx-tobj",
+                "activeBackend": "native-gltf-ufbx-tobj-stl-ply",
                 "meshCount": stats.mesh_count,
                 "nodeCount": stats.node_count,
                 "materialCount": stats.material_count,
@@ -123,7 +124,7 @@ fn native_existing_import(scene_path: &str, extension: &str, requested_backend: 
                 "meshRuntimeReady": mesh_runtime_ready,
                 "meshError": mesh_error,
                 "status": status(),
-                "message": "现有 native glTF/FBX/OBJ 导入 runtime 已执行，可用于后续转换为 viewport scene objects。",
+                "message": "现有 native glTF/FBX/OBJ/STL/PLY 导入 runtime 已执行，可用于后续转换为 viewport scene objects。",
             })
         }
         Err(error) => json!({
@@ -135,7 +136,7 @@ fn native_existing_import(scene_path: &str, extension: &str, requested_backend: 
             "extension": extension,
             "requestedBackend": requested_backend,
             "plannedBackend": "native-existing",
-            "activeBackend": "native-gltf-ufbx-tobj",
+            "activeBackend": "native-gltf-ufbx-tobj-stl-ply",
             "status": status(),
             "error": error.to_string(),
             "message": "native 导入 runtime 已接入，但该文件读取失败。",
@@ -147,8 +148,20 @@ pub fn status() -> ImportPipelineStatus {
     ImportPipelineStatus {
         architecture_wired: true,
         production_ready: false,
-        active_backend: "native-gltf-ufbx-tobj",
-        existing_native_formats: &["gltf", "glb", "fbx", "obj"],
+        active_backend: "native-gltf-ufbx-tobj-stl-ply",
+        existing_native_formats: &["gltf", "glb", "fbx", "obj", "stl", "ply"],
+        native_runtime_capabilities: &[
+            "gltf-glb-pbr-materials",
+            "fbx-blender-axis-alignment",
+            "obj-mtl-diffuse-texture",
+            "stl-ascii-binary",
+            "ply-ascii-binary-little-endian-binary-big-endian",
+            "ply-uv-color-alpha",
+            "ply-ordered-face-properties",
+            "ply-bounds-checked-scalars",
+            "ply-index-range-validation",
+            "generated-missing-normals",
+        ],
         backends: ASSIMP_USD_BACKENDS,
     }
 }
@@ -169,8 +182,8 @@ pub fn import_scene(payload: &Value) -> Value {
         .unwrap_or("auto");
     let planned_backend = match extension.as_str() {
         "usd" | "usda" | "usdc" | "usdz" => "usd",
-        "dae" | "3ds" | "ply" | "stl" => "assimp",
-        "fbx" | "obj" | "gltf" | "glb" => "native-existing",
+        "dae" | "3ds" => "assimp",
+        "fbx" | "obj" | "gltf" | "glb" | "stl" | "ply" => "native-existing",
         _ => "auto",
     };
     if scene_path.is_empty() {

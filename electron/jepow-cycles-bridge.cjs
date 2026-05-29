@@ -110,6 +110,28 @@ function isMetalKernelBundled(standaloneExecutable) {
   return candidates.some((p) => fs.existsSync(p));
 }
 
+function buildCyclesRuntimeCapabilities({ built, standaloneExecutable, metalKernelBundled }) {
+  const capabilities = [
+    'gpl-libcycles-isolated-process',
+    'cycles-xml-scene-export',
+    'viewport-camera-sync',
+    'native-mesh-cache-export',
+    'principled-material-params',
+    'preview-png-readback',
+    'empty-frame-detection',
+    'resident-daemon-session-api',
+    'cpu-render-device',
+  ];
+  if (standaloneExecutable) capabilities.push('cycles-standalone-runtime');
+  if (built) capabilities.push('jepow-cycles-bridge-binary');
+  if (process.platform === 'darwin') {
+    capabilities.push(
+      metalKernelBundled ? 'metal-render-device-ready' : 'metal-render-device-missing-kernel',
+    );
+  }
+  return capabilities;
+}
+
 function paethPredictor(a, b, c) {
   const p = a + b - c;
   const pa = Math.abs(p - a);
@@ -410,6 +432,11 @@ async function getStatus() {
   const metalKernelBundled = isMetalKernelBundled(standaloneExecutable);
   const source = getCyclesSourceStatus();
   if (!executable) {
+    const runtimeCapabilities = buildCyclesRuntimeCapabilities({
+      built: false,
+      standaloneExecutable,
+      metalKernelBundled,
+    });
     return {
       available: !!standaloneExecutable,
       license: LICENSE,
@@ -422,6 +449,10 @@ async function getStatus() {
       sourceVersion: source.sourceVersion,
       sourcePath: source.blenderDir,
       engine: 'jepow-cycles',
+      activeBackend: standaloneExecutable ? 'cycles-standalone' : 'cycles-bridge-unavailable',
+      productionReady: !!standaloneExecutable,
+      runtimeCapabilities,
+      renderDevices: metalKernelBundled ? ['CPU', 'METAL'] : ['CPU'],
       message:
         standaloneExecutable
           ? metalKernelBundled
@@ -443,6 +474,11 @@ async function getStatus() {
     });
     proc.on('close', (code) => {
       const built = code === 0;
+      const runtimeCapabilities = buildCyclesRuntimeCapabilities({
+        built,
+        standaloneExecutable,
+        metalKernelBundled,
+      });
       resolve({
         available: built || !!standaloneExecutable,
         license: LICENSE,
@@ -455,6 +491,10 @@ async function getStatus() {
         sourceVersion: source.sourceVersion,
         sourcePath: source.blenderDir,
         engine: 'jepow-cycles',
+        activeBackend: built ? 'jepow-cycles-bridge' : 'cycles-standalone',
+        productionReady: built || !!standaloneExecutable,
+        runtimeCapabilities,
+        renderDevices: metalKernelBundled ? ['CPU', 'METAL'] : ['CPU'],
         versionLine: out.trim() || null,
         message: built
           ? 'jepow-cycles (GPL libcycles) 离线渲染已就绪 — 不调用 blender.exe'
@@ -466,6 +506,11 @@ async function getStatus() {
       });
     });
     proc.on('error', () => {
+      const runtimeCapabilities = buildCyclesRuntimeCapabilities({
+        built: false,
+        standaloneExecutable,
+        metalKernelBundled,
+      });
       resolve({
         available: !!standaloneExecutable,
         license: LICENSE,
@@ -473,7 +518,12 @@ async function getStatus() {
         executable,
         standaloneAvailable: !!standaloneExecutable,
         standaloneExecutable,
+        metalKernelBundled,
         engine: 'jepow-cycles',
+        activeBackend: standaloneExecutable ? 'cycles-standalone' : 'cycles-bridge-error',
+        productionReady: !!standaloneExecutable,
+        runtimeCapabilities,
+        renderDevices: metalKernelBundled ? ['CPU', 'METAL'] : ['CPU'],
         message: '无法启动 jepow-cycles',
       });
     });

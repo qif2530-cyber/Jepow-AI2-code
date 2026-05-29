@@ -852,7 +852,12 @@ impl HostApp {
                         Err(e) => return write_response(json!({ "ok": false, "id": id, "error": e.to_string() })),
                     }
                 }
-                json!({ "ok": true, "id": id, "objectCount": self.objects.len() })
+                json!({
+                    "ok": true,
+                    "id": id,
+                    "objectCount": self.objects.len(),
+                    "selectedObjectId": self.selected_id,
+                })
             }
             "set_tool" => {
                 if let Ok(tool) = serde_json::from_value::<HostTool>(req.payload.get("tool").cloned().unwrap_or(Value::Null)) {
@@ -926,12 +931,30 @@ impl HostApp {
                 }
             }
             "set_selection" => {
-                if let Some(object_id) = req.payload.get("objectId").and_then(|v| v.as_str()) {
-                    self.selected_id = object_id.to_string();
-                }
-                json!({ "ok": true, "id": id, "objectId": self.selected_id })
+                let requested_id = req.payload.get("objectId").and_then(|v| v.as_str()).unwrap_or("");
+                let selection_accepted = if requested_id.is_empty() {
+                    self.selected_id.clear();
+                    true
+                } else if self
+                    .objects
+                    .iter()
+                    .any(|object| object.id == requested_id && object.visible)
+                {
+                    self.selected_id = requested_id.to_string();
+                    true
+                } else {
+                    false
+                };
+                json!({
+                    "ok": true,
+                    "id": id,
+                    "objectId": self.selected_id,
+                    "requestedObjectId": requested_id,
+                    "selectionAccepted": selection_accepted,
+                })
             }
             "set_object_transform" => {
+                let mut transform_applied = false;
                 if let (Some(object_id), Some(transform)) = (
                     req.payload.get("objectId").and_then(|v| v.as_str()),
                     req.payload.get("transform"),
@@ -939,10 +962,11 @@ impl HostApp {
                     if let Ok(transform) = serde_json::from_value::<HostTransform>(transform.clone()) {
                         if let Some(object) = self.objects.iter_mut().find(|o| o.id == object_id) {
                             object.transform = transform;
+                            transform_applied = true;
                         }
                     }
                 }
-                json!({ "ok": true, "id": id })
+                json!({ "ok": true, "id": id, "transformApplied": transform_applied })
             }
             "get_state" => json!({
                 "ok": true,
