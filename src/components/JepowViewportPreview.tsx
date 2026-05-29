@@ -226,15 +226,6 @@ export function JepowViewportPreview({
   const previewSrcRef = useRef<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [, setSceneLabel] = useState<string | null>(null);
-  const [viewportStats, setViewportStats] = useState<{
-    fpsWindowCalls?: number;
-    daemonWindowCalls?: number;
-    fallbackWindowCalls?: number;
-    lastFrameMs?: number;
-    lastTotalMs?: number;
-    lastWidth?: number;
-    lastHeight?: number;
-  } | null>(null);
   const [engineReady, setEngineReady] = useState<boolean | null>(null);
   const [engineError, setEngineError] = useState<string | null>(null);
   const [camera, setCamera] = useState<ViewportCamera>({ ...initialCam });
@@ -514,7 +505,6 @@ export function JepowViewportPreview({
           setPreviewSrc(null);
           return;
         }
-        setViewportStats(result.viewportStats ?? null);
         const dataUrl = await eng.readPreviewDataUrl(
           `${result.previewUrl}?t=${Date.now()}`,
         );
@@ -814,6 +804,7 @@ export function JepowViewportPreview({
 
   const onPointerDown = (e: React.PointerEvent) => {
     if (mode !== "orbit") return;
+    if (orbitOnly) return;
     if (!liveRender && !onSceneObjectPick) return;
     e.stopPropagation();
     clickStartRef.current = { x: e.clientX, y: e.clientY };
@@ -870,7 +861,7 @@ export function JepowViewportPreview({
             panZ: base.panZ ?? 0,
           }
         : panCameraByScreenDelta(base, dx, dy);
-    syncCamera(next, { deferParent: true, deferState: true });
+    cameraRef.current = next;
   };
 
   const onPointerUp = (e: React.PointerEvent) => {
@@ -1015,16 +1006,6 @@ export function JepowViewportPreview({
           <span className="text-[8px] px-1.5 py-0.5 rounded border bg-black/70 text-emerald-200 border-emerald-500/40">
             已赋材质 {assignedSubmeshMaterials.length} 个
           </span>
-        </div>
-      )}
-      {viewportStats && mode === "orbit" && (
-        <div className="absolute left-2 top-2 pointer-events-none rounded border border-neutral-700/70 bg-black/65 px-1.5 py-1 text-[7px] leading-tight text-neutral-300">
-          <div>
-            wgpu {viewportStats.fpsWindowCalls ?? 0}/s · {viewportStats.lastWidth}x{viewportStats.lastHeight}
-          </div>
-          <div className="text-neutral-500">
-            gpu {Math.round(viewportStats.lastFrameMs ?? 0)}ms / ipc {Math.round(viewportStats.lastTotalMs ?? 0)}ms
-          </div>
         </div>
       )}
       {pickStatus && mode === "orbit" && !picking && (

@@ -7458,8 +7458,8 @@ export default function App() {
   }, [desktopStartupLocked, nodes]);
 
   const effectiveSceneObjectSelection = useMemo(() => {
-    if (hasCanvasNodeSelection) return null;
     if (selectedSceneObject) return selectedSceneObject;
+    if (hasCanvasNodeSelection) return null;
     for (const node of nodes) {
       if (node.type !== "modelAssetNode") continue;
       const data = node.data as {

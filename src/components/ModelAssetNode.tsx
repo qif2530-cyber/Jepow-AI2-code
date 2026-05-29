@@ -589,11 +589,9 @@ export function ModelAssetNode({ id, data, selected }: ModelAssetNodeProps) {
               height={220}
               mode="orbit"
               orbitOnly
-              liveRender
+              liveRender={false}
               lockRenderSize
               defaultCamera={PREVIEW_CAM_45}
-              viewCamera={data.previewCamera || PREVIEW_CAM_45}
-              onCameraChange={persistPreviewCamera}
               lighting={{
                 yaw: 45,
                 pitch: 35,
