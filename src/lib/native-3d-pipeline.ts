@@ -19,6 +19,7 @@ export const NATIVE_3D_NODE_TYPES = new Set([
   "materialReplaceNode",
   "threeDEditorNode",
   "threeDRenderNode",
+  "cyclesRendererNode",
   "cyclesPrincipledNode",
   "cyclesImageTextureNode",
   "cyclesNormalMapNode",
@@ -31,11 +32,24 @@ export const NATIVE_3D_NODE_TYPES = new Set([
   "cyclesMapRangeNode",
   "cyclesRgbToBwNode",
   "cyclesLightNode",
+  "cyclesPointLightNode",
+  "cyclesAreaLightNode",
+  "cyclesDirectionalLightNode",
+  "cyclesSunLightNode",
+  "cyclesHdrEnvironmentNode",
   "cyclesCameraNode",
   "cyclesRenderSettingsNode",
 ]);
 
 const CYCLES_COLOR_SOURCE_TYPES = [...CYCLES_COLOR_NODE_TYPES];
+export const CYCLES_LIGHT_NODE_TYPES: string[] = [
+  "cyclesLightNode",
+  "cyclesPointLightNode",
+  "cyclesAreaLightNode",
+  "cyclesDirectionalLightNode",
+  "cyclesSunLightNode",
+  "cyclesHdrEnvironmentNode",
+];
 
 export type Native3dSocket =
   | "model"
@@ -111,7 +125,7 @@ const PRINCIPLED_TEXTURE_HANDLES = new Set<string>(PRINCIPLED_TEXTURE_HANDLE_LIS
 /** 合法连接白名单 */
 const CONNECTION_RULES: Rule[] = [
   {
-    sourceTypes: [...IMAGE_SOURCE_TYPES, "threeDRenderNode"],
+    sourceTypes: [...IMAGE_SOURCE_TYPES, "threeDRenderNode", "cyclesRendererNode"],
     targetTypes: ["imageTo3DNode"],
     targetHandle: "image",
     edgeColor: "#737373",
@@ -140,7 +154,7 @@ const CONNECTION_RULES: Rule[] = [
   {
     sourceTypes: ["modelAssetNode", "imageTo3DNode", "materialReplaceNode"],
     sourceHandles: ["model", "texturedModel"],
-    targetTypes: ["threeDEditorNode"],
+    targetTypes: ["threeDEditorNode", "cyclesRendererNode"],
     targetHandle: "modelInput",
     edgeColor: "#10b981",
   },
@@ -208,16 +222,16 @@ const CONNECTION_RULES: Rule[] = [
     edgeColor: "#fb923c",
   },
   {
-    sourceTypes: ["cyclesLightNode"],
+    sourceTypes: CYCLES_LIGHT_NODE_TYPES,
     sourceHandles: ["cyclesLight"],
-    targetTypes: ["threeDEditorNode"],
+    targetTypes: ["threeDEditorNode", "cyclesRendererNode"],
     targetHandle: "cyclesLight",
     edgeColor: "#f59e0b",
   },
   {
     sourceTypes: ["cyclesCameraNode"],
     sourceHandles: ["cyclesCamera"],
-    targetTypes: ["threeDEditorNode"],
+    targetTypes: ["threeDEditorNode", "cyclesRendererNode"],
     targetHandle: "cyclesCamera",
     edgeColor: "#06b6d4",
   },
@@ -231,7 +245,7 @@ const CONNECTION_RULES: Rule[] = [
   {
     sourceTypes: ["threeDEditorNode"],
     sourceHandles: ["sceneData"],
-    targetTypes: ["threeDRenderNode"],
+    targetTypes: ["threeDRenderNode", "cyclesRendererNode"],
     targetHandle: "scene",
     edgeColor: "#ec4899",
   },
@@ -282,6 +296,11 @@ function inferSourceHandle(sourceType: string): string {
     case "cyclesRgbToBwNode":
       return "colorOut";
     case "cyclesLightNode":
+    case "cyclesPointLightNode":
+    case "cyclesAreaLightNode":
+    case "cyclesDirectionalLightNode":
+    case "cyclesSunLightNode":
+    case "cyclesHdrEnvironmentNode":
       return "cyclesLight";
     case "cyclesCameraNode":
       return "cyclesCamera";
@@ -290,6 +309,7 @@ function inferSourceHandle(sourceType: string): string {
     case "threeDEditorNode":
       return "sceneData";
     case "threeDRenderNode":
+    case "cyclesRendererNode":
       return "renderedImage";
     default:
       return "default";
@@ -305,7 +325,7 @@ function inferTargetHandle(targetType: string, sourceType: string): Native3dSock
     if (sourceType === "materialGenNode" || sourceType.startsWith("cycles")) return "material";
   }
   if (targetType === "threeDEditorNode") {
-    if (sourceType === "cyclesLightNode") return "cyclesLight";
+    if (CYCLES_LIGHT_NODE_TYPES.includes(sourceType)) return "cyclesLight";
     if (sourceType === "cyclesCameraNode") return "cyclesCamera";
     if (sourceType === "cyclesRenderSettingsNode") return "cyclesSettings";
     if (["modelAssetNode", "imageTo3DNode", "materialReplaceNode"].includes(sourceType)) {
@@ -321,6 +341,12 @@ function inferTargetHandle(targetType: string, sourceType: string): Native3dSock
     ) {
       return "material";
     }
+  }
+  if (targetType === "cyclesRendererNode") {
+    if (sourceType === "threeDEditorNode") return "scene";
+    if (CYCLES_LIGHT_NODE_TYPES.includes(sourceType)) return "cyclesLight";
+    if (sourceType === "cyclesCameraNode") return "cyclesCamera";
+    if (sourceType === "cyclesRenderSettingsNode") return "cyclesSettings";
   }
   if (targetType === "cyclesPrincipledNode") {
     if (sourceType === "cyclesImageTextureNode" || CYCLES_COLOR_NODE_TYPES.has(sourceType)) {
@@ -568,7 +594,7 @@ export function resolveImageReference(
     const shot = data.shot as { imageUrl?: string; imageUrls?: string[] } | undefined;
     return shot?.imageUrl || shot?.imageUrls?.[0] || "";
   }
-  if (sourceNode.type === "threeDRenderNode") {
+  if (sourceNode.type === "threeDRenderNode" || sourceNode.type === "cyclesRendererNode") {
     return (data.url as string) || "";
   }
   return "";

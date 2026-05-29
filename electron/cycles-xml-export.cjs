@@ -103,6 +103,27 @@ function buildObjectTransformMatrix(t = {}) {
   ].map((v) => Number(v).toFixed(6)).join(' ');
 }
 
+function buildLightBlockXml(light, keyStrength, keySize, yaw, pitch) {
+  const type = String(light.type || light.lightKind || 'point');
+  if (type === 'hdr_environment' || type === 'hdr') return '';
+  const lx = (Math.cos(pitch) * Math.sin(yaw) * 3.2).toFixed(4);
+  const ly = (Math.sin(pitch) * 3.2).toFixed(4);
+  const lz = (Math.cos(pitch) * Math.cos(yaw) * 3.2).toFixed(4);
+  if (type === 'area') {
+    return `  <transform translate="${lx} ${ly} ${lz}">
+    <light light_type="area" strength="${keyStrength}" size="${keySize}" />
+  </transform>`;
+  }
+  if (type === 'sun' || type === 'directional') {
+    return `  <transform rotate="${(-pitch).toFixed(4)} ${yaw.toFixed(4)} 0">
+    <light light_type="distant" strength="${keyStrength}" angle="${keySize}" />
+  </transform>`;
+  }
+  return `  <transform translate="${lx} ${ly} ${lz}">
+    <light light_type="point" strength="${keyStrength}" size="${keySize}" />
+  </transform>`;
+}
+
 function buildCyclesSceneXml(opts) {
   const cyclesMaterial = opts?.cyclesMaterial || opts?.material;
   const material = cyclesMaterial?.principled || {};
@@ -120,9 +141,7 @@ function buildCyclesSceneXml(opts) {
   const keySize = clampNumber(light.keySize, 0.01, 20, 3);
   const yaw = (clampNumber(light.yaw, 0, 360, 45) * Math.PI) / 180;
   const pitch = (clampNumber(light.pitch, -85, 85, 35) * Math.PI) / 180;
-  const lx = (Math.cos(pitch) * Math.sin(yaw) * 3.2).toFixed(4);
-  const ly = (Math.sin(pitch) * 3.2).toFixed(4);
-  const lz = (Math.cos(pitch) * Math.cos(yaw) * 3.2).toFixed(4);
+  const lightBlock = buildLightBlockXml(light, keyStrength, keySize, yaw, pitch);
 
   const shaderBlock = buildShaderBlockXml(shaderGraph, material);
   const meshBlocks = opts.meshBlocks?.length
@@ -158,9 +177,7 @@ function buildCyclesSceneXml(opts) {
 ${buildCameraBlockXml(width, height, clampNumber(camera.fov, 0.05, 3.13, Math.PI / 4), cameraDistance, camera)}
 ${buildBackgroundBlockXml(environmentStrength, backgroundColor)}
 ${shaderBlock}
-  <transform translate="${lx} ${ly} ${lz}">
-    <light light_type="point" strength="${keyStrength}" size="${keySize}" />
-  </transform>
+${lightBlock}
 ${transformedMeshBlocks}
 </cycles>
 `;
@@ -170,6 +187,7 @@ module.exports = {
   principledBsdfXmlAttrs,
   buildBackgroundBlockXml,
   buildCameraBlockXml,
+  buildLightBlockXml,
   buildCyclesSceneXml,
   clampNumber,
   hexToRgb01,

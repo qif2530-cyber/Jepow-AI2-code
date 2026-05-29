@@ -95,6 +95,36 @@ export const CYCLES_NODE_PALETTE: CyclesPaletteItem[] = [
     category: "light",
   },
   {
+    type: "cyclesPointLightNode",
+    label: "点光源",
+    hint: "Point Light",
+    category: "light",
+  },
+  {
+    type: "cyclesAreaLightNode",
+    label: "面光源",
+    hint: "Area Light",
+    category: "light",
+  },
+  {
+    type: "cyclesDirectionalLightNode",
+    label: "平行光",
+    hint: "Directional Light",
+    category: "light",
+  },
+  {
+    type: "cyclesSunLightNode",
+    label: "物理太阳光",
+    hint: "Physical Sun",
+    category: "light",
+  },
+  {
+    type: "cyclesHdrEnvironmentNode",
+    label: "HDR 环境",
+    hint: "HDRI Environment",
+    category: "light",
+  },
+  {
     type: "cyclesCameraNode",
     label: "摄像机",
     hint: "FOV / DOF / Clip",
@@ -104,6 +134,12 @@ export const CYCLES_NODE_PALETTE: CyclesPaletteItem[] = [
     type: "cyclesRenderSettingsNode",
     label: "渲染设置",
     hint: "采样 / 分辨率 / 降噪",
+    category: "render",
+  },
+  {
+    type: "cyclesRendererNode",
+    label: "CL 渲染器",
+    hint: "独立 Cycles/CL 输出",
     category: "render",
   },
 ];
@@ -173,6 +209,7 @@ export function getCyclesNodeDefaultData(
       return {};
     case "cyclesLightNode":
       return {
+        lightKind: "rig",
         environmentStrength: 0.75,
         keyStrength: 650,
         keySize: 3,
@@ -187,6 +224,105 @@ export function getCyclesNodeDefaultData(
           yaw: 45,
           pitch: 35,
           backgroundColor: "#08090a",
+        },
+      };
+    case "cyclesPointLightNode":
+      return {
+        lightKind: "point",
+        keyStrength: 800,
+        keySize: 0.15,
+        yaw: 45,
+        pitch: 35,
+        environmentStrength: 0.2,
+        backgroundColor: "#08090a",
+        cyclesLight: {
+          type: "point",
+          keyStrength: 800,
+          keySize: 0.15,
+          yaw: 45,
+          pitch: 35,
+          environmentStrength: 0.2,
+          backgroundColor: "#08090a",
+        },
+      };
+    case "cyclesAreaLightNode":
+      return {
+        lightKind: "area",
+        keyStrength: 600,
+        keySize: 4,
+        yaw: 45,
+        pitch: 35,
+        environmentStrength: 0.25,
+        backgroundColor: "#08090a",
+        cyclesLight: {
+          type: "area",
+          keyStrength: 600,
+          keySize: 4,
+          yaw: 45,
+          pitch: 35,
+          environmentStrength: 0.25,
+          backgroundColor: "#08090a",
+        },
+      };
+    case "cyclesDirectionalLightNode":
+      return {
+        lightKind: "directional",
+        keyStrength: 700,
+        keySize: 1,
+        yaw: 45,
+        pitch: 35,
+        environmentStrength: 0.25,
+        backgroundColor: "#08090a",
+        cyclesLight: {
+          type: "directional",
+          keyStrength: 700,
+          keySize: 1,
+          yaw: 45,
+          pitch: 35,
+          environmentStrength: 0.25,
+          backgroundColor: "#08090a",
+        },
+      };
+    case "cyclesSunLightNode":
+      return {
+        lightKind: "sun",
+        keyStrength: 1200,
+        keySize: 0.53,
+        yaw: 45,
+        pitch: 35,
+        environmentStrength: 0.35,
+        backgroundColor: "#87a8d8",
+        cyclesLight: {
+          type: "sun",
+          keyStrength: 1200,
+          keySize: 0.53,
+          yaw: 45,
+          pitch: 35,
+          environmentStrength: 0.35,
+          backgroundColor: "#87a8d8",
+        },
+      };
+    case "cyclesHdrEnvironmentNode":
+      return {
+        lightKind: "hdr",
+        environmentStrength: 1.0,
+        keyStrength: 0,
+        keySize: 3,
+        yaw: 0,
+        pitch: 0,
+        backgroundColor: "#08090a",
+        hdrUrl: "",
+        hdrName: "",
+        cyclesLight: {
+          type: "hdr_environment",
+          environmentStrength: 1.0,
+          keyStrength: 0,
+          keySize: 3,
+          yaw: 0,
+          pitch: 0,
+          backgroundColor: "#08090a",
+          hdrUrl: "",
+          hdrName: "",
         },
       };
     case "cyclesCameraNode":
@@ -227,6 +363,10 @@ export function getCyclesNodeDefaultData(
           device: "METAL",
           denoise: true,
         },
+      };
+    case "cyclesRendererNode":
+      return {
+        status: "idle",
       };
     default:
       return undefined;

@@ -50,6 +50,54 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
 }
 "#;
 
+#[repr(C)]
+#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+struct OutlineUniforms {
+    mvp: [f32; 16],
+    expand: f32,
+    _pad0: f32,
+    _pad1: f32,
+    _pad2: f32,
+    color: [f32; 3],
+    _pad3: f32,
+}
+
+const OUTLINE_WGSL: &str = r#"
+struct OutlineUniforms {
+  mvp: mat4x4<f32>,
+  expand: f32,
+  _pad0: f32,
+  _pad1: f32,
+  _pad2: f32,
+  color: vec3<f32>,
+  _pad3: f32,
+}
+@group(0) @binding(0) var<uniform> uniforms: OutlineUniforms;
+
+struct VertexInput {
+  @location(0) pos: vec3<f32>,
+  @location(1) normal: vec3<f32>,
+};
+
+struct VertexOutput {
+  @builtin(position) pos: vec4<f32>,
+};
+
+@vertex
+fn vs_main(input: VertexInput) -> VertexOutput {
+  var out: VertexOutput;
+  let n = normalize(input.normal);
+  let expanded = input.pos + n * uniforms.expand;
+  out.pos = uniforms.mvp * vec4<f32>(expanded, 1.0);
+  return out;
+}
+
+@fragment
+fn fs_main() -> @location(0) vec4<f32> {
+  return vec4<f32>(uniforms.color, 1.0);
+}
+"#;
+
 fn demo_mesh() -> MeshData {
     MeshData {
         vertices: vec![
@@ -133,11 +181,12 @@ pub struct ViewportSession {
     pick_pipeline: wgpu::RenderPipeline,
     bind_group: wgpu::BindGroup,
     fill_bind_group: wgpu::BindGroup,
-    highlight_bind_group: wgpu::BindGroup,
+    outline_pipeline: wgpu::RenderPipeline,
+    outline_bind_group: wgpu::BindGroup,
     pick_bind_group: wgpu::BindGroup,
     uniform_buffer: wgpu::Buffer,
     fill_uniform_buffer: wgpu::Buffer,
-    highlight_uniform_buffer: wgpu::Buffer,
+    outline_uniform_buffer: wgpu::Buffer,
     pick_uniform_buffer: wgpu::Buffer,
     vertex_buffer: wgpu::Buffer,
     index_buffer: wgpu::Buffer,
@@ -208,9 +257,9 @@ impl ViewportSession {
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
-        let highlight_uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("jepow-highlight-uniforms"),
-            size: std::mem::size_of::<Uniforms>() as u64,
+        let outline_uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("jepow-outline-uniforms"),
+            size: std::mem::size_of::<OutlineUniforms>() as u64,
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
@@ -251,12 +300,12 @@ impl ViewportSession {
                 resource: fill_uniform_buffer.as_entire_binding(),
             }],
         });
-        let highlight_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("jepow-highlight-bind"),
+        let outline_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("jepow-outline-bind"),
             layout: &bind_group_layout,
             entries: &[wgpu::BindGroupEntry {
                 binding: 0,
-                resource: highlight_uniform_buffer.as_entire_binding(),
+                resource: outline_uniform_buffer.as_entire_binding(),
             }],
         });
         let pick_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -377,6 +426,65 @@ impl ViewportSession {
             cache: None,
         });
 
+        let outline_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("jepow-outline-shader"),
+            source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Borrowed(OUTLINE_WGSL)),
+        });
+        let outline_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("jepow-outline-pipeline"),
+            layout: Some(&pipeline_layout),
+            vertex: wgpu::VertexState {
+                module: &outline_shader,
+                entry_point: Some("vs_main"),
+                buffers: &[wgpu::VertexBufferLayout {
+                    array_stride: std::mem::size_of::<Vertex>() as wgpu::BufferAddress,
+                    step_mode: wgpu::VertexStepMode::Vertex,
+                    attributes: &[
+                        wgpu::VertexAttribute {
+                            offset: 0,
+                            shader_location: 0,
+                            format: wgpu::VertexFormat::Float32x3,
+                        },
+                        wgpu::VertexAttribute {
+                            offset: 12,
+                            shader_location: 1,
+                            format: wgpu::VertexFormat::Float32x3,
+                        },
+                    ],
+                }],
+                compilation_options: Default::default(),
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &outline_shader,
+                entry_point: Some("fs_main"),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: wgpu::TextureFormat::Rgba8UnormSrgb,
+                    blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+                compilation_options: Default::default(),
+            }),
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                cull_mode: Some(wgpu::Face::Front),
+                ..Default::default()
+            },
+            depth_stencil: Some(wgpu::DepthStencilState {
+                format: wgpu::TextureFormat::Depth32Float,
+                depth_write_enabled: false,
+                depth_compare: wgpu::CompareFunction::LessEqual,
+                stencil: wgpu::StencilState::default(),
+                bias: wgpu::DepthBiasState {
+                    constant: -2,
+                    slope_scale: -1.0,
+                    clamp: 0.0,
+                },
+            }),
+            multisample: wgpu::MultisampleState::default(),
+            multiview: None,
+            cache: None,
+        });
+
         let (vertex_buffer, index_buffer, index_count) = Self::upload_mesh(&device, &demo_mesh())?;
 
         let (frame_w, frame_h) = (640u32, 480u32);
@@ -392,11 +500,12 @@ impl ViewportSession {
             pick_pipeline,
             bind_group,
             fill_bind_group,
-            highlight_bind_group,
+            outline_pipeline,
+            outline_bind_group,
             pick_bind_group,
             uniform_buffer,
             fill_uniform_buffer,
-            highlight_uniform_buffer,
+            outline_uniform_buffer,
             pick_uniform_buffer,
             vertex_buffer,
             index_buffer,
@@ -647,6 +756,63 @@ impl ViewportSession {
         }
     }
 
+    /// Selection feedback: inflated back-face rim only (no full-mesh fill).
+    fn draw_highlight_outline(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        mvp: Mat4,
+        index_range: std::ops::Range<u32>,
+    ) {
+        if index_range.is_empty() {
+            return;
+        }
+        for (expand, color) in [
+            (0.028_f32, [0.18_f32, 0.62_f32, 0.95_f32]),
+            (0.014_f32, [0.52_f32, 0.96_f32, 1.0_f32]),
+        ] {
+            let uniforms = OutlineUniforms {
+                mvp: mvp.to_cols_array(),
+                expand,
+                _pad0: 0.0,
+                _pad1: 0.0,
+                _pad2: 0.0,
+                color,
+                _pad3: 0.0,
+            };
+            self.queue.write_buffer(
+                &self.outline_uniform_buffer,
+                0,
+                bytemuck::bytes_of(&uniforms),
+            );
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("jepow-highlight-outline-pass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &self.color_view,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Load,
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                    view: &self.depth_view,
+                    depth_ops: Some(wgpu::Operations {
+                        load: wgpu::LoadOp::Load,
+                        store: wgpu::StoreOp::Store,
+                    }),
+                    stencil_ops: None,
+                }),
+                occlusion_query_set: None,
+                timestamp_writes: None,
+            });
+            pass.set_pipeline(&self.outline_pipeline);
+            pass.set_bind_group(0, &self.outline_bind_group, &[]);
+            pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
+            pass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+            pass.draw_indexed(index_range.clone(), 0, 0..1);
+        }
+    }
+
     fn draw_submesh_fill(
         &self,
         encoder: &mut wgpu::CommandEncoder,
@@ -860,60 +1026,7 @@ impl ViewportSession {
         if let Some((start, count)) = self.highlight_index_range {
             if count > 0 {
                 let range = start..start + count;
-                let selected_id = self.highlight_object_id.as_deref().unwrap_or("");
-                let selection_already_assigned = self
-                    .assigned_submesh_materials
-                    .iter()
-                    .any(|entry| entry.object_id == selected_id);
-                if selection_already_assigned {
-                    // Painted in assigned_submesh_materials loop above.
-                } else if let Some(fill_mat) = self.highlight_submesh_material {
-                    self.draw_submesh_fill(&mut encoder, mvp, range.clone(), fill_mat);
-                } else {
-                    let highlight_material = ViewMaterial {
-                        base_color: [0.42, 0.82, 1.0],
-                        roughness: 0.42,
-                        metalness: 0.02,
-                        specular: 0.55,
-                        clearcoat: 0.15,
-                        transmission: 0.35,
-                        emission_strength: 0.65,
-                    };
-                    let highlight_uniforms =
-                        build_uniforms(mvp, self.effective_light(), highlight_material);
-                    self.queue.write_buffer(
-                        &self.highlight_uniform_buffer,
-                        0,
-                        bytemuck::bytes_of(&highlight_uniforms),
-                    );
-                    let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                        label: Some("jepow-highlight-pass"),
-                        color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                            view: &self.color_view,
-                            resolve_target: None,
-                            ops: wgpu::Operations {
-                                load: wgpu::LoadOp::Load,
-                                store: wgpu::StoreOp::Store,
-                            },
-                        })],
-                        depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                            view: &self.depth_view,
-                            depth_ops: Some(wgpu::Operations {
-                                load: wgpu::LoadOp::Load,
-                                store: wgpu::StoreOp::Store,
-                            }),
-                            stencil_ops: None,
-                        }),
-                        occlusion_query_set: None,
-                        timestamp_writes: None,
-                    });
-                    pass.set_pipeline(&self.pipeline);
-                    pass.set_bind_group(0, &self.highlight_bind_group, &[]);
-                    pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
-                    pass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
-                    pass.draw_indexed(range, 0, 0..1);
-                    drop(pass);
-                }
+                self.draw_highlight_outline(&mut encoder, mvp, range);
             }
         }
 

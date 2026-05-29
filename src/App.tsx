@@ -141,6 +141,8 @@ import {
 import { createCyclesMaterial } from "./lib/cycles-material";
 import { MaterialReplaceNode } from "./components/MaterialReplaceNode";
 import { ThreeDEditorNode } from "./components/ThreeDEditorNode";
+import { JepEditorPropertiesPanel } from "./components/JepEditorPropertiesPanel";
+import { resolveEditorConnectedLights } from "./lib/jep-renderer";
 import { ModelAssetNode } from "./components/ModelAssetNode";
 import {
   sceneObjectForest,
@@ -161,6 +163,7 @@ import {
 } from "./lib/scene-object-selection";
 import { SceneObjectPropertiesPanel } from "./components/SceneObjectPropertiesPanel";
 import { ThreeDRenderNode } from "./components/ThreeDRenderNode";
+import { CyclesRendererNode } from "./components/CyclesRendererNode";
 import { CyclesLightNode } from "./components/CyclesLightNode";
 import { CyclesCameraNode } from "./components/CyclesCameraNode";
 import { CyclesRenderSettingsNode } from "./components/CyclesRenderSettingsNode";
@@ -3223,6 +3226,7 @@ export default function App() {
       materialReplaceNode: MaterialReplaceNode,
       threeDEditorNode: ThreeDEditorNode,
       threeDRenderNode: ThreeDRenderNode,
+      cyclesRendererNode: CyclesRendererNode,
       modelAssetNode: ModelAssetNode,
       cyclesPrincipledNode: CyclesPrincipledNode,
       cyclesImageTextureNode: CyclesImageTextureNode,
@@ -3236,6 +3240,11 @@ export default function App() {
       cyclesMapRangeNode: CyclesMapRangeNode,
       cyclesRgbToBwNode: CyclesRgbToBwNode,
       cyclesLightNode: CyclesLightNode,
+      cyclesPointLightNode: CyclesLightNode,
+      cyclesAreaLightNode: CyclesLightNode,
+      cyclesDirectionalLightNode: CyclesLightNode,
+      cyclesSunLightNode: CyclesLightNode,
+      cyclesHdrEnvironmentNode: CyclesLightNode,
       cyclesCameraNode: CyclesCameraNode,
       cyclesRenderSettingsNode: CyclesRenderSettingsNode,
     }),
@@ -6892,6 +6901,7 @@ export default function App() {
       materialReplaceNode: "3D 材质贴附重贴",
       threeDEditorNode: "3D 场景编辑器",
       threeDRenderNode: "3D AI场景渲染",
+      cyclesRendererNode: "CL 渲染器",
     };
     const nodeLabel =
       manualNodeLabels[type] ||
@@ -7381,6 +7391,7 @@ export default function App() {
       materialGenNode: "3D PBR材质生成",
       materialReplaceNode: "3D 材质贴附重贴",
       threeDRenderNode: "3D AI场景渲染",
+      cyclesRendererNode: "CL 渲染器",
       imageShotNode: "图片生成",
       videoShotNode: "视频生成",
       scriptNode: "脚本",
@@ -7866,7 +7877,7 @@ export default function App() {
               {String(nodeLabel)}
             </span>
           )}
-        </div>
+              </div>
         {!isCollapsed &&
           children.map((child) => renderSceneTreeNode(child, depth + 1))}
         {!isCollapsed &&
@@ -8009,8 +8020,53 @@ export default function App() {
     },
     [selectedPrimaryNode?.id, patchMaterialNodeById],
   );
+  const selectedEditorJepLights = useMemo(() => {
+    if (!selectedPrimaryNode || selectedPrimaryNode.type !== "threeDEditorNode") {
+      return [];
+    }
+    return resolveEditorConnectedLights(
+      selectedPrimaryNode.id,
+      nodes,
+      edges,
+    );
+  }, [selectedPrimaryNode, nodes, edges]);
+
+  const patchThreeDEditorNode = useCallback(
+    (patch: Record<string, unknown>) => {
+      if (!selectedPrimaryNode || selectedPrimaryNode.type !== "threeDEditorNode") {
+        return;
+      }
+      setNodes((nds) =>
+        nds.map((node) =>
+          node.id === selectedPrimaryNode.id
+            ? { ...node, data: { ...(node.data as Record<string, unknown>), ...patch } }
+            : node,
+        ),
+      );
+    },
+    [selectedPrimaryNode, setNodes],
+  );
+
   const selectedNodePropertyGroups = useMemo(() => {
     if (!selectedPrimaryNode) return [];
+    if (selectedPrimaryNode.type === "threeDEditorNode") {
+      const nodeData = (selectedPrimaryNode.data || {}) as Record<string, unknown>;
+      const label = String(nodeData.label || "3D 场景编辑器");
+      return [
+        {
+          title: "基础参数",
+          items: [
+            {
+              key: "label",
+              label: "名称",
+              value: label,
+              path: ["label"],
+              type: "string" as const,
+            },
+          ],
+        },
+      ];
+    }
     const groups: {
       title: string;
       items: {
@@ -9334,7 +9390,7 @@ export default function App() {
                       { id: "properties" as const, label: "属性", icon: Settings2 },
                       { id: "ai" as const, label: "AI 助手", icon: Sparkles },
                     ].map(({ id, label, icon: Icon }) => (
-                          <button
+                      <button
                         key={id}
                         type="button"
                         title={label}
@@ -9346,7 +9402,7 @@ export default function App() {
                         }`}
                       >
                         <Icon className="h-3.5 w-3.5" />
-                          </button>
+                      </button>
                     ))}
                   </div>
 
@@ -9916,6 +9972,45 @@ export default function App() {
                           node={selectedPrimaryNode}
                           onPatch={updateMaterialNodeField}
                         />
+                      ) : selectedPrimaryNode.type === "threeDEditorNode" ? (
+                        <div className="space-y-3">
+                          {selectedNodePropertyGroups.map((group) => (
+                            <section
+                              key={group.title}
+                              className="rounded-xl border border-white/10 bg-black/20 p-3"
+                            >
+                              <div className="mb-2 flex items-center gap-2 text-[11px] font-bold text-neutral-200">
+                                <Settings2 className="h-3.5 w-3.5 text-purple-300" />
+                                {group.title}
+                              </div>
+                              <div className="space-y-2">
+                                {group.items.map((item) => (
+                                  <label key={item.key} className="block">
+                                    <span className="mb-1 block text-[9px] font-bold uppercase tracking-wide text-neutral-500">
+                                      {item.label}
+                                    </span>
+                                    <input
+                                      type="text"
+                                      value={String(item.value ?? "")}
+                                      onChange={(e) =>
+                                        updateSelectedNodeDataPath(
+                                          item.path,
+                                          e.target.value,
+                                        )
+                                      }
+                                      className="h-8 w-full rounded-md border border-white/[0.08] bg-black/30 px-2 text-[10px] text-neutral-200 outline-none focus:border-purple-400/50"
+                                    />
+                                  </label>
+                                ))}
+                              </div>
+                            </section>
+                          ))}
+                          <JepEditorPropertiesPanel
+                            node={selectedPrimaryNode}
+                            connectedLights={selectedEditorJepLights}
+                            onPatch={patchThreeDEditorNode}
+                          />
+                        </div>
                       ) : selectedNodePropertyGroups.length === 0 ? (
                         <section className="rounded-xl border border-white/10 bg-black/20 p-3 text-[10px] leading-relaxed text-neutral-500">
                           这个节点没有可编辑参数，或它的内容是输出结果/资源链接，已从属性栏中过滤。
@@ -9937,7 +10032,7 @@ export default function App() {
                                     {item.label}
                                   </span>
                                   {item.type === "boolean" ? (
-                                    <button
+                          <button
                                       type="button"
                                       onClick={() =>
                                         updateSelectedNodeDataPath(item.path, !item.value)
@@ -9949,7 +10044,7 @@ export default function App() {
                                       }`}
                                     >
                                       {item.value ? "开启" : "关闭"}
-                                    </button>
+                          </button>
                                   ) : item.type === "number" ? (
                                     <input
                                       type="number"
@@ -9981,7 +10076,7 @@ export default function App() {
                                   )}
                                 </label>
                               ))}
-            </div>
+                    </div>
                           </section>
                         ))
                       )}

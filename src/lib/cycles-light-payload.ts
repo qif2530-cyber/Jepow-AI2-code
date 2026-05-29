@@ -12,12 +12,14 @@ export function buildCyclesLightPayload(
 ): Record<string, unknown> {
   const yaw = Number(connected?.yaw ?? panelLights.yaw ?? 45);
   const pitch = Number(connected?.pitch ?? panelLights.pitch ?? 35);
+  const type = String(connected?.type ?? connected?.lightKind ?? "cycles_light_rig");
   const dirMul = Number(panelLights.directional ?? 2);
   const envMul = Number(panelLights.environment ?? 1);
   const ambientMul = Number(panelLights.ambient ?? 1);
   const exposureMul = Number(panelLights.exposure ?? 1);
 
   return {
+    type,
     backgroundColor: (connected?.backgroundColor as string) || "#1c1e24",
     environmentStrength: Number(
       connected?.environmentStrength ?? Math.max(0.15, envMul * 0.85 + ambientMul * 0.15),
@@ -26,6 +28,8 @@ export function buildCyclesLightPayload(
     keySize: Number(connected?.keySize ?? 3),
     yaw,
     pitch,
+    hdrUrl: (connected?.hdrUrl as string) || "",
+    hdrName: (connected?.hdrName as string) || "",
     exposure: Number(connected?.exposure ?? Math.max(3.5, exposureMul * 4)),
   };
 }

@@ -50,6 +50,19 @@ import { viewportMaterialForSceneObject } from "../lib/scene-object-materials";
 import { buildCyclesLightPayload } from "../lib/cycles-light-payload";
 import { getViewportEngine } from "../lib/viewport-engine";
 import type { ViewportCamera } from "../lib/viewport-engine/types";
+import {
+  cameraViewKey,
+  cyclesLightToViewportLighting,
+  focalLengthToFovRad,
+  lightViewKey,
+  mergeLightsForCameraView,
+  normalizeJepCameras,
+  normalizeJepRenderSettings,
+  parseJepViewKey,
+  resolveEditorConnectedLights,
+  type JepCamera,
+  type JepViewKind,
+} from "../lib/jep-renderer";
 
 interface ThreeDEditorNodeProps {
   id: string;
@@ -70,8 +83,14 @@ interface ThreeDEditorNodeProps {
     renderActive?: boolean;
     blendSourcePath?: string;
     blendFidelityRender?: boolean;
-    /** 与 Cycles 路径追踪共用的视口轨道相机（持久化在节点上） */
+    /** 与 JEP / CL 共用的视口轨道相机（持久化在节点上） */
     cyclesViewportCamera?: ViewportCamera;
+    jepCameras?: JepCamera[];
+    jepRenderSettings?: Record<string, unknown>;
+    jepViewKind?: JepViewKind;
+    jepActiveViewKey?: string;
+    jepViewStates?: Record<string, ViewportCamera>;
+    renderSettings?: Record<string, unknown>;
   };
   selected?: boolean;
 }
@@ -522,11 +541,72 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
         nodes,
         edges,
       ),
+    [id, data, nodes, edges],
+  );
+
+  const jepCameras = useMemo(() => normalizeJepCameras(data.jepCameras), [data.jepCameras]);
+  const jepRenderSettings = useMemo(
+    () => normalizeJepRenderSettings(data.jepRenderSettings ?? data.renderSettings),
+    [data.jepRenderSettings, data.renderSettings],
+  );
+  const connectedJepLights = useMemo(
+    () => resolveEditorConnectedLights(id, nodes, edges),
     [id, nodes, edges],
   );
-  const modelPreviewCamera = editorPipeline.model?.previewCamera as
-    | ViewportCamera
-    | undefined;
+  const jepViewKind: JepViewKind = data.jepViewKind === "light" ? "light" : "camera";
+  const jepActiveViewKey = String(
+    data.jepActiveViewKey || cameraViewKey(jepCameras[0]?.id || ""),
+  );
+  const activeJepCamera = useMemo(() => {
+    const parsed = parseJepViewKey(jepActiveViewKey);
+    if (parsed?.kind === "camera") {
+      return jepCameras.find((c) => c.id === parsed.id) || jepCameras[0];
+    }
+    return jepCameras[0];
+  }, [jepActiveViewKey, jepCameras]);
+  const activeJepLight = useMemo(() => {
+    if (jepViewKind !== "light") return null;
+    const parsed = parseJepViewKey(jepActiveViewKey);
+    if (!parsed || parsed.kind !== "light") {
+      return connectedJepLights[0] || null;
+    }
+    return (
+      connectedJepLights.find((l) => l.edgeId === parsed.id) ||
+      connectedJepLights[0] ||
+      null
+    );
+  }, [jepViewKind, jepActiveViewKey, connectedJepLights]);
+  const inLightView = jepViewKind === "light" && !!activeJepLight;
+
+  useEffect(() => {
+    if (Array.isArray(data.jepCameras) && data.jepCameras.length > 0) return;
+    const cams = normalizeJepCameras(undefined);
+    updateNodeData(id, {
+      jepCameras: cams,
+      jepRenderSettings: normalizeJepRenderSettings(
+        data.jepRenderSettings ?? data.renderSettings,
+      ),
+      jepActiveViewKey: data.jepActiveViewKey || cameraViewKey(cams[0].id),
+      jepViewKind: data.jepViewKind === "light" ? "light" : "camera",
+    });
+  }, [
+    id,
+    data.jepCameras,
+    data.jepActiveViewKey,
+    data.jepViewKind,
+    data.jepRenderSettings,
+    data.renderSettings,
+    updateNodeData,
+  ]);
+
+  useEffect(() => {
+    if (jepViewKind !== "light" || activeJepLight) return;
+    const fallbackKey = cameraViewKey(jepCameras[0]?.id || "");
+    updateNodeData(id, {
+      jepActiveViewKey: fallbackKey,
+      jepViewKind: "camera",
+    });
+  }, [jepViewKind, activeJepLight, jepCameras, id, updateNodeData]);
 
   const highlightSceneObjectId = useMemo(() => {
     const raw = modelNode?.data as { selectedSceneObjectId?: string };
@@ -598,19 +678,8 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
   }, [modelNode, sceneObjectMaterialsKey, nodes, getNodes, getEdges]);
   const hasPerObjectViewportMaterial = assignedSubmeshMaterials.length > 0;
 
-  /** 已赋材质由 assignedSubmeshMaterials 持久绘制；高亮通道仅用于未赋材质的选中轮廓 */
-  const viewportSelectionHighlightMaterial = useMemo(() => {
-    if (!highlightSceneObjectId) return null;
-    const hasAssignedOnSelection = assignedSubmeshMaterials.some(
-      (entry) => entry.objectId === highlightSceneObjectId,
-    );
-    if (hasAssignedOnSelection) return null;
-    return highlightSubmeshMaterial;
-  }, [
-    highlightSceneObjectId,
-    highlightSubmeshMaterial,
-    assignedSubmeshMaterials,
-  ]);
+  /** 选中反馈由原生引擎描边通道绘制，不再整片填充高亮 */
+  const viewportSelectionHighlightMaterial = null;
 
   const [materialPreviewRevision, setMaterialPreviewRevision] = useState(0);
   useEffect(() => {
@@ -746,8 +815,21 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
     sceneCameraFramedRef.current = false;
   }, [resolvedScenePath]);
 
-  const showLiveViewport = hasNativeScene && renderActive;
-  const showPausedOverlay = hasNativeScene && !renderActive;
+  const showLiveViewport = hasNativeScene && (inLightView || renderActive);
+  const showPausedOverlay = hasNativeScene && !inLightView && !renderActive;
+  const jepViewportLiveRender = inLightView || (renderActive && !inLightView);
+  const jepViewportShading = inLightView
+    ? "clay"
+    : previewUsesNativeMaterial && !hasPerObjectViewportMaterial
+      ? "render"
+      : "clay";
+  const jepViewportMaterial =
+    inLightView || hasPerObjectViewportMaterial
+      ? null
+      : previewUsesNativeMaterial
+        ? activeViewportMaterial
+        : null;
+  const jepAssignedSubmeshMaterials = inLightView ? [] : assignedSubmeshMaterials;
 
   // Position, Rotation, Scale configurations
   const [transform, setTransform] = useState({
@@ -817,11 +899,12 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
   const cyclesInteractLoopRef = useRef<number | null>(null);
   const lastInteractLoopCameraVersionRef = useRef(-1);
   const lastInteractLoopFlushAtRef = useRef(0);
-  const lastAppliedModelPreviewCameraKeyRef = useRef("");
   const viewportContainerRef = useRef<HTMLDivElement | null>(null);
   const [viewportPixelSize, setViewportPixelSize] = useState({ width: 640, height: 360 });
 
   const connectedCyclesLight = editorPipeline.cyclesLight as {
+    type?: string;
+    lightKind?: string;
     yaw?: number;
     pitch?: number;
     keyStrength?: number;
@@ -893,12 +976,72 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
     }),
     [viewportCamera, connectedCyclesCamera],
   );
-  const effectiveViewportCamera = useMemo(
-    () => ({
+  const effectiveViewportCamera = useMemo(() => {
+    const fovFromJep = activeJepCamera
+      ? focalLengthToFovRad(
+          activeJepCamera.focalLengthMm,
+          activeJepCamera.sensorWidthMm,
+        )
+      : undefined;
+    return {
       ...viewportCamera,
-      fov: connectedCyclesCamera?.fov ?? viewportCamera.fov ?? Math.PI / 4,
-    }),
-    [viewportCamera, connectedCyclesCamera?.fov],
+      fov:
+        connectedCyclesCamera?.fov ??
+        (jepViewKind === "camera" ? fovFromJep : undefined) ??
+        viewportCamera.fov ??
+        Math.PI / 4,
+    };
+  }, [
+    viewportCamera,
+    connectedCyclesCamera?.fov,
+    activeJepCamera,
+    jepViewKind,
+  ]);
+
+  useEffect(() => {
+    if (jepViewKind !== "camera" || !activeJepCamera) return;
+    const fov = focalLengthToFovRad(
+      activeJepCamera.focalLengthMm,
+      activeJepCamera.sensorWidthMm,
+    );
+    if (Math.abs((viewportCameraRef.current.fov ?? 0) - fov) < 0.0001) return;
+    const next = { ...viewportCameraRef.current, fov };
+    viewportCameraRef.current = next;
+    setViewportCamera(next);
+  }, [activeJepCamera?.focalLengthMm, activeJepCamera?.id, jepViewKind]);
+
+  const switchJepView = useCallback(
+    (nextKey: string) => {
+      const currentKey = String(
+        data.jepActiveViewKey || cameraViewKey(jepCameras[0]?.id || ""),
+      );
+      const viewStates = {
+        ...((data.jepViewStates as Record<string, ViewportCamera> | undefined) ||
+          {}),
+      };
+      viewStates[currentKey] = { ...viewportCameraRef.current };
+      const parsed = parseJepViewKey(nextKey);
+      const nextCam =
+        parsed?.kind === "camera"
+          ? jepCameras.find((c) => c.id === parsed.id)
+          : null;
+      const stored = viewStates[nextKey] || DEFAULT_CYCLES_VIEWPORT_CAMERA;
+      const nextViewport: ViewportCamera = {
+        ...stored,
+        fov: nextCam
+          ? focalLengthToFovRad(nextCam.focalLengthMm, nextCam.sensorWidthMm)
+          : (stored.fov ?? DEFAULT_CYCLES_VIEWPORT_CAMERA.fov),
+      };
+      viewportCameraRef.current = nextViewport;
+      setViewportCamera(nextViewport);
+      updateNodeData(id, {
+        jepViewStates: viewStates,
+        jepActiveViewKey: nextKey,
+        jepViewKind: parsed?.kind === "light" ? "light" : "camera",
+        cyclesViewportCamera: nextViewport,
+      });
+    },
+    [data.jepActiveViewKey, data.jepViewStates, id, jepCameras, updateNodeData],
   );
   const getLiveCyclesCamera = (): ViewportCamera => {
     const cam = viewportCameraRef.current;
@@ -920,7 +1063,18 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
     }
     persistCameraTimerRef.current = window.setTimeout(() => {
       persistCameraTimerRef.current = null;
-      updateNodeData(id, { cyclesViewportCamera: cam });
+      const activeKey = String(
+        data.jepActiveViewKey || cameraViewKey(jepCameras[0]?.id || ""),
+      );
+      const viewStates = {
+        ...((data.jepViewStates as Record<string, ViewportCamera> | undefined) ||
+          {}),
+        [activeKey]: cam,
+      };
+      updateNodeData(id, {
+        cyclesViewportCamera: cam,
+        jepViewStates: viewStates,
+      });
     }, 280);
   };
 
@@ -1182,18 +1336,6 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
     hasPerObjectViewportMaterial,
   ]);
 
-  useEffect(() => {
-    if (!modelPreviewCamera) return;
-    const cameraKey = JSON.stringify(modelPreviewCamera);
-    if (lastAppliedModelPreviewCameraKeyRef.current === cameraKey) return;
-    lastAppliedModelPreviewCameraKeyRef.current = cameraKey;
-    handleViewportCameraChange({
-      ...viewportCameraRef.current,
-      ...modelPreviewCamera,
-    });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [modelPreviewCamera]);
-
   useEffect(
     () => () => {
       if (viewportInteractionTimerRef.current != null) {
@@ -1215,8 +1357,21 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
     [],
   );
 
-  const nativeLighting = useMemo(
-    () => ({
+  const nativeLighting = useMemo(() => {
+    if (inLightView && activeJepLight) {
+      return cyclesLightToViewportLighting(
+        activeJepLight.cyclesLight,
+        jepRenderSettings.exposure,
+      );
+    }
+    if (connectedJepLights.length > 0) {
+      return mergeLightsForCameraView(
+        connectedJepLights,
+        jepRenderSettings.exposure,
+      );
+    }
+    return {
+      type: String(connectedCyclesLight?.type ?? connectedCyclesLight?.lightKind ?? ""),
       yaw: Number(connectedCyclesLight?.yaw ?? lights.yaw),
       pitch: Number(connectedCyclesLight?.pitch ?? lights.pitch),
       ambient: lights.ambient,
@@ -1224,21 +1379,23 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
         connectedCyclesLight?.keyStrength != null
           ? Math.max(0, Number(connectedCyclesLight.keyStrength) / 325)
           : lights.directional,
-      exposure: lights.exposure,
+      exposure: jepRenderSettings.exposure,
       environment: Number(
         connectedCyclesLight?.environmentStrength ?? lights.environment,
       ),
-    }),
-    [
-      connectedCyclesLight,
-      lights.yaw,
-      lights.pitch,
-      lights.ambient,
-      lights.directional,
-      lights.exposure,
-      lights.environment,
-    ],
-  );
+    };
+  }, [
+    inLightView,
+    activeJepLight,
+    connectedJepLights,
+    jepRenderSettings.exposure,
+    connectedCyclesLight,
+    lights.yaw,
+    lights.pitch,
+    lights.ambient,
+    lights.directional,
+    lights.environment,
+  ]);
   const nativeLightingKey = useMemo(
     () => JSON.stringify(nativeLighting),
     [nativeLighting],
@@ -1275,18 +1432,33 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
     }));
   };
 
-  // 同步 sceneData（勿写入 cyclesMaterial / shaderGraph，否则每次解析都会生成新对象引用 → updateNodeData 死循环）
+  // 同步 sceneData 给独立渲染节点；材质只写入稳定 JSON 快照，避免 shaderGraph 对象引用触发循环。
   const sceneDataSyncKey = useMemo(
     () =>
       JSON.stringify({
         glbUrl: glbToRender,
+        scenePath: resolvedScenePath,
+        blendSourcePath,
+        jepRenderer: "JEP",
+        jepRenderMode: "physical-preview",
         transform,
         lights,
         renderSettings,
         cyclesLight: connectedCyclesLight,
         cyclesCamera: connectedCyclesCamera,
+        cyclesMaterial: JSON.parse(cyclesMaterialRenderKey),
       }),
-    [glbToRender, transform, lights, renderSettings, connectedCyclesLight, connectedCyclesCamera],
+    [
+      glbToRender,
+      resolvedScenePath,
+      blendSourcePath,
+      transform,
+      lights,
+      renderSettings,
+      connectedCyclesLight,
+      connectedCyclesCamera,
+      cyclesMaterialRenderKey,
+    ],
   );
   const sceneDataSyncRef = useRef<string>("");
   useEffect(() => {
@@ -1295,14 +1467,32 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
     updateNodeData(id, {
       sceneData: {
         glbUrl: glbToRender,
+        scenePath: resolvedScenePath,
+        blendSourcePath,
+        jepRenderer: "JEP",
+        jepRenderMode: "physical-preview",
         transform,
         lights,
         renderSettings,
         cyclesLight: connectedCyclesLight,
         cyclesCamera: connectedCyclesCamera,
+        cyclesMaterial: JSON.parse(cyclesMaterialRenderKey),
       },
     });
-  }, [sceneDataSyncKey, glbToRender, transform, lights, renderSettings, connectedCyclesLight, connectedCyclesCamera, updateNodeData, id]);
+  }, [
+    sceneDataSyncKey,
+    glbToRender,
+    resolvedScenePath,
+    blendSourcePath,
+    transform,
+    lights,
+    renderSettings,
+    connectedCyclesLight,
+    connectedCyclesCamera,
+    cyclesMaterialRenderKey,
+    updateNodeData,
+    id,
+  ]);
 
   useEffect(() => {
     if (viewportMode !== "render" || hasPerObjectViewportMaterial) {
@@ -1743,6 +1933,43 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
             模型资产未连到「模型输入」端口，场景树中的按对象赋材质无法作用到本视口。
           </div>
         ) : null}
+        {hasNativeScene ? (
+          <div className="absolute top-2 left-2 z-[32] pointer-events-auto select-none">
+            <select
+              value={jepActiveViewKey}
+              onChange={(e) => {
+                e.stopPropagation();
+                switchJepView(e.target.value);
+              }}
+              onMouseDown={(e) => e.stopPropagation()}
+              onClick={(e) => e.stopPropagation()}
+              className="h-7 max-w-[160px] truncate rounded-md border border-cyan-800/60 bg-black/75 px-2 pr-6 text-[9px] font-bold text-cyan-100 outline-none backdrop-blur-md focus:border-cyan-400/50"
+              title="切换摄像机或灯光视角"
+            >
+              <optgroup label="摄像机">
+                {jepCameras.map((cam) => (
+                  <option key={cam.id} value={cameraViewKey(cam.id)}>
+                    {cam.name}
+                  </option>
+                ))}
+              </optgroup>
+              {connectedJepLights.length > 0 ? (
+                <optgroup label="灯光视角">
+                  {connectedJepLights.map((light) => (
+                    <option key={light.edgeId} value={lightViewKey(light.edgeId)}>
+                      {light.label}
+                    </option>
+                  ))}
+                </optgroup>
+              ) : null}
+            </select>
+            {inLightView ? (
+              <span className="mt-1 block text-[8px] font-bold text-amber-300/90">
+                灯光预览 · 白模
+              </span>
+            ) : null}
+          </div>
+        ) : null}
         <div className="absolute top-2 right-2 z-[30] flex gap-1.5 pointer-events-auto select-none">
             <div className="h-7 p-0.5 rounded bg-black/70 border border-neutral-700/90 backdrop-blur-md flex items-center gap-0.5 shadow-lg">
               <button
@@ -1759,22 +1986,6 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
                 title="预览"
               >
                 <Eye className="h-3.5 w-3.5" />
-              </button>
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setViewportMode("render");
-                  if (!renderActive) updateNodeData(id, { renderActive: true });
-                }}
-                className={`h-6 px-2 rounded text-[9px] font-bold transition-all ${
-                  viewportMode === "render"
-                    ? "bg-emerald-500/25 text-emerald-200"
-                    : "text-neutral-500 hover:text-neutral-200"
-                }`}
-                title="Cycles"
-              >
-                CL
               </button>
             </div>
             <Button
@@ -1832,21 +2043,18 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
             onTouchStart={(e) => e.stopPropagation()}
           >
             <JepowViewportPreview
-              key={`${id}-mat-${materialPreviewRevision}-${sceneObjectMaterialsKey}`}
+              key={`${id}-mat-${materialPreviewRevision}-${sceneObjectMaterialsKey}-${inLightView ? "light" : "cam"}`}
               scenePath={resolvedScenePath}
               fill
               mode="orbit"
-              liveRender={false}
+              liveRender={jepViewportLiveRender}
               previewMaxWidth={2048}
               native2KFinal
+              jepRenderMode="physical-preview"
               lockRenderSize
               highPerformanceMode={false}
-              shading={
-                previewUsesNativeMaterial && !usePerObjectViewportMaterial
-                  ? "render"
-                  : "clay"
-              }
-              ghostOverlay={viewportMode === "render"}
+              shading={jepViewportShading}
+              ghostOverlay={false}
               transform={{
                 x: transform.x,
                 y: transform.y,
@@ -1857,18 +2065,14 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
                 scale: transform.scale,
               }}
               lighting={nativeLighting}
-              material={
-                previewUsesNativeMaterial && !usePerObjectViewportMaterial
-                  ? activeViewportMaterial
-                  : null
-              }
+              material={jepViewportMaterial}
               resetViewToken={viewportResetToken}
               viewCamera={effectiveViewportCamera}
               onCameraChange={handleViewportCameraChange}
               onInteractingChange={handleViewportInteractingChange}
               highlightSceneObjectId={highlightSceneObjectId}
               highlightSubmeshMaterial={viewportSelectionHighlightMaterial}
-              assignedSubmeshMaterials={assignedSubmeshMaterials}
+              assignedSubmeshMaterials={jepAssignedSubmeshMaterials}
               onSceneObjectPick={handleViewportSceneObjectPick}
               sceneObjectNameById={sceneObjectNameById}
               onSceneInfo={(info) => {
@@ -1904,24 +2108,17 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
                 liveRender={false}
                 previewMaxWidth={2048}
                 native2KFinal
-                shading={
-                  previewUsesNativeMaterial && !usePerObjectViewportMaterial
-                    ? "render"
-                    : "clay"
-                }
+                jepRenderMode="physical-preview"
+                shading={jepViewportShading}
                 lighting={nativeLighting}
-                material={
-                  previewUsesNativeMaterial && !usePerObjectViewportMaterial
-                    ? activeViewportMaterial
-                    : null
-                }
+                material={jepViewportMaterial}
                 resetViewToken={viewportResetToken}
                 viewCamera={effectiveViewportCamera}
                 onCameraChange={handleViewportCameraChange}
                 onInteractingChange={handleViewportInteractingChange}
                 highlightSceneObjectId={highlightSceneObjectId}
                 highlightSubmeshMaterial={viewportSelectionHighlightMaterial}
-                assignedSubmeshMaterials={assignedSubmeshMaterials}
+                assignedSubmeshMaterials={jepAssignedSubmeshMaterials}
                 onSceneObjectPick={handleViewportSceneObjectPick}
                 sceneObjectNameById={sceneObjectNameById}
               />
@@ -2138,77 +2335,19 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
             <div className="flex flex-col gap-1 border-b border-neutral-800/80 pb-1.5">
               <div className="flex items-center gap-2">
                 <Sun className="w-3.5 h-3.5 text-purple-400" />
-                <span className="text-[11px] font-bold text-neutral-200">CL 渲染参数</span>
+                <span className="text-[11px] font-bold text-neutral-200">JEP 物理视口参数</span>
               </div>
               {hasNativeScene && (
                 <p className="text-[9px] text-amber-300/90 leading-snug truncate">
-                  {viewportMode === "render"
-                    ? `${renderSettings.samples}spp / ${renderSettings.bounces} bounces · 视口拖拽=CL相机`
-                    : "Preview clay mode"}
+                  JEP Renderer · 物理材质/HDR/灯光 · CL 渲染请连接独立节点
                 </p>
               )}
             </div>
 
-            {viewportMode === "render" && (
-              <div className="grid grid-cols-3 gap-2 pb-1 border-b border-cyan-900/40">
-                <div className="editor-param-card flex flex-col gap-1.5 bg-cyan-950/20 p-2 rounded-md border border-cyan-900/40 col-span-3">
-                  <span className="text-[10px] font-bold text-cyan-300">CL 相机（与视口拖拽同步）</span>
-                </div>
-                <div className="editor-param-card flex flex-col gap-1.5 bg-neutral-900/40 p-2 rounded-md border border-cyan-900/30">
-                  <span className="text-[9px] text-neutral-400">距离</span>
-                  <span className="text-cyan-400 font-mono text-[10px]">
-                    {(viewportCamera.distance ?? 2.45).toFixed(2)}
-                  </span>
-                  <input
-                    type="range"
-                    min="0.8"
-                    max="24"
-                    step="0.05"
-                    value={viewportCamera.distance ?? 2.45}
-                    onChange={(e) =>
-                      updateCyclesOrbitCamera({ distance: parseFloat(e.target.value) })
-                    }
-                    onMouseDown={(e) => e.stopPropagation()}
-                    className="w-full h-1 accent-cyan-500 nodrag"
-                  />
-                </div>
-                <div className="editor-param-card flex flex-col gap-1.5 bg-neutral-900/40 p-2 rounded-md border border-cyan-900/30">
-                  <span className="text-[9px] text-neutral-400">水平°</span>
-                  <span className="text-cyan-400 font-mono text-[10px]">{cameraYawDeg}°</span>
-                  <input
-                    type="range"
-                    min="0"
-                    max="360"
-                    step="1"
-                    value={((cameraYawDeg % 360) + 360) % 360}
-                    onChange={(e) =>
-                      updateCyclesOrbitCamera({
-                        yaw: THREE.MathUtils.degToRad(parseFloat(e.target.value)),
-                      })
-                    }
-                    onMouseDown={(e) => e.stopPropagation()}
-                    className="w-full h-1 accent-cyan-500 nodrag"
-                  />
-                </div>
-                <div className="editor-param-card flex flex-col gap-1.5 bg-neutral-900/40 p-2 rounded-md border border-cyan-900/30">
-                  <span className="text-[9px] text-neutral-400">俯仰°</span>
-                  <span className="text-cyan-400 font-mono text-[10px]">{cameraPitchDeg}°</span>
-                  <input
-                    type="range"
-                    min="-75"
-                    max="75"
-                    step="1"
-                    value={cameraPitchDeg}
-                    onChange={(e) =>
-                      updateCyclesOrbitCamera({
-                        pitch: THREE.MathUtils.degToRad(parseFloat(e.target.value)),
-                      })
-                    }
-                    onMouseDown={(e) => e.stopPropagation()}
-                    className="w-full h-1 accent-cyan-500 nodrag"
-                  />
-                </div>
-              </div>
+            {hasNativeScene && (
+              <p className="text-[9px] text-cyan-300/80 leading-snug pb-1 border-b border-neutral-800/80">
+                摄像机/灯光在视口左上角切换；焦距与渲染参数见右侧 JEP 属性栏。
+              </p>
             )}
 
             <div className="grid grid-cols-2 gap-2">

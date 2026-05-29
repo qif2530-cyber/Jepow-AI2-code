@@ -9,7 +9,7 @@ This is not a temporary implementation detail. Future changes must optimize with
 ## Required Layers
 
 - `React/Electron UI`: owns panels, commands, state, and desktop IPC.
-- `Rust/wgpu Core Viewport`: owns the interactive native viewport, selection, transforms, camera, and viewport rendering.
+- `JEP Renderer (Rust/wgpu Core Viewport)`: owns the interactive native viewport, selection, transforms, camera, and self-developed rendering.
 - `Cycles/CL Render`: owns offline/final rendering through an isolated render process or bridge.
 - `Assimp/USD Import`: owns broad DCC import and scene interchange. Runtime support can be incremental, but the architecture slot must remain.
 - `Bullet/Jolt Physics`: owns simulation, collision, rigid bodies, and debug draw. Runtime support can be incremental, but the architecture slot must remain.
@@ -22,7 +22,15 @@ This is not a temporary implementation detail. Future changes must optimize with
 - Interactive viewport shading may approximate the same material (tint, roughness, metalness, emission, staged textures) while Cycles/CL owns path-traced final output.
 - Cycles resident mesh-cache updates may pass scalar principled parameters first; full `shaderGraph` and staged textures remain on the XML/export path until the bridge parity is filled in.
 - UI panels and material-gen nodes edit `cyclesMaterial` only; preview and render sessions read that object through the native 3D pipeline registry.
-- Native viewport orbit mode must support click-picking scene sub-objects (`pick_scene_object`) and draw a light-blue highlight mesh for the picked outliner id (FBX/glTF node ids).
+- Native viewport orbit mode must support click-picking scene sub-objects (`pick_scene_object`) and draw a rim-outline highlight for the picked outliner id (FBX/glTF node ids), not a full-mesh fill overlay.
+
+## JEP Renderer Physical Rendering Target
+
+- `JEP` is the product name for the self-developed `Rust/wgpu Core Viewport` renderer; it must stay independent from the isolated GPL `Cycles/CL Render` process.
+- JEP should evolve toward an OC/Octane-style architecture: explicit scene graph, physical camera, HDR environment, physically based lights, PBR/BSDF materials, progressive accumulation, and eventually path-traced global illumination.
+- JEP interactive mode may use raster/PBR approximation for responsiveness, but its data contract must preserve physical material and lighting fields so `physical-preview` and future `path-tracing` modes share the same scene payload.
+- JEP path tracing must be implemented inside the MIT `jepow-engine` boundary or another compatible in-house module; do not copy/link GPL Cycles code into JEP.
+- CL/Cycles remains a separate offline/final renderer node path and must not control the JEP editor viewport camera/render loop.
 
 ## Required IPC/Command Surface
 
@@ -39,6 +47,7 @@ This is not a temporary implementation detail. Future changes must optimize with
 - Docked node viewports must be interactive by default, supporting mouse orbit, pan, and zoom even before native embedding is fully productionized.
 - Docked node viewports must render perspective scene previews and keep the preview area unobstructed by duplicate app-level 3D editor chrome.
 - Canvas nodes may connect through the native 3D pipeline registry so import, viewport, Cycles, and physics data can flow between related nodes without replacing the infinite canvas as the main editor.
+- Cycles/CL rendering must remain outside the interactive `Rust/wgpu` editor viewport; final/path-traced output is initiated from standalone canvas renderer nodes such as `cyclesRendererNode`.
 - Architecture/runtime diagnostics remain available through the Electron viewport IPC surface and may be surfaced from canvas nodes until replaced by full production panels.
 - The import pipeline must keep native runtime bridging for existing `gltf/glb/fbx/obj` loaders while Assimp/USD runtime support is filled in.
 - Successful native imports must create a 3D scene object with asset metadata (`assetPath`, backend, triangle/vertex counts) until replaced by full mesh scene instancing.

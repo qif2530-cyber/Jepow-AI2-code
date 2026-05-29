@@ -11,6 +11,7 @@ import { pickSceneObjectAtCursor } from "../lib/scene-object-pick";
 import { panCameraByScreenDelta } from "../lib/viewport-camera";
 import type {
   ViewportCamera,
+  JepRenderMode,
   ViewportLighting,
   ViewportMaterialPreview,
   ViewportObjectTransform,
@@ -57,6 +58,7 @@ interface JepowViewportPreviewProps {
   lighting?: ViewportLighting;
   liveRender?: boolean;
   shading?: "clay" | "render";
+  jepRenderMode?: JepRenderMode;
   transform?: ViewportObjectTransform;
   material?: ViewportMaterialPreview | null;
   /** 父组件递增以复位相机视角 */
@@ -155,13 +157,15 @@ function computeRenderSize(
 }
 
 function mapEditorLighting(lighting?: ViewportLighting) {
+  const type = lighting?.type;
   const amb = lighting?.ambient ?? 1.0;
   const dir = lighting?.directional ?? 2.0;
+  const isEnvironmentOnly = type === "hdr_environment" || type === "hdr";
   return {
     yaw: lighting?.yaw ?? 45,
     pitch: lighting?.pitch ?? 35,
     ambient: 0.38 + amb * 0.22,
-    directional: 0.45 + dir * 0.28,
+    directional: isEnvironmentOnly ? 0 : 0.45 + dir * 0.28,
     exposure: lighting?.exposure ?? 1.0,
     environment: lighting?.environment ?? 1.0,
   };
@@ -169,6 +173,17 @@ function mapEditorLighting(lighting?: ViewportLighting) {
 
 function isPanPointerButton(button: number, shiftKey: boolean, altKey: boolean) {
   return button === 1 || button === 2 || shiftKey || altKey;
+}
+
+function cameraChangedForInteractiveFrame(a: ViewportCamera, b: ViewportCamera) {
+  return (
+    Math.abs((a.yaw ?? 0) - (b.yaw ?? 0)) > 0.002 ||
+    Math.abs((a.pitch ?? 0) - (b.pitch ?? 0)) > 0.002 ||
+    Math.abs((a.distance ?? 0) - (b.distance ?? 0)) > 0.01 ||
+    Math.abs((a.panX ?? 0) - (b.panX ?? 0)) > 0.01 ||
+    Math.abs((a.panY ?? 0) - (b.panY ?? 0)) > 0.01 ||
+    Math.abs((a.panZ ?? 0) - (b.panZ ?? 0)) > 0.01
+  );
 }
 
 export function JepowViewportPreview({
@@ -179,6 +194,7 @@ export function JepowViewportPreview({
   lighting,
   liveRender = false,
   shading = "clay",
+  jepRenderMode,
   transform,
   material,
   resetViewToken = 0,
@@ -242,7 +258,7 @@ export function JepowViewportPreview({
   const pendingParentCameraRef = useRef<ViewportCamera | null>(null);
   const parentCameraNotifyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastParentCameraNotifyAtRef = useRef(0);
-  cameraRef.current = camera;
+  const ignoreExternalCameraUntilRef = useRef(0);
   const flushParentCameraChange = useCallback((next: ViewportCamera) => {
     pendingParentCameraRef.current = null;
     if (parentCameraNotifyTimerRef.current != null) {
@@ -286,6 +302,7 @@ export function JepowViewportPreview({
 
   useEffect(() => {
     if (!viewCamera || dragging.current) return;
+    if (Date.now() < ignoreExternalCameraUntilRef.current) return;
     const current = cameraRef.current;
     const same =
       Math.abs((current.yaw ?? 0) - (viewCamera.yaw ?? 0)) < 0.0001 &&
@@ -472,6 +489,7 @@ export function JepowViewportPreview({
           transform: tr,
           material: mat,
           shading,
+          jepRenderMode,
           liveRender,
           quality,
           highlightSceneObjectId: pickHighlightId,
@@ -490,6 +508,9 @@ export function JepowViewportPreview({
           lighting: lit,
           transform: tr,
           material: mat,
+          jepRenderMode:
+            jepRenderMode ||
+            (shading === "render" ? "physical-preview" : "interactive"),
           shading,
           liveRender,
           previewQuality: quality,
@@ -498,6 +519,9 @@ export function JepowViewportPreview({
           assignedSubmeshMaterials: assignedPayload,
         });
         if (gen !== renderGen.current) return;
+        if (quality === "draft" && cameraChangedForInteractiveFrame(cam, cameraRef.current)) {
+          return;
+        }
         if (!result.ok || !result.previewUrl) {
           const msg = result.error || "原生视口渲染失败";
           setEngineError(msg);
@@ -545,6 +569,7 @@ export function JepowViewportPreview({
       viewportSize,
       lighting,
       shading,
+      jepRenderMode,
       liveRender,
       previewMaxWidth,
       native2KFinal,
@@ -736,8 +761,9 @@ export function JepowViewportPreview({
   ]);
 
   useEffect(() => {
+    const canRenderInteractiveDrag = liveRender || !!onSceneObjectPick;
     if (
-      !liveRender ||
+      !canRenderInteractiveDrag ||
       engineReady !== true ||
       !sceneMetaReady ||
       mode !== "orbit" ||
@@ -748,8 +774,8 @@ export function JepowViewportPreview({
     let raf = 0;
     let last = 0;
     const loop = (now: number) => {
-      const interval = heavyScene ? 120 : 80;
-      if (now - last >= interval && !renderInFlight.current) {
+      const interval = heavyScene ? 90 : 50;
+      if (now - last >= interval) {
         last = now;
         void renderWithCamera(cameraRef.current, true, "draft");
       }
@@ -759,6 +785,7 @@ export function JepowViewportPreview({
     return () => cancelAnimationFrame(raf);
   }, [
     liveRender,
+    onSceneObjectPick,
     engineReady,
     sceneMetaReady,
     mode,
@@ -861,6 +888,7 @@ export function JepowViewportPreview({
             panZ: base.panZ ?? 0,
           }
         : panCameraByScreenDelta(base, dx, dy);
+    ignoreExternalCameraUntilRef.current = Date.now() + 700;
     cameraRef.current = next;
   };
 
@@ -889,6 +917,7 @@ export function JepowViewportPreview({
     }
     if (mode === "orbit") {
       const finalCamera = cameraRef.current;
+      ignoreExternalCameraUntilRef.current = Date.now() + 900;
       setCamera(finalCamera);
       flushParentCameraChange(finalCamera);
       void renderWithCamera(
@@ -910,6 +939,7 @@ export function JepowViewportPreview({
         Math.min(48, (cameraRef.current.distance ?? 2.45) + e.deltaY * 0.004),
       ),
     };
+    ignoreExternalCameraUntilRef.current = Date.now() + 500;
     onInteractingChange?.(true);
     syncCamera(next, { deferParent: true });
     window.setTimeout(() => onInteractingChange?.(false), 160);
@@ -930,7 +960,7 @@ export function JepowViewportPreview({
       >
         <Cpu className="w-9 h-9 text-amber-400" />
         <span className="text-[11px] font-bold text-amber-300">
-          {engineReady === null ? "正在检测自研渲染器…" : "自研渲染器未编译"}
+          {engineReady === null ? "正在检测 JEP 渲染器…" : "JEP 渲染器未编译"}
         </span>
         <p className="text-[10px] text-amber-100/90 leading-relaxed max-w-[270px]">
           {engineError || "需要 jepow-engine"}
@@ -989,7 +1019,7 @@ export function JepowViewportPreview({
           ) : (
             <Cpu className="w-6 h-6 text-neutral-500" />
           )}
-          <span className="text-[10px]">{loading ? "渲染白膜…" : engineError || "…"}</span>
+          <span className="text-[10px]">{loading ? "JEP 渲染中…" : engineError || "…"}</span>
         </div>
       )}
 

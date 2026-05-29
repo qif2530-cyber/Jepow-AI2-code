@@ -1,6 +1,7 @@
-/** Jepow 自研原生 3D 视口 — 与 AI / LLM HTTP API 完全分离 */
+/** JEP Renderer — Jepow 自研 Rust/wgpu 3D 渲染器，与 AI / LLM HTTP API 完全分离 */
 
 export type ViewportBackend = 'jepow-native' | 'blender' | 'web';
+export type JepRenderMode = 'interactive' | 'physical-preview' | 'path-tracing';
 
 /** Offline GPL renderer id when jepow-cycles is bundled */
 export type OfflineRenderEngine = 'cycles-gpl';
@@ -45,8 +46,9 @@ export interface ViewportCamera {
   fov?: number;
 }
 
-/** 原生 wgpu 白膜光照（与 3D 编辑器光源面板联动） */
+/** JEP 物理灯光描述（与 3D 编辑器光源节点/面板联动） */
 export interface ViewportLighting {
+  type?: string;
   yaw?: number;
   pitch?: number;
   ambient?: number;
@@ -55,6 +57,8 @@ export interface ViewportLighting {
   exposure?: number;
   /** Environment/HDRI contribution for physical render preview */
   environment?: number;
+  hdrUrl?: string;
+  hdrRotation?: number;
 }
 
 export interface ViewportObjectTransform {
@@ -68,7 +72,7 @@ export interface ViewportObjectTransform {
 }
 
 export interface ViewportMaterialPreview {
-  /** CSS hex tint used by the native clay/PBR-lite preview */
+  /** CSS hex tint used by the JEP physical preview */
   tint?: string;
   roughness?: number;
   metalness?: number;
@@ -76,10 +80,14 @@ export interface ViewportMaterialPreview {
   clearcoat?: number;
   transmission?: number;
   emissionStrength?: number;
+  ior?: number;
+  alpha?: number;
 }
 
 export interface RenderPreviewOptions {
   scenePath: string;
+  /** JEP rendering mode. path-tracing is the target architecture; current runtime may fall back to physical-preview. */
+  jepRenderMode?: JepRenderMode;
   width?: number;
   height?: number;
   camera?: ViewportCamera;
@@ -100,7 +108,7 @@ export interface RenderPreviewOptions {
   assignedSubmeshMaterials?: Array<
     ViewportMaterialPreview & { objectId: string }
   >;
-  /** clay = Blender 白模视口；render = 更重光照（开渲染器） */
+  /** clay = JEP interactive clay; render = JEP physical preview/path-tracing target */
   shading?: 'clay' | 'render';
   liveRender?: boolean;
   previewQuality?: 'draft' | 'final';

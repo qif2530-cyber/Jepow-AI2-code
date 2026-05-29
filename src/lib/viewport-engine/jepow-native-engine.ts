@@ -80,6 +80,8 @@ export const jepowNativeViewportEngine: ViewportEngine = {
       lightDiffuse: lit?.directional,
       lightExposure: lit?.exposure,
       environmentIntensity: lit?.environment,
+      hdrUrl: lit?.hdrUrl,
+      hdrRotation: lit?.hdrRotation,
       x: tr?.x,
       y: tr?.y,
       z: tr?.z,
@@ -94,6 +96,12 @@ export const jepowNativeViewportEngine: ViewportEngine = {
       materialClearcoat: mat?.clearcoat,
       materialTransmission: mat?.transmission,
       materialEmissionStrength: mat?.emissionStrength,
+      materialIor: mat?.ior,
+      materialAlpha: mat?.alpha,
+      jepRenderer: "JEP",
+      jepRenderMode:
+        opts.jepRenderMode ||
+        (opts.shading === "render" ? "physical-preview" : "interactive"),
       shading: opts.shading,
       liveRender: opts.liveRender,
       previewQuality: opts.previewQuality,

@@ -369,7 +369,7 @@ export function ModelAssetNode({ id, data, selected }: ModelAssetNodeProps) {
     toast.success(
       objects.length > 0
         ? `已导入本地场景（${objects.length} 个对象）`
-        : "已导入本地场景，由 Jepow 自研引擎加载",
+        : "已导入本地场景，由 JEP 渲染器加载",
     );
   };
 
@@ -562,7 +562,7 @@ export function ModelAssetNode({ id, data, selected }: ModelAssetNodeProps) {
           className="absolute top-2 right-2 h-7 w-7 bg-black/75 hover:bg-black border border-neutral-800 text-neutral-400 hover:text-white pointer-events-auto backdrop-blur-sm rounded z-20 transition-all cursor-pointer shadow-md"
           title={
             useDesktopNativeRenderer
-              ? "Jepow 自研视口；连线到 3D 编辑器进行 Cycles 渲染"
+              ? "JEP 渲染器预览；连线到 3D 编辑器进入 JEP 场景编辑"
               : renderActive
                 ? "暂停预览"
                 : "启动预览"
@@ -590,6 +590,7 @@ export function ModelAssetNode({ id, data, selected }: ModelAssetNodeProps) {
               mode="orbit"
               orbitOnly
               liveRender={false}
+              jepRenderMode="interactive"
               lockRenderSize
               defaultCamera={PREVIEW_CAM_45}
               lighting={{

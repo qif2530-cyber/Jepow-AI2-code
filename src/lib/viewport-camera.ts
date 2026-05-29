@@ -9,9 +9,11 @@ export function cameraPanBasis(yaw: number, pitch: number) {
   const vx = -cp * sy;
   const vy = -sp;
   const vz = -cp * cy;
-  let rx = vz;
+  // Match native glam::Mat4::look_at_rh(): right = forward x world_up.
+  // For the default camera looking down -Z, dragging horizontally must use +X.
+  let rx = -vz;
   let ry = 0;
-  let rz = -vx;
+  let rz = vx;
   let len = Math.hypot(rx, ry, rz);
   if (len < 1e-6) {
     rx = 1;
@@ -22,9 +24,9 @@ export function cameraPanBasis(yaw: number, pitch: number) {
   rx /= len;
   ry /= len;
   rz /= len;
-  const ux = vy * rz - vz * ry;
-  const uy = vz * rx - vx * rz;
-  const uz = vx * ry - vy * rx;
+  const ux = ry * vz - rz * vy;
+  const uy = rz * vx - rx * vz;
+  const uz = rx * vy - ry * vx;
   return { right: [rx, ry, rz] as const, up: [ux, uy, uz] as const };
 }
 
@@ -33,11 +35,11 @@ export function panCameraByScreenDelta(
   base: ViewportCamera,
   dx: number,
   dy: number,
-  sens = 0.0032,
+  sens = 0.00125,
 ): ViewportCamera {
   const { right, up } = cameraPanBasis(base.yaw ?? 0, base.pitch ?? 0);
   const dist = base.distance ?? 2.45;
-  const scale = Math.max(0.35, dist * sens);
+  const scale = Math.max(0.0008, dist * sens);
   const mx = -dx * scale;
   const my = dy * scale;
   return {

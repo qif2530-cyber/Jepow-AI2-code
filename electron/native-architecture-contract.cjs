@@ -9,7 +9,7 @@ const ARCHITECTURE_CONTRACT = Object.freeze({
       owner: 'renderer/electron',
     }),
     viewport: Object.freeze({
-      label: 'Rust/wgpu Core Viewport',
+      label: 'JEP Renderer (Rust/wgpu Core Viewport)',
       required: true,
       owner: 'native/jepow-engine viewport-host',
     }),
@@ -98,7 +98,9 @@ function buildArchitectureStatus({ nativeAvailable, cyclesAvailable, nativeArchi
       status: !!nativeAvailable,
       runtimeReady: !!nativeAvailable,
       productionReady: !!nativeAvailable,
-      detail: nativeAvailable ? 'native viewport-host 可用' : '等待 jepow-engine 编译',
+      detail: nativeAvailable
+        ? 'JEP Renderer native viewport-host 可用'
+        : '等待 JEP Renderer / jepow-engine 编译',
     },
     renderer: {
       ...ARCHITECTURE_CONTRACT.modules.renderer,
@@ -106,9 +108,9 @@ function buildArchitectureStatus({ nativeAvailable, cyclesAvailable, nativeArchi
       runtimeReady: rendererRuntimeReady,
       productionReady: !!cyclesStatus?.productionReady || !!cyclesAvailable,
       detail: cyclesStatus?.productionReady
-        ? `Cycles/CL runtime 可用：${cyclesStatus.activeBackend || 'cycles'}`
+        ? `Cycles/CL runtime 可用：${cyclesStatus.activeBackend || 'cycles'}，由独立画布渲染节点触发`
         : cyclesAvailable
-        ? 'jepow-cycles 独立渲染进程可用'
+        ? 'jepow-cycles 独立渲染进程可用，由独立画布渲染节点触发'
         : '架构桥接已接入，Cycles/CL 渲染进程未就绪',
     },
     importers: {
