@@ -135,7 +135,6 @@ import { ImageTo3DNode } from "./components/ImageTo3DNode";
 import { MaterialGenNode } from "./components/MaterialGenNode";
 import { MaterialReplaceNode } from "./components/MaterialReplaceNode";
 import { ThreeDEditorNode } from "./components/ThreeDEditorNode";
-import { ThreeDWorkspace, type ThreeDObject } from "./components/ThreeDWorkspace";
 import { ModelAssetNode } from "./components/ModelAssetNode";
 import { ThreeDRenderNode } from "./components/ThreeDRenderNode";
 import { CyclesLightNode } from "./components/CyclesLightNode";
@@ -265,38 +264,8 @@ export const parseDataUri = (uri: string) => {
 
 let lastCursorEmitTimestamp = 0;
 
-type ThreeDSceneSnapshot = {
-  objects: ThreeDObject[];
-  selectedObjectId: string;
-};
-
-const THREE_D_HISTORY_LIMIT = 80;
-
-const cloneThreeDObjects = (objects: ThreeDObject[]) =>
-  objects.map((object) => ({
-    ...object,
-    position: [...object.position] as [number, number, number],
-    rotation: [...object.rotation] as [number, number, number],
-    scale: [...object.scale] as [number, number, number],
-  }));
-
-const cloneThreeDSceneSnapshot = (
-  snapshot: ThreeDSceneSnapshot,
-): ThreeDSceneSnapshot => ({
-  objects: cloneThreeDObjects(snapshot.objects),
-  selectedObjectId: snapshot.selectedObjectId,
-});
-
-const areThreeDScenesEqual = (
-  a: ThreeDSceneSnapshot,
-  b: ThreeDSceneSnapshot,
-) => JSON.stringify(a) === JSON.stringify(b);
-
 export default function App() {
   const [viewMode, setViewMode] = useState<"node" | "video">("node");
-  const [activeWorkspace, setActiveWorkspace] = useState<
-    "node" | "3d" | "reference" | "compose"
-  >("node");
   const canvasOnly = isCanvasOnlyMode();
   const projectsLocal = shouldStoreProjectsLocally();
   const [view, setView] = useState<"landing" | "canvas">(
@@ -1945,124 +1914,6 @@ export default function App() {
   const [rightPanelMode, setRightPanelMode] = useState<"properties" | "ai">("properties");
   const [rightPanelWidth, setRightPanelWidth] = useState(304);
   const [rightPanelOutlinerHeight, setRightPanelOutlinerHeight] = useState(320);
-  const [threeDObjects, setThreeDObjects] = useState<ThreeDObject[]>([
-    {
-      id: "camera",
-      name: "Camera",
-      type: "相机" as const,
-      color: "text-emerald-300",
-      position: [-3, 1, 0] as [number, number, number],
-      rotation: [0, 0, 0] as [number, number, number],
-      scale: [1, 1, 1] as [number, number, number],
-      visible: true,
-      locked: false,
-      materialColor: "#33b884",
-    },
-    {
-      id: "cube",
-      name: "Cube",
-      type: "网格" as const,
-      color: "text-orange-300",
-      position: [0, 0, 0] as [number, number, number],
-      rotation: [0, 0, 0] as [number, number, number],
-      scale: [1, 1, 1] as [number, number, number],
-      visible: true,
-      locked: false,
-      materialColor: "#b9bdc5",
-    },
-    {
-      id: "light",
-      name: "Light",
-      type: "灯光" as const,
-      color: "text-yellow-300",
-      position: [2, -1, 0] as [number, number, number],
-      rotation: [0, 0, 0] as [number, number, number],
-      scale: [1, 1, 1] as [number, number, number],
-      visible: true,
-      locked: false,
-      materialColor: "#f2c94c",
-    },
-  ]);
-  const [selectedThreeDObjectId, setSelectedThreeDObjectId] = useState("cube");
-  const threeDObjectsRef = useRef<ThreeDObject[]>(threeDObjects);
-  const selectedThreeDObjectIdRef = useRef(selectedThreeDObjectId);
-  const threeDHistoryRef = useRef<{
-    past: ThreeDSceneSnapshot[];
-    future: ThreeDSceneSnapshot[];
-  }>({ past: [], future: [] });
-  const [threeDHistoryVersion, setThreeDHistoryVersion] = useState(0);
-  const restoreThreeDScene = useCallback((snapshot: ThreeDSceneSnapshot) => {
-    const next = cloneThreeDSceneSnapshot(snapshot);
-    threeDObjectsRef.current = next.objects;
-    selectedThreeDObjectIdRef.current = next.selectedObjectId;
-    setThreeDObjects(next.objects);
-    setSelectedThreeDObjectId(next.selectedObjectId);
-  }, []);
-  const commitThreeDScene = useCallback(
-    (
-      nextObjectsOrUpdater:
-        | ThreeDObject[]
-        | ((objects: ThreeDObject[]) => ThreeDObject[]),
-      nextSelectedObjectId?: string,
-      options?: { record?: boolean },
-    ) => {
-      const previous: ThreeDSceneSnapshot = {
-        objects: cloneThreeDObjects(threeDObjectsRef.current),
-        selectedObjectId: selectedThreeDObjectIdRef.current,
-      };
-      const resolvedObjects =
-        typeof nextObjectsOrUpdater === "function"
-          ? nextObjectsOrUpdater(threeDObjectsRef.current)
-          : nextObjectsOrUpdater;
-      const resolvedSelectedObjectId =
-        nextSelectedObjectId ?? selectedThreeDObjectIdRef.current;
-      const next: ThreeDSceneSnapshot = {
-        objects: cloneThreeDObjects(resolvedObjects),
-        selectedObjectId: resolvedSelectedObjectId,
-      };
-      if (areThreeDScenesEqual(previous, next)) return;
-      if (options?.record !== false) {
-        threeDHistoryRef.current.past.push(previous);
-        if (threeDHistoryRef.current.past.length > THREE_D_HISTORY_LIMIT) {
-          threeDHistoryRef.current.past.shift();
-        }
-        threeDHistoryRef.current.future = [];
-        setThreeDHistoryVersion((version) => version + 1);
-      }
-      restoreThreeDScene(next);
-    },
-    [restoreThreeDScene],
-  );
-  const undoThreeDScene = useCallback(() => {
-    const previous = threeDHistoryRef.current.past.pop();
-    if (!previous) return;
-    threeDHistoryRef.current.future.push({
-      objects: cloneThreeDObjects(threeDObjectsRef.current),
-      selectedObjectId: selectedThreeDObjectIdRef.current,
-    });
-    restoreThreeDScene(previous);
-    setThreeDHistoryVersion((version) => version + 1);
-  }, [restoreThreeDScene]);
-  const redoThreeDScene = useCallback(() => {
-    const next = threeDHistoryRef.current.future.pop();
-    if (!next) return;
-    threeDHistoryRef.current.past.push({
-      objects: cloneThreeDObjects(threeDObjectsRef.current),
-      selectedObjectId: selectedThreeDObjectIdRef.current,
-    });
-    restoreThreeDScene(next);
-    setThreeDHistoryVersion((version) => version + 1);
-  }, [restoreThreeDScene]);
-  const canUndoThreeDScene =
-    threeDHistoryVersion >= 0 && threeDHistoryRef.current.past.length > 0;
-  const canRedoThreeDScene =
-    threeDHistoryVersion >= 0 && threeDHistoryRef.current.future.length > 0;
-  useEffect(() => {
-    threeDObjectsRef.current = threeDObjects;
-  }, [threeDObjects]);
-  useEffect(() => {
-    selectedThreeDObjectIdRef.current = selectedThreeDObjectId;
-  }, [selectedThreeDObjectId]);
   const [renamingNodeId, setRenamingNodeId] = useState<string | null>(null);
   const [renamingNodeLabel, setRenamingNodeLabel] = useState("");
   const [sceneRenameMenu, setSceneRenameMenu] = useState<{
@@ -3171,14 +3022,6 @@ export default function App() {
 
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "z") {
         e.preventDefault();
-        if (activeWorkspace === "3d") {
-          if (e.shiftKey) {
-            redoThreeDScene();
-          } else {
-            undoThreeDScene();
-          }
-          return;
-        }
         if (e.shiftKey) {
           // Redo: Ctrl+Shift+Z
           const nextState = redo();
@@ -3197,10 +3040,6 @@ export default function App() {
       } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "y") {
         // Redo: Ctrl+Y
         e.preventDefault();
-        if (activeWorkspace === "3d") {
-          redoThreeDScene();
-          return;
-        }
         const nextState = redo();
         if (nextState) {
           setNodes(nextState.nodes);
@@ -3232,9 +3071,6 @@ export default function App() {
   }, [
     undo,
     redo,
-    activeWorkspace,
-    undoThreeDScene,
-    redoThreeDScene,
     reactFlowInstance,
     selectedNodes,
     nodes,
@@ -7344,172 +7180,6 @@ export default function App() {
         .replace(/Node$/, "")
         .replace(/([a-z])([A-Z])/g, "$1 $2")
     : "未选择对象";
-  const selectedThreeDObject =
-    threeDObjects.find((object) => object.id === selectedThreeDObjectId) ||
-    threeDObjects[0];
-  const createThreeDObject = useCallback(
-    (type: ThreeDObject["type"], source?: ThreeDObject): ThreeDObject => {
-      const typeMeta: Record<ThreeDObject["type"], { prefix: string; color: string }> = {
-        相机: { prefix: "Camera", color: "text-emerald-300" },
-        网格: { prefix: "Cube", color: "text-orange-300" },
-        灯光: { prefix: "Light", color: "text-yellow-300" },
-      };
-      const sameTypeCount = threeDObjects.filter((object) => object.type === type).length + 1;
-      const id = `${typeMeta[type].prefix.toLowerCase()}-${Date.now().toString(36)}-${sameTypeCount}`;
-      return {
-        id,
-        name: source ? `${source.name} 副本` : `${typeMeta[type].prefix}.${String(sameTypeCount).padStart(3, "0")}`,
-        type,
-        color: typeMeta[type].color,
-        position: source
-          ? ([source.position[0] + 0.6, source.position[1] + 0.3, source.position[2]] as [
-              number,
-              number,
-              number,
-            ])
-          : ([sameTypeCount * 0.65 - 1, type === "灯光" ? 1.6 : 0, 0] as [number, number, number]),
-        rotation: source ? ([...source.rotation] as [number, number, number]) : [0, 0, 0],
-        scale: source ? ([...source.scale] as [number, number, number]) : [1, 1, 1],
-        visible: source?.visible !== false,
-        locked: source?.locked === true,
-        materialColor:
-          source?.materialColor ||
-          (type === "相机" ? "#33b884" : type === "灯光" ? "#f2c94c" : "#b9bdc5"),
-        assetPath: source?.assetPath,
-        importBackend: source?.importBackend,
-        triangleCount: source?.triangleCount,
-        vertexCount: source?.vertexCount,
-        boundsMin: source?.boundsMin,
-        boundsMax: source?.boundsMax,
-        boundsSize: source?.boundsSize,
-        hasBaseColorTexture: source?.hasBaseColorTexture,
-        hasMetallicRoughnessTexture: source?.hasMetallicRoughnessTexture,
-        metallicFactor: source?.metallicFactor,
-        roughnessFactor: source?.roughnessFactor,
-      };
-    },
-    [threeDObjects],
-  );
-  const addThreeDObject = useCallback(
-    (type: ThreeDObject["type"]) => {
-      const object = createThreeDObject(type);
-      commitThreeDScene((objects) => [...objects, object], object.id);
-    },
-    [commitThreeDScene, createThreeDObject],
-  );
-  const importThreeDObject = useCallback(
-    (object: ThreeDObject) => {
-      commitThreeDScene((objects) => [...objects, object], object.id);
-    },
-    [commitThreeDScene],
-  );
-  const duplicateThreeDObject = useCallback(() => {
-    if (!selectedThreeDObject) return;
-    const object = createThreeDObject(selectedThreeDObject.type, selectedThreeDObject);
-    commitThreeDScene((objects) => [...objects, object], object.id);
-  }, [commitThreeDScene, createThreeDObject, selectedThreeDObject]);
-  const deleteThreeDObject = useCallback(() => {
-    if (!selectedThreeDObjectId) return;
-    const nextObjects = threeDObjects.filter((object) => object.id !== selectedThreeDObjectId);
-    if (nextObjects.length === threeDObjects.length) return;
-    commitThreeDScene(nextObjects, nextObjects[0]?.id || "");
-  }, [commitThreeDScene, selectedThreeDObjectId, threeDObjects]);
-  const resetThreeDObject = useCallback(() => {
-    if (!selectedThreeDObjectId) return;
-    commitThreeDScene((objects) =>
-      objects.map((object) =>
-        object.id === selectedThreeDObjectId && !object.locked
-          ? {
-              ...object,
-              position: [0, 0, 0],
-              rotation: [0, 0, 0],
-              scale: [1, 1, 1],
-            }
-          : object,
-      ),
-    );
-  }, [commitThreeDScene, selectedThreeDObjectId]);
-  const toggleThreeDObjectVisible = useCallback(
-    (objectId: string) => {
-      commitThreeDScene((objects) =>
-        objects.map((object) =>
-          object.id === objectId ? { ...object, visible: object.visible === false } : object,
-        ),
-      );
-    },
-    [commitThreeDScene],
-  );
-  const toggleThreeDObjectLocked = useCallback(
-    (objectId: string) => {
-      commitThreeDScene((objects) =>
-        objects.map((object) =>
-          object.id === objectId ? { ...object, locked: object.locked !== true } : object,
-        ),
-      );
-    },
-    [commitThreeDScene],
-  );
-  const updateThreeDObjectVector = useCallback(
-    (
-      key: "position" | "rotation" | "scale",
-      index: number,
-      value: string,
-    ) => {
-      const numericValue = Number(value);
-      if (!Number.isFinite(numericValue)) return;
-      commitThreeDScene((objects) =>
-        objects.map((object) => {
-          if (object.id !== selectedThreeDObjectId || object.locked) return object;
-          const nextVector = [...object[key]] as [number, number, number];
-          nextVector[index] = numericValue;
-          return { ...object, [key]: nextVector };
-        }),
-      );
-    },
-    [commitThreeDScene, selectedThreeDObjectId],
-  );
-  const syncThreeDObjectsFromHost = useCallback(
-    (objects: ThreeDObject[], selectedObjectId?: string) => {
-      commitThreeDScene(objects, selectedObjectId, { record: true });
-    },
-    [commitThreeDScene],
-  );
-  const applyPhysicsThreeDObjects = useCallback(
-    (objects: ThreeDObject[], selectedObjectId?: string) => {
-      commitThreeDScene(objects, selectedObjectId, { record: false });
-    },
-    [commitThreeDScene],
-  );
-  const updateThreeDObject = useCallback(
-    (id: string, patch: Partial<ThreeDObject>) => {
-      commitThreeDScene((objects) =>
-        objects.map((object) => (object.id === id ? { ...object, ...patch } : object)),
-      );
-    },
-    [commitThreeDScene],
-  );
-  const updateThreeDObjectName = useCallback(
-    (name: string) => {
-      commitThreeDScene((objects) =>
-        objects.map((object) =>
-          object.id === selectedThreeDObjectId ? { ...object, name } : object,
-        ),
-      );
-    },
-    [commitThreeDScene, selectedThreeDObjectId],
-  );
-  const updateThreeDObjectMaterialColor = useCallback(
-    (materialColor: string) => {
-      commitThreeDScene((objects) =>
-        objects.map((object) =>
-          object.id === selectedThreeDObjectId && !object.locked
-            ? { ...object, materialColor }
-            : object,
-        ),
-      );
-    },
-    [commitThreeDScene, selectedThreeDObjectId],
-  );
   const formatNodeTreeLabel = useCallback((node: Node) => {
     const typeLabels: Record<string, string> = {
       modelAssetNode: "模型资产",
@@ -7705,12 +7375,6 @@ export default function App() {
       </React.Fragment>
     );
   };
-  const professionalModes = [
-    { id: "node" as const, label: "无限画布" },
-    { id: "3d" as const, label: "三维视窗" },
-    { id: "reference" as const, label: "参考修图" },
-    { id: "compose" as const, label: "剪辑合成" },
-  ];
   const hiddenNodePropertyPattern =
     /(url|uri|href|path|preview|thumbnail|dataurl|base64|blob|output|result|error|status|local|remote|cache|file|image|video|glb|fbx|obj)$/i;
   const editableNestedPropertyKeys = new Set([
@@ -8080,12 +7744,8 @@ export default function App() {
                       {
                         label: "撤销",
                         shortcut: "⌘ Z",
-                        disabled: activeWorkspace === "3d" ? !canUndoThreeDScene : !canUndo,
+                        disabled: !canUndo,
                         action: () => {
-                          if (activeWorkspace === "3d") {
-                            undoThreeDScene();
-                            return;
-                          }
                           const prevState = undo();
                           if (prevState) {
                             setNodes(prevState.nodes);
@@ -8096,12 +7756,8 @@ export default function App() {
                       {
                         label: "重做",
                         shortcut: "⇧ ⌘ Z",
-                        disabled: activeWorkspace === "3d" ? !canRedoThreeDScene : !canRedo,
+                        disabled: !canRedo,
                         action: () => {
-                          if (activeWorkspace === "3d") {
-                            redoThreeDScene();
-                            return;
-                          }
                           const nextState = redo();
                           if (nextState) {
                             setNodes(nextState.nodes);
@@ -8245,23 +7901,6 @@ export default function App() {
                   </div>
                 ))}
               </div>
-
-              <div className="ml-5 hidden md:flex items-center gap-1 rounded-[3px] bg-[#2b2d31] border border-[#151619] p-0.5">
-                {professionalModes.map((mode) => (
-                  <button
-                    key={mode.id}
-                    type="button"
-                    onClick={() => setActiveWorkspace(mode.id)}
-                    className={`h-6 px-2.5 rounded-sm text-[10px] font-bold tracking-wide transition-all ${
-                      activeWorkspace === mode.id
-                        ? "bg-[#4772b3] text-white"
-                        : "text-neutral-400 hover:text-white hover:bg-white/[0.08]"
-                    }`}
-                  >
-                    {mode.label}
-                  </button>
-                ))}
-              </div>
             </header>
 
             <input
@@ -8285,25 +7924,6 @@ export default function App() {
             <div className="flex flex-1 min-h-0 bg-[#1f2023]">
               <main className="relative min-w-0 flex-1 p-0.5">
                 <div className="absolute inset-0.5 overflow-hidden rounded-[12px] border border-[#25272b] bg-[#3b3d40] shadow-none">
-              {activeWorkspace === "3d" ? (
-                <ThreeDWorkspace
-                  objects={threeDObjects}
-                  selectedObjectId={selectedThreeDObjectId}
-                  onSelectObject={setSelectedThreeDObjectId}
-                  onSyncObjects={syncThreeDObjectsFromHost}
-                  onApplyPhysicsObjects={applyPhysicsThreeDObjects}
-                  onAddObject={addThreeDObject}
-                  onImportObject={importThreeDObject}
-                  onDuplicateObject={duplicateThreeDObject}
-                  onDeleteObject={deleteThreeDObject}
-                  onResetObject={resetThreeDObject}
-                  onUndo={undoThreeDScene}
-                  onRedo={redoThreeDScene}
-                  canUndo={canUndoThreeDScene}
-                  canRedo={canRedoThreeDScene}
-                  onUpdateObject={updateThreeDObject}
-                />
-              ) : (
               <ShotContext.Provider
                 value={{
                   globalImageModel: imageModel,
@@ -9110,7 +8730,6 @@ export default function App() {
                   )}
                 </ReactFlow>
               </ShotContext.Provider>
-              )}
                 </div>
               </main>
 
@@ -9141,73 +8760,7 @@ export default function App() {
                         <ChevronDown className="h-3 w-3" />
                         集合
                       </div>
-                      {activeWorkspace === "3d" ? (
-                        <div className="p-1">
-                          <div className="mb-1 rounded-[3px] px-2 py-1 text-[11px] text-neutral-300">
-                            ▾ Collection
-                          </div>
-                          {threeDObjects.map((object) => (
-                            <div
-                              key={object.id}
-                              className={`ml-3 flex h-6 w-[calc(100%-0.75rem)] items-center gap-1 rounded-[3px] px-1 text-left text-[11px] ${
-                                selectedThreeDObjectId === object.id
-                                  ? "bg-blue-500/20 text-blue-100"
-                                  : "text-neutral-400 hover:bg-white/[0.06] hover:text-neutral-200"
-                              }`}
-                    >
-                      <button
-                                type="button"
-                                title={object.visible === false ? "显示" : "隐藏"}
-                                onClick={(event) => {
-                                  event.stopPropagation();
-                                  toggleThreeDObjectVisible(object.id);
-                                }}
-                                className={`h-5 w-5 rounded-[3px] text-[10px] ${
-                                  object.visible === false
-                                    ? "text-neutral-600 hover:bg-white/[0.06] hover:text-neutral-300"
-                                    : "text-neutral-400 hover:bg-white/[0.06] hover:text-white"
-                                }`}
-                              >
-                                {object.visible === false ? "○" : "●"}
-                      </button>
-                              <button
-                                type="button"
-                                title={object.locked ? "解锁" : "锁定"}
-                                onClick={(event) => {
-                                  event.stopPropagation();
-                                  toggleThreeDObjectLocked(object.id);
-                                }}
-                                className={`h-5 w-5 rounded-[3px] text-[10px] ${
-                                  object.locked
-                                    ? "text-amber-300 hover:bg-white/[0.06]"
-                                    : "text-neutral-600 hover:bg-white/[0.06] hover:text-neutral-300"
-                                }`}
-                              >
-                                {object.locked ? "锁" : "开"}
-                              </button>
-                        <button
-                                type="button"
-                                onClick={() => setSelectedThreeDObjectId(object.id)}
-                                className="flex min-w-0 flex-1 items-center gap-2 text-left"
-                              >
-                                <span className={object.visible === false ? "text-neutral-600" : object.color}>◆</span>
-                                <span className={`min-w-0 flex-1 truncate ${
-                                  object.visible === false
-                                    ? "text-neutral-600"
-                                    : object.locked
-                                      ? "text-neutral-500"
-                                      : ""
-                                }`}>
-                                  {object.name}
-                                </span>
-                                <span className="text-[10px] text-neutral-500">{object.type}</span>
-                        </button>
-                            </div>
-                          ))}
-                        </div>
-                      ) : (
-                        sceneRootNodes.map((node) => renderSceneTreeNode(node))
-                      )}
+                      {sceneRootNodes.map((node) => renderSceneTreeNode(node))}
                     </div>
                   </div>
                 </div>
@@ -9320,129 +8873,7 @@ export default function App() {
                     </div>
                   ) : (
                     <>
-                  {activeWorkspace === "3d" ? (
-                    <div className="space-y-2">
-                      <section className="rounded-[8px] border border-[#2b2d31] bg-[#1f2023]">
-                        <div className="border-b border-[#2b2d31] px-2 py-1 text-[10px] font-bold text-neutral-300">
-                          对象属性
-                        </div>
-                        <div className="space-y-2 p-2">
-                          <label className="block">
-                            <span className="mb-1 block text-[9px] font-bold text-neutral-500">
-                              名称
-                            </span>
-                            <input
-                              value={selectedThreeDObject?.name || ""}
-                              onChange={(event) =>
-                                updateThreeDObjectName(event.target.value)
-                              }
-                              className="h-7 w-full rounded-[4px] border border-[#25272b] bg-[#141519] px-2 text-[11px] text-neutral-200 outline-none focus:border-[#4772b3]"
-                            />
-                          </label>
-                          {[
-                            ["位置", "position"],
-                            ["旋转", "rotation"],
-                            ["缩放", "scale"],
-                          ].map(([label, key]) => (
-                            <div key={key}>
-                              <div className="mb-1 text-[9px] font-bold text-neutral-500">
-                                {label}
-                              </div>
-                              <div className="grid grid-cols-3 gap-1">
-                                {(["X", "Y", "Z"] as const).map((axis, index) => (
-                                  <label key={axis} className="flex h-7 items-center rounded-[4px] border border-[#25272b] bg-[#141519] px-1">
-                                    <span className="w-3 text-[9px] font-bold text-neutral-500">
-                                      {axis}
-                                    </span>
-                                    <input
-                                      type="number"
-                                      step="0.1"
-                                      value={
-                                        selectedThreeDObject?.[
-                                          key as "position" | "rotation" | "scale"
-                                        ][index] || 0
-                                      }
-                                      onChange={(event) =>
-                                        updateThreeDObjectVector(
-                                          key as "position" | "rotation" | "scale",
-                                          index,
-                                          event.target.value,
-                                        )
-                                      }
-                                      className="min-w-0 flex-1 bg-transparent text-[10px] text-neutral-200 outline-none"
-                                    />
-                                  </label>
-                                ))}
-                              </div>
-                            </div>
-                          ))}
-                          <label className="block">
-                            <span className="mb-1 block text-[9px] font-bold text-neutral-500">
-                              材质颜色
-                            </span>
-                            <div className="flex h-7 items-center gap-2 rounded-[4px] border border-[#25272b] bg-[#141519] px-2">
-                              <input
-                                type="color"
-                                value={selectedThreeDObject?.materialColor || "#b9bdc5"}
-                                disabled={selectedThreeDObject?.locked}
-                                onChange={(event) =>
-                                  updateThreeDObjectMaterialColor(event.target.value)
-                                }
-                                className="h-5 w-8 cursor-pointer rounded border-0 bg-transparent p-0 disabled:cursor-not-allowed disabled:opacity-40"
-                              />
-                              <span className="text-[10px] uppercase text-neutral-400">
-                                {selectedThreeDObject?.materialColor || "#b9bdc5"}
-                              </span>
-                            </div>
-                          </label>
-                          {selectedThreeDObject?.assetPath && (
-                            <section className="rounded-[6px] border border-[#25272b] bg-[#141519] p-2">
-                              <div className="mb-1 text-[9px] font-bold text-neutral-500">
-                                导入资产
-                              </div>
-                              <div className="space-y-1 text-[10px] text-neutral-400">
-                                <div className="truncate" title={selectedThreeDObject.assetPath}>
-                                  路径：{selectedThreeDObject.assetPath}
-                                </div>
-                                <div>
-                                  Backend：{selectedThreeDObject.importBackend || "native"}
-                                </div>
-                                <div>
-                                  三角面：{selectedThreeDObject.triangleCount || 0} · 顶点：
-                                  {selectedThreeDObject.vertexCount || 0}
-                                </div>
-                                {selectedThreeDObject.boundsSize && (
-                                  <div>
-                                    尺寸：{selectedThreeDObject.boundsSize
-                                      .map((value) => value.toFixed(2))
-                                      .join(" × ")}
-                                  </div>
-                                )}
-                                <div>
-                                  贴图：{selectedThreeDObject.hasBaseColorTexture ? "Base Color 已接入" : "无"}
-                                </div>
-                                <div>
-                                  MR 贴图：{selectedThreeDObject.hasMetallicRoughnessTexture ? "已接入" : "无"}
-                                </div>
-                                <div>
-                                  PBR：M {selectedThreeDObject.metallicFactor?.toFixed(2) ?? "0.00"} · R{" "}
-                                  {selectedThreeDObject.roughnessFactor?.toFixed(2) ?? "0.65"}
-                                </div>
-                              </div>
-                            </section>
-                          )}
-                          <div>
-                            <div className="mb-1 text-[9px] font-bold text-neutral-500">
-                              渲染器
-                            </div>
-                            <div className="h-7 rounded-[4px] border border-[#25272b] bg-[#141519] px-2 text-[11px] leading-7 text-neutral-300">
-                              Cycles / CL
-                            </div>
-                          </div>
-                        </div>
-                      </section>
-                    </div>
-                  ) : !selectedPrimaryNode ? (
+                  {!selectedPrimaryNode ? (
                     <div className="h-full min-h-[420px] rounded-xl border border-dashed border-white/10 bg-black/20 px-5 py-8 text-center flex flex-col items-center justify-center">
                       <MousePointer2 className="mb-3 h-8 w-8 text-neutral-600" />
                       <div className="text-[12px] font-black text-neutral-300">

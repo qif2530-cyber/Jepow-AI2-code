@@ -23,46 +23,13 @@ This is not a temporary implementation detail. Future changes must optimize with
 - Cycles/CL render status must expose runtime capabilities and render devices so diagnostics can distinguish CPU-ready, Metal/CL-ready, and bridge-binary-ready states.
 - Rust/wgpu viewport status must expose runtime capability flags so diagnostics can distinguish native host availability from concrete editor/rendering behavior.
 - Native viewport UI integration must use bounds-first startup and normal window level by default so the wgpu host does not flash at fallback size or cover React panels as an always-on-top window.
-- Commercial 3D workspace default must be a docked editor view; native Rust/wgpu popout windows are debug/inspection mode only and must be explicitly enabled by the user.
-- Docked 3D viewport must be interactive by default, supporting mouse orbit, pan, and zoom even before native embedding is fully productionized.
-- Docked 3D viewport must render a perspective scene preview where grid and objects share the same camera transform; selected mesh proxies must not collapse into flat 2D cards.
-- Docked 3D viewport must include a Blender-style navigation gizmo, quick axis view switching, and visible transform axis hints for selected objects.
-- Docked 3D viewport must expose a compact status strip for current projection/display mode, selected object, active tool, lock state, and snap state so icon-only controls remain understandable.
-- Docked 3D viewport header must expose object mode, transform orientation, and pivot controls so editing context matches common Blender-style 3D workflows.
-- Docked 3D viewport must show selection outlines, object origin markers, and distinguishable camera/light glyphs so scene elements are recognizable without relying on text labels alone.
-- Docked 3D viewport must render all visible scene objects at once, with selection represented as a highlight state only, so the workspace behaves like a scene editor instead of a selected-object preview card.
-- Docked 3D viewport must support object picking from the rendered scene and keep selection synchronized with the collection/properties state.
-- The 3D workspace must expose a Blender-style Transform properties panel for the selected object, including editable Location, Rotation, Scale, Dimensions, type, and lock/editability state.
-- The 3D workspace must use a Blender-style application shell with menu bar, workspace tabs, central viewport, fixed Outliner/Properties sidebar, and bottom timeline strip instead of piling all controls into viewport overlays.
-- Workspace tabs must be stateful so Layout/Modeling/Shading/Animation/Render context is visible and can later drive workspace-specific panels.
-- The Outliner must show all scene objects with type glyphs, selected-state highlighting, visibility state, and lock state while keeping object selection synchronized with the viewport.
-- The Outliner must include search/filter input and direct visibility/lock toggles so scene management works without leaving the editor workspace.
-- The Properties sidebar must host selected-object transform and object-data fields so coordinate editing lives in a persistent inspector rather than a floating HUD.
-- The Properties sidebar must use collapsible property sections so transform/object data can scale into material, physics, and render panels without becoming a single long stack.
-- The Properties sidebar must expose material controls for selected mesh/object data, including editable base color and imported texture/PBR status.
-- The Properties sidebar must expose physics controls for mesh objects, including body type, collider dimensions, mass diagnostics, and create/step/play actions wired to the Bullet/Jolt runtime bridge.
-- The Properties sidebar must expose render controls connected to Cycles/CL status and viewport shading mode so final-render context is visible from the editor.
-- Properties tabs must be stateful and filter the inspector to Tool/Object/Material/Physics/Render contexts instead of acting as decorative labels.
-- The bottom timeline/dopesheet strip must expose playback controls, frame range, current frame, and visible tick marks as the basis for animation workflows; timeline controls must update current-frame/playback state rather than acting as decorative buttons.
-- The 3D viewport must include a Blender-style viewport header with View/Select/Add/Object menus plus overlay, gizmo, and shading controls tied to actual viewport display state.
-- Header and app menu entries must open scoped Operator Search queries instead of presenting dead decorative menu labels.
-- The 3D viewport header must provide a compact quick-add command entry for mesh/camera/light objects and a compact scene statistics readout for visible objects, object type counts, and triangle totals.
-- The 3D workspace must expose mode-aware selection controls for object/vertex/edge/face workflows, plus transform orientation, pivot, axis constraint, and proportional editing state in a persistent tool settings strip.
-- The 3D workspace must include a bottom editor status bar that reports the active tool, object/edit selection mode, axis constraint, proportional editing, and common transform shortcuts.
-- Selected viewport objects must show tool-aware transform gizmo feedback: translate arrows for Move, rotation rings for Rotate, and scale handles for Scale, all controlled by the viewport Gizmo toggle.
-- Tool settings and the editor status bar must report the active gizmo mode so users can tell which transform manipulator is active without relying only on the viewport overlay.
-- The 3D workspace must expose a Blender-style 3D Cursor as a first-class tool with a visible viewport marker, editable coordinates, cursor-to-selection action, and status readout.
-- The docked viewport grid must include compact axis/space labels so users can orient scene coordinates without relying only on object overlays.
-- The 3D viewport must expose a Blender-style N sidebar with Item/Tool/View tabs for selected-object summaries, active tool/gizmo state, 3D Cursor state, and view parameters, but it must be collapsed by default so it does not duplicate the fixed Properties sidebar during normal editing.
-- The N sidebar View tab must expose editable viewport focal length and clipping range values as the basis for professional viewport camera controls.
-- The docked viewport must expose a Blender-style object context menu on right click with duplicate/delete, hide/show, lock/unlock, focus, cursor-to-selection, selection-to-cursor, and reveal-all actions.
-- The docked viewport must expose a Blender-style Operator Search command palette via F3/header trigger, with searchable add/object/view/cursor/physics/diagnostics commands that execute existing editor actions.
-- Editor toolbars should be icon-first with text relegated to tooltips/status labels, following Blender-style dense 3D editor ergonomics instead of large text-only controls.
-- Normal modeling tools, viewport controls, developer diagnostics, physics controls, and display/snap controls must be visually grouped instead of being stacked into one undifferentiated toolbar.
-- Architecture/runtime diagnostics overlays must be user-toggleable instead of permanently covering the viewport during normal editing.
-- Runtime HUD overlays must stay compact and bounded so physics/architecture diagnostics do not obscure editing controls during normal 3D workspace use.
-- The 3D workspace must keep UI probes for import pipeline, physics world creation, and physics stepping until those controls are replaced by full production panels.
-- The 3D workspace must keep a diagnostics UI for the fixed architecture until replaced by a full production diagnostics panel.
+- The primary product shell is the infinite canvas; there is no separate full-screen 3D editor tab or workspace switcher in the app header.
+- The infinite canvas keeps its scene collection and node properties sidebar for ReactFlow nodes; native 3D editing happens inside canvas nodes such as `threeDEditorNode` and `modelAssetNode`, not in a standalone Blender-style application shell.
+- Canvas node previews must use docked native Rust/wgpu viewports where available; native popout windows remain debug/inspection mode only and must be explicitly enabled by the user.
+- Docked node viewports must be interactive by default, supporting mouse orbit, pan, and zoom even before native embedding is fully productionized.
+- Docked node viewports must render perspective scene previews and keep the preview area unobstructed by duplicate app-level 3D editor chrome.
+- Canvas nodes may connect through the native 3D pipeline registry so import, viewport, Cycles, and physics data can flow between related nodes without replacing the infinite canvas as the main editor.
+- Architecture/runtime diagnostics remain available through the Electron viewport IPC surface and may be surfaced from canvas nodes until replaced by full production panels.
 - The import pipeline must keep native runtime bridging for existing `gltf/glb/fbx/obj` loaders while Assimp/USD runtime support is filled in.
 - Successful native imports must create a 3D scene object with asset metadata (`assetPath`, backend, triangle/vertex counts) until replaced by full mesh scene instancing.
 - Imported scene objects must stay visible in the native viewport through an asset proxy until full imported mesh rendering is implemented.
@@ -79,10 +46,10 @@ This is not a temporary implementation detail. Future changes must optimize with
 - Native imported GPU mesh cache must track source file modification metadata and rebuild GPU buffers when the imported asset changes on disk.
 - Native viewport scene synchronization must acknowledge `setScene`, reject invalid hidden/missing selections, and report whether transform updates actually hit a host object so React/Electron can diagnose stale IPC state; these behaviors must be exposed as viewport runtime capabilities.
 - Physics pipeline may use a minimal native runtime while Jolt/Bullet are being linked, but it must return a step-able `worldSnapshot` and deterministic gravity integration instead of placeholder-only responses.
-- The 3D workspace physics probe must be able to build physics bodies from visible mesh scene objects and apply stepped `worldSnapshot` body positions back to scene objects.
-- The 3D workspace must invalidate and rebuild the minimal physics world when collider topology changes (visible mesh set, lock state, scale, bounds), while preserving playback snapshots across pure position updates.
-- The 3D workspace must support continuous physics play/pause during the minimal runtime phase and avoid recording every playback frame into undo history.
-- The 3D workspace must expose physics reset and visible runtime stats so the minimal physics world can be rebuilt from the current scene and inspected while playing.
+- Canvas 3D editor nodes must be able to build physics bodies from visible mesh scene objects and apply stepped `worldSnapshot` body positions back to node scene state when physics controls are exposed.
+- Canvas 3D editor nodes must invalidate and rebuild the minimal physics world when collider topology changes (visible mesh set, lock state, scale, bounds), while preserving playback snapshots across pure position updates.
+- Canvas 3D editor nodes must support continuous physics play/pause during the minimal runtime phase without polluting the canvas undo history with every playback frame.
+- Canvas 3D editor nodes must expose physics reset and visible runtime stats so the minimal physics world can be rebuilt from the current scene and inspected while playing.
 - Physics pipeline status must expose native minimal runtime capability flags so diagnostics can distinguish placeholder Jolt/Bullet wiring from the current step-able simulation runtime.
 - Minimal physics runtime must report dynamic/static body counts and max collision penetration so playback stability can be diagnosed from the UI while Jolt/Bullet integration is pending.
 - Minimal physics bodies must carry restitution/friction parameters and the runtime must use them for floor/body collision response instead of hard-coded material behavior.
@@ -98,7 +65,7 @@ This is not a temporary implementation detail. Future changes must optimize with
 - Physics runtime and HUD must report total dynamic mass so collider size and material-density heuristics can be diagnosed while authoring simulation scenes.
 - Physics runtime and HUD must report dynamic center of mass and linear/angular kinetic energy so unstable simulations and drifting mass distributions can be diagnosed before full Jolt/Bullet solvers are linked.
 - The minimal physics runtime must support deterministic AABB body-body collision resolution and report `contactCount` until Jolt/Bullet replaces it.
-- The 3D workspace physics HUD and probe output must surface `contactCount` so body-body collision activity is visible during playback.
+- Canvas 3D editor node physics HUD and probe output must surface `contactCount` so body-body collision activity is visible during playback.
 - Physics bodies generated from imported `assetPath` meshes must use the same bounds normalization target as native viewport imported mesh rendering, so visible mesh size and collider size stay aligned.
 - The minimal physics runtime must support fixed substeps and damping during playback to reduce tunneling and jitter before Jolt/Bullet is linked.
 - Native import runtime must support STL as a real mesh/stats path while broader Assimp coverage is being linked.
