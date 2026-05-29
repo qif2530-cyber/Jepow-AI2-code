@@ -158,6 +158,17 @@ const workspaceTabs = ["Layout", "Modeling", "Sculpting", "UV Editing", "Shading
 const viewportHeaderMenus = ["视图", "选择", "添加", "对象"] as const;
 const propertiesTabs = ["工具", "对象", "材质", "物理", "渲染"] as const;
 const viewportSidebarTabs = ["Item", "Tool", "View"] as const;
+const menuOperatorQueries: Record<string, string> = {
+  文件: "Add",
+  编辑: "Object",
+  渲染: "Diagnostics",
+  窗口: "View",
+  帮助: "Diagnostics",
+  视图: "View",
+  选择: "Object",
+  添加: "Add",
+  对象: "Object",
+};
 const transformRows = [
   { label: "Location", field: "position" as const },
   { label: "Rotation", field: "rotation" as const },
@@ -437,11 +448,12 @@ export function ThreeDWorkspace({
   const [showDeveloperTools, setShowDeveloperTools] = useState(false);
   const [showViewportOverlays, setShowViewportOverlays] = useState(true);
   const [showViewportGizmos, setShowViewportGizmos] = useState(true);
-  const [showViewportSidebar, setShowViewportSidebar] = useState(true);
+  const [showViewportSidebar, setShowViewportSidebar] = useState(false);
   const [viewportSidebarTab, setViewportSidebarTab] = useState<(typeof viewportSidebarTabs)[number]>("Item");
   const [viewportFocalLength, setViewportFocalLength] = useState(50);
   const [viewportClipStart, setViewportClipStart] = useState(0.1);
   const [viewportClipEnd, setViewportClipEnd] = useState(1000);
+  const [timelineFrame, setTimelineFrame] = useState(1);
   const [viewportContextMenu, setViewportContextMenu] = useState<{
     x: number;
     y: number;
@@ -653,6 +665,10 @@ export function ThreeDWorkspace({
   const closeOperatorSearch = () => {
     setOperatorSearchOpen(false);
     setOperatorSearchQuery("");
+  };
+  const openOperatorSearch = (query = "") => {
+    setOperatorSearchQuery(query);
+    setOperatorSearchOpen(true);
   };
   const selectAdjacentVisibleObject = (direction: 1 | -1) => {
     const visibleObjects = objectsRef.current.filter((object) => object.visible !== false);
@@ -1330,8 +1346,7 @@ export function ThreeDWorkspace({
       }
       if (event.key === "F3") {
         event.preventDefault();
-        setOperatorSearchOpen(true);
-        setOperatorSearchQuery("");
+        openOperatorSearch();
         return;
       }
       if (event.key === "Tab") {
@@ -1650,8 +1665,9 @@ export function ThreeDWorkspace({
             <button
               key={section}
               type="button"
+              onClick={() => openOperatorSearch(menuOperatorQueries[section] || "")}
               className="rounded px-1.5 py-0.5 text-neutral-300 hover:bg-white/[0.08] hover:text-white"
-              title={`Blender-style ${section} menu`}
+              title={`打开 ${section} 相关命令`}
             >
               {section}
             </button>
@@ -1767,8 +1783,9 @@ export function ThreeDWorkspace({
                 key={item.label}
                 type="button"
                 onClick={item.action}
+                disabled={!item.action}
                 title={item.label}
-                className="grid h-5 min-w-5 place-items-center rounded-[3px] px-1.5 font-mono text-[10px] text-neutral-300 hover:bg-white/[0.08] hover:text-white"
+                className="grid h-5 min-w-5 place-items-center rounded-[3px] px-1.5 font-mono text-[10px] text-neutral-300 hover:bg-white/[0.08] hover:text-white disabled:cursor-not-allowed disabled:opacity-35"
               >
                 {actionIcons[item.label] || item.label}
               </button>
@@ -2034,8 +2051,9 @@ export function ThreeDWorkspace({
                 <button
                   key={menu}
                   type="button"
+                  onClick={() => openOperatorSearch(menuOperatorQueries[menu] || "")}
                   className="rounded px-1.5 py-0.5 hover:bg-white/[0.08] hover:text-white"
-                  title={`3D Viewport ${menu}`}
+                  title={`打开 3D Viewport ${menu} 命令`}
                 >
                   {menu}
                 </button>
@@ -2045,10 +2063,7 @@ export function ThreeDWorkspace({
               <span className="mx-1 h-4 w-px bg-white/10" />
               <button
                 type="button"
-                onClick={() => {
-                  setOperatorSearchOpen(true);
-                  setOperatorSearchQuery("");
-                }}
+                onClick={() => openOperatorSearch()}
                 className="rounded bg-black/25 px-1.5 py-0.5 text-neutral-300 hover:bg-white/[0.08] hover:text-white operator-search-trigger"
                 title="Operator Search · F3"
               >
@@ -2056,21 +2071,14 @@ export function ThreeDWorkspace({
               </button>
               <span className="mx-1 h-4 w-px bg-white/10" />
               <div className="flex items-center gap-0.5 viewport-quick-add-controls">
-                {[
-                  { label: "Mesh", type: "网格" as const },
-                  { label: "Camera", type: "相机" as const },
-                  { label: "Light", type: "灯光" as const },
-                ].map((item) => (
-                  <button
-                    key={item.label}
-                    type="button"
-                    onClick={() => onAddObject?.(item.type)}
-                    className="rounded bg-black/25 px-1.5 py-0.5 text-neutral-300 hover:bg-white/[0.08] hover:text-white"
-                    title={`Quick Add ${item.label}`}
-                  >
-                    +{item.label}
-                  </button>
-                ))}
+                <button
+                  type="button"
+                  onClick={() => openOperatorSearch("Add")}
+                  className="rounded bg-black/25 px-1.5 py-0.5 text-neutral-300 hover:bg-white/[0.08] hover:text-white"
+                  title="Quick Add · opens mesh/camera/light operators"
+                >
+                  Add...
+                </button>
               </div>
             </div>
             <div className="flex items-center gap-1">
@@ -2698,21 +2706,31 @@ export function ThreeDWorkspace({
             <span>起始 1</span>
             <span>结束 250</span>
             <div className="ml-auto flex items-center gap-1">
-              {["|<", "<", "▶", ">", ">|"].map((control) => (
+              {[
+                { label: "|<", action: () => setTimelineFrame(1) },
+                { label: "<", action: () => setTimelineFrame((frame) => Math.max(1, frame - 1)) },
+                { label: physicsPlaying ? "Ⅱ" : "▶", action: togglePhysicsPlayback },
+                { label: ">", action: () => setTimelineFrame((frame) => Math.min(250, frame + 1)) },
+                { label: ">|", action: () => setTimelineFrame(250) },
+              ].map((control) => (
                 <button
-                  key={control}
+                  key={control.label}
                   type="button"
+                  onClick={control.action}
                   className="h-4 min-w-5 rounded bg-black/25 px-1 text-[9px] text-neutral-300 hover:bg-white/[0.08]"
-                  title={`Timeline ${control}`}
+                  title={`Timeline ${control.label}`}
                 >
-                  {control}
+                  {control.label}
                 </button>
               ))}
-              <span className="ml-2">当前帧 1</span>
+              <span className="ml-2">当前帧 {timelineFrame}</span>
             </div>
           </div>
           <div className="relative h-6 rounded bg-[#1b1c1f] timeline-dopesheet-strip">
-            <div className="absolute inset-y-0 left-4 w-px bg-[#4772b3] timeline-current-frame" />
+            <div
+              className="absolute inset-y-0 w-px bg-[#4772b3] timeline-current-frame"
+              style={{ left: `${Math.min(100, Math.max(0, ((timelineFrame - 1) / 249) * 100))}%` }}
+            />
             <div className="absolute inset-x-2 top-1/2 h-px bg-white/10" />
             {Array.from({ length: 10 }).map((_, index) => (
               <div
@@ -2729,6 +2747,7 @@ export function ThreeDWorkspace({
             <span>比例编辑 {proportionalEditing ? "ON" : "OFF"}</span>
             <span>Gizmo {showViewportGizmos ? activeTool : "OFF"}</span>
             <span>Cursor {threeDCursor.map(formatTransformNumber).join("/")}</span>
+            <span>F3 搜索命令</span>
             <span className="ml-auto">LMB 选择 · Shift 多选 · G/R/S 变换 · X/Y/Z 约束</span>
           </div>
         </div>

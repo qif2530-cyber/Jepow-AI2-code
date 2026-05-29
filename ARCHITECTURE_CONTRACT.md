@@ -43,16 +43,17 @@ This is not a temporary implementation detail. Future changes must optimize with
 - The Properties sidebar must expose physics controls for mesh objects, including body type, collider dimensions, mass diagnostics, and create/step/play actions wired to the Bullet/Jolt runtime bridge.
 - The Properties sidebar must expose render controls connected to Cycles/CL status and viewport shading mode so final-render context is visible from the editor.
 - Properties tabs must be stateful and filter the inspector to Tool/Object/Material/Physics/Render contexts instead of acting as decorative labels.
-- The bottom timeline/dopesheet strip must expose playback controls, frame range, current frame, and visible tick marks as the basis for animation workflows.
+- The bottom timeline/dopesheet strip must expose playback controls, frame range, current frame, and visible tick marks as the basis for animation workflows; timeline controls must update current-frame/playback state rather than acting as decorative buttons.
 - The 3D viewport must include a Blender-style viewport header with View/Select/Add/Object menus plus overlay, gizmo, and shading controls tied to actual viewport display state.
-- The 3D viewport header must provide quick-add controls for mesh/camera/light objects and a compact scene statistics readout for visible objects, object type counts, and triangle totals.
+- Header and app menu entries must open scoped Operator Search queries instead of presenting dead decorative menu labels.
+- The 3D viewport header must provide a compact quick-add command entry for mesh/camera/light objects and a compact scene statistics readout for visible objects, object type counts, and triangle totals.
 - The 3D workspace must expose mode-aware selection controls for object/vertex/edge/face workflows, plus transform orientation, pivot, axis constraint, and proportional editing state in a persistent tool settings strip.
 - The 3D workspace must include a bottom editor status bar that reports the active tool, object/edit selection mode, axis constraint, proportional editing, and common transform shortcuts.
 - Selected viewport objects must show tool-aware transform gizmo feedback: translate arrows for Move, rotation rings for Rotate, and scale handles for Scale, all controlled by the viewport Gizmo toggle.
 - Tool settings and the editor status bar must report the active gizmo mode so users can tell which transform manipulator is active without relying only on the viewport overlay.
 - The 3D workspace must expose a Blender-style 3D Cursor as a first-class tool with a visible viewport marker, editable coordinates, cursor-to-selection action, and status readout.
 - The docked viewport grid must include compact axis/space labels so users can orient scene coordinates without relying only on object overlays.
-- The 3D viewport must expose a Blender-style N sidebar with Item/Tool/View tabs for selected-object summaries, active tool/gizmo state, 3D Cursor state, and view parameters.
+- The 3D viewport must expose a Blender-style N sidebar with Item/Tool/View tabs for selected-object summaries, active tool/gizmo state, 3D Cursor state, and view parameters, but it must be collapsed by default so it does not duplicate the fixed Properties sidebar during normal editing.
 - The N sidebar View tab must expose editable viewport focal length and clipping range values as the basis for professional viewport camera controls.
 - The docked viewport must expose a Blender-style object context menu on right click with duplicate/delete, hide/show, lock/unlock, focus, cursor-to-selection, selection-to-cursor, and reveal-all actions.
 - The docked viewport must expose a Blender-style Operator Search command palette via F3/header trigger, with searchable add/object/view/cursor/physics/diagnostics commands that execute existing editor actions.

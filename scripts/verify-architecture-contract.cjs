@@ -59,7 +59,7 @@ assert(
 );
 assert(viewportIpc.includes('UI_RUNTIME_CAPABILITIES'), 'viewport-ipc must expose UI runtime capabilities.');
 assert(viewportIpc.includes('uiRuntimeCapabilities'), 'viewport-ipc must include UI runtime capabilities in status.');
-for (const expected of ['compact-runtime-hud', 'bounds-first-native-viewport-start', 'docked-commercial-viewport-default', 'manual-runtime-diagnostics-overlay', 'interactive-docked-viewport-controls', 'icon-first-editor-toolbar', 'blender-style-toolbar-groups', 'perspective-docked-scene-preview', 'viewport-navigation-gizmo', 'viewport-tool-status-strip', 'transform-axis-hints', 'object-mode-orientation-pivot-controls', 'selection-outline-origin-markers', 'camera-light-viewport-glyphs', 'full-scene-docked-object-rendering', 'transform-properties-panel', 'docked-scene-object-picking', 'blender-style-application-shell', 'workspace-tab-strip', 'outliner-properties-sidebar', 'timeline-dopesheet-strip', 'viewport-header-overlay-gizmo-shading-controls', 'outliner-search-visibility-lock-controls', 'properties-collapsible-sections', 'material-physics-render-property-panels', 'editable-material-base-color', 'physics-property-actions', 'render-shading-property-controls', 'mode-aware-selection-tool-settings', 'axis-constraint-proportional-editing-controls', 'editor-status-feedback-bar', 'stateful-workspace-tabs', 'stateful-properties-editor-tabs', 'viewport-quick-add-scene-stats', 'three-d-cursor-tool-and-marker', 'editable-three-d-cursor-coordinates', 'grid-axis-space-labels', 'tool-aware-transform-gizmo', 'gizmo-mode-status-feedback', 'viewport-n-sidebar-panels', 'viewport-view-parameter-controls', 'viewport-object-context-menu', 'context-menu-cursor-selection-actions', 'operator-search-command-palette', 'f3-operator-search-hotkey']) {
+for (const expected of ['compact-runtime-hud', 'bounds-first-native-viewport-start', 'docked-commercial-viewport-default', 'manual-runtime-diagnostics-overlay', 'interactive-docked-viewport-controls', 'icon-first-editor-toolbar', 'blender-style-toolbar-groups', 'perspective-docked-scene-preview', 'viewport-navigation-gizmo', 'viewport-tool-status-strip', 'transform-axis-hints', 'object-mode-orientation-pivot-controls', 'selection-outline-origin-markers', 'camera-light-viewport-glyphs', 'full-scene-docked-object-rendering', 'transform-properties-panel', 'docked-scene-object-picking', 'blender-style-application-shell', 'workspace-tab-strip', 'outliner-properties-sidebar', 'timeline-dopesheet-strip', 'viewport-header-overlay-gizmo-shading-controls', 'outliner-search-visibility-lock-controls', 'properties-collapsible-sections', 'material-physics-render-property-panels', 'editable-material-base-color', 'physics-property-actions', 'render-shading-property-controls', 'mode-aware-selection-tool-settings', 'axis-constraint-proportional-editing-controls', 'editor-status-feedback-bar', 'stateful-workspace-tabs', 'stateful-properties-editor-tabs', 'viewport-quick-add-scene-stats', 'menu-backed-operator-search', 'timeline-frame-controls', 'three-d-cursor-tool-and-marker', 'editable-three-d-cursor-coordinates', 'grid-axis-space-labels', 'tool-aware-transform-gizmo', 'gizmo-mode-status-feedback', 'viewport-n-sidebar-panels', 'default-collapsed-n-sidebar', 'viewport-view-parameter-controls', 'viewport-object-context-menu', 'context-menu-cursor-selection-actions', 'operator-search-command-palette', 'f3-operator-search-hotkey']) {
   assert(viewportIpc.includes(expected), `viewport-ipc missing UI stability capability: ${expected}`);
 }
 assert(viewportIpc.includes('VIEWPORT_RUNTIME_CAPABILITIES'), 'viewport-ipc must expose viewport runtime capabilities.');
@@ -243,6 +243,7 @@ for (const expected of [
   'setShowViewportGizmos',
   'showViewportSidebar',
   'setShowViewportSidebar',
+  'useState(false)',
   'viewportSidebarTab',
   'setViewportSidebarTab',
   'viewportFocalLength',
@@ -261,6 +262,8 @@ for (const expected of [
   'operatorSearchQuery',
   'setOperatorSearchQuery',
   'closeOperatorSearch',
+  'openOperatorSearch',
+  'menuOperatorQueries',
   'operatorCommands',
   'filteredOperatorCommands',
   'runOperatorCommand',
@@ -297,6 +300,7 @@ for (const expected of [
   'Clip End',
   'Focal',
   'viewport-quick-add-controls',
+  'Add...',
   'viewport-scene-stats',
   'three-d-cursor-marker',
   'three-d-cursor-properties',
@@ -310,6 +314,8 @@ for (const expected of [
   'blender-tool-settings-strip',
   'blender-axis-constraint-control',
   'blender-status-timeline-area',
+  'timelineFrame',
+  'setTimelineFrame',
   'blender-status-bar',
   'outliner-search-filter',
   'properties-collapsible-section',
