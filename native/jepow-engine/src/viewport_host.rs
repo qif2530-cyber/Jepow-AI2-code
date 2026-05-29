@@ -1037,7 +1037,7 @@ impl HostApp {
             .with_decorations(false)
             .with_visible(self.visible)
             .with_resizable(false)
-            .with_window_level(WindowLevel::AlwaysOnTop)
+            .with_window_level(WindowLevel::Normal)
             .with_inner_size(size);
         let window = match event_loop.create_window(attrs) {
             Ok(window) => Arc::new(window),

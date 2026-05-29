@@ -59,9 +59,12 @@ assert(
 );
 assert(viewportIpc.includes('UI_RUNTIME_CAPABILITIES'), 'viewport-ipc must expose UI runtime capabilities.');
 assert(viewportIpc.includes('uiRuntimeCapabilities'), 'viewport-ipc must include UI runtime capabilities in status.');
+for (const expected of ['compact-runtime-hud', 'bounds-first-native-viewport-start']) {
+  assert(viewportIpc.includes(expected), `viewport-ipc missing UI stability capability: ${expected}`);
+}
 assert(viewportIpc.includes('VIEWPORT_RUNTIME_CAPABILITIES'), 'viewport-ipc must expose viewport runtime capabilities.');
 assert(viewportIpc.includes('viewportRuntimeCapabilities'), 'viewport-ipc must include viewport runtime capabilities in status.');
-for (const expected of ['scene-sync-acknowledgement', 'selection-validation', 'transform-hit-diagnostics']) {
+for (const expected of ['scene-sync-acknowledgement', 'selection-validation', 'transform-hit-diagnostics', 'normal-window-level-viewport']) {
   assert(viewportIpc.includes(expected), `viewport-ipc missing viewport sync runtime capability: ${expected}`);
 }
 assert(viewportIpc.includes('cyclesRuntimeCapabilities'), 'viewport-ipc must expose cycles runtime capabilities.');
@@ -181,6 +184,10 @@ for (const expected of [
   'deepestContactLabel',
   'wokenBodyCount',
   'physicsContactLabel',
+  'readHostBounds',
+  'alwaysOnTop: false',
+  'max-h-[34vh]',
+  'max-w-[min(680px,calc(100%-24px))]',
   'movingBodyCount',
   'rotatingBodyCount',
   'totalDynamicMass',
@@ -289,6 +296,7 @@ for (const expected of [
   'selectedObjectId',
   'selectionAccepted',
   'transformApplied',
+  'WindowLevel::Normal',
 ]) {
   assert(viewportHost.includes(expected), `viewport host missing imported asset metadata: ${expected}`);
 }

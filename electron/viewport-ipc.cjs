@@ -34,6 +34,8 @@ const UI_RUNTIME_CAPABILITIES = Object.freeze([
   'scene-collection-and-properties',
   'native-status-polling',
   'runtime-capability-badges',
+  'compact-runtime-hud',
+  'bounds-first-native-viewport-start',
 ]);
 
 const VIEWPORT_RUNTIME_CAPABILITIES = Object.freeze([
@@ -50,6 +52,7 @@ const VIEWPORT_RUNTIME_CAPABILITIES = Object.freeze([
   'scene-sync-acknowledgement',
   'selection-validation',
   'transform-hit-diagnostics',
+  'normal-window-level-viewport',
 ]);
 
 function normalizeScenePath(scenePath) {

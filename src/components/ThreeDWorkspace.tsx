@@ -902,24 +902,29 @@ export function ThreeDWorkspace({
     }
 
     let stopped = false;
-    const updateBounds = () => {
+    const readHostBounds = () => {
       const rect = mountRef.current?.getBoundingClientRect();
-      if (!rect || rect.width <= 4 || rect.height <= 4) return;
+      if (!rect || rect.width <= 4 || rect.height <= 4) return null;
       const chromeX = Math.max(0, (window.outerWidth - window.innerWidth) / 2);
       const chromeY = Math.max(0, window.outerHeight - window.innerHeight - chromeX);
-      const bounds = {
+      return {
         x: Math.round(window.screenX + chromeX + rect.left),
         y: Math.round(window.screenY + chromeY + rect.top),
         width: Math.round(rect.width),
         height: Math.round(rect.height),
         scaleFactor: window.devicePixelRatio || 1,
-        alwaysOnTop: true,
+        alwaysOnTop: false,
       };
+    };
+    const updateBounds = () => {
+      const bounds = readHostBounds();
+      if (!bounds) return;
       host.setBounds(bounds).catch(() => undefined);
     };
 
+    const initialBounds = readHostBounds();
     host
-      .start({ visible: true })
+      .start({ bounds: initialBounds || undefined, visible: !!initialBounds })
       .then((result) => {
         if (stopped) return;
         if (!result.ok) {
@@ -929,6 +934,7 @@ export function ThreeDWorkspace({
         setHostReady(true);
         setHostError(null);
         updateBounds();
+        host.setVisible(true).catch(() => undefined);
       })
       .catch((error) => {
         if (!stopped) setHostError(error?.message || "原生视窗启动失败");
@@ -1402,7 +1408,7 @@ export function ThreeDWorkspace({
             原生透视 · Collection | {selectedObject?.name || "对象"} · {activeTool}
           </div>
           {nativeStatus?.architecture && (
-            <div className="pointer-events-none absolute left-3 top-10 max-w-[560px] rounded bg-black/35 px-2 py-1 text-[10px] text-neutral-300 backdrop-blur">
+            <div className="pointer-events-none absolute left-3 top-10 max-h-[34vh] max-w-[560px] overflow-hidden rounded bg-black/35 px-2 py-1 text-[10px] text-neutral-300 backdrop-blur">
               <div className="mb-1 font-bold text-neutral-200">
                 架构状态 ·{" "}
                 {nativeStatus.architectureProductionReady
@@ -1605,22 +1611,27 @@ export function ThreeDWorkspace({
             </div>
           )}
           {(physicsStats || physicsPlaying) && (
-            <div className="pointer-events-none absolute left-3 top-[158px] rounded border border-sky-400/20 bg-black/45 px-2 py-1 text-[10px] text-sky-100 backdrop-blur">
-              物理 runtime · {physicsPlaying ? "播放中" : "暂停"} · bodies{" "}
-              {physicsStats?.bodyCount ?? 0} · dynamic {physicsStats?.dynamicBodyCount ?? 0} · static{" "}
-              {physicsStats?.staticBodyCount ?? 0} · moving {physicsStats?.movingBodyCount ?? 0} · rotating{" "}
-              {physicsStats?.rotatingBodyCount ?? 0} · mass {(physicsStats?.totalDynamicMass ?? 0).toFixed(1)} · sleep{" "}
-              {physicsStats?.sleepingBodyCount ?? 0} · grounded {physicsStats?.groundedBodyCount ?? 0} · floor{" "}
-              {physicsStats?.floorContactCount ?? 0} · step{" "}
-              {physicsStats?.stepCount ?? 0} · t{" "}
-              {(physicsStats?.time ?? 0).toFixed(2)}s · contacts {physicsStats?.contactCount ?? 0} · pairs{" "}
-              {physicsStats?.contactPairCount ?? 0} · wake {physicsStats?.wokenBodyCount ?? 0} · pen{" "}
-              {(physicsStats?.maxPenetration ?? 0).toFixed(3)} · com{" "}
-              {(physicsStats?.centerOfMass ?? [0, 0, 0]).map((value) => value.toFixed(1)).join("/")} · E{" "}
-              {((physicsStats?.kineticEnergy ?? 0) + (physicsStats?.angularEnergy ?? 0)).toFixed(2)} · vmax{" "}
-              {(physicsStats?.maxLinearSpeed ?? 0).toFixed(1)} · wmax{" "}
-              {(physicsStats?.maxAngularSpeed ?? 0).toFixed(1)}
-              {physicsStats?.deepestContactLabel ? ` · deep ${physicsStats.deepestContactLabel}` : ""}
+            <div className="pointer-events-none absolute left-3 top-[158px] max-w-[min(680px,calc(100%-24px))] rounded border border-sky-400/20 bg-black/45 px-2 py-1 text-[10px] leading-4 text-sky-100 backdrop-blur">
+              <div className="font-bold">
+                物理 runtime · {physicsPlaying ? "播放中" : "暂停"} · bodies{" "}
+                {physicsStats?.bodyCount ?? 0} · dynamic {physicsStats?.dynamicBodyCount ?? 0} · static{" "}
+                {physicsStats?.staticBodyCount ?? 0} · sleep {physicsStats?.sleepingBodyCount ?? 0}
+              </div>
+              <div className="text-sky-100/85">
+                moving {physicsStats?.movingBodyCount ?? 0} · rotating {physicsStats?.rotatingBodyCount ?? 0} · grounded{" "}
+                {physicsStats?.groundedBodyCount ?? 0} · floor {physicsStats?.floorContactCount ?? 0} · contacts{" "}
+                {physicsStats?.contactCount ?? 0} · pairs {physicsStats?.contactPairCount ?? 0} · wake{" "}
+                {physicsStats?.wokenBodyCount ?? 0}
+              </div>
+              <div className="text-sky-100/75">
+                t {(physicsStats?.time ?? 0).toFixed(2)}s · pen {(physicsStats?.maxPenetration ?? 0).toFixed(3)} · mass{" "}
+                {(physicsStats?.totalDynamicMass ?? 0).toFixed(1)} · com{" "}
+                {(physicsStats?.centerOfMass ?? [0, 0, 0]).map((value) => value.toFixed(1)).join("/")} · E{" "}
+                {((physicsStats?.kineticEnergy ?? 0) + (physicsStats?.angularEnergy ?? 0)).toFixed(2)} · vmax{" "}
+                {(physicsStats?.maxLinearSpeed ?? 0).toFixed(1)} · wmax{" "}
+                {(physicsStats?.maxAngularSpeed ?? 0).toFixed(1)}
+                {physicsStats?.deepestContactLabel ? ` · deep ${physicsStats.deepestContactLabel}` : ""}
+              </div>
             </div>
           )}
           {diagnostics?.checks && (
@@ -1664,8 +1675,9 @@ export function ThreeDWorkspace({
               </div>
             </div>
           )}
-          <div className="pointer-events-none absolute bottom-3 left-3 rounded bg-black/35 px-2 py-1 text-[10px] text-neutral-300 backdrop-blur">
-            Ctrl+L 锁定 · 方向键微移 · Alt+方向旋转 · [/] 缩放 · Shift+A/C/L 添加 · Tab 切对象 · Z/Alt+Z 显示 · H/Alt+H 显隐 · / 隔离
+          <div className="pointer-events-none absolute bottom-3 left-3 max-w-[calc(100%-24px)] rounded bg-black/35 px-2 py-1 text-[10px] leading-4 text-neutral-300 backdrop-blur">
+            Ctrl+L 锁定 · 方向键微移 · Alt+方向旋转 · [/] 缩放 · Shift+A/C/L 添加 · Tab 切对象 ·
+            Z/Alt+Z 显示 · H/Alt+H 显隐 · / 隔离
           </div>
           {!hostReady && (
             <div className="absolute inset-0 grid place-items-center bg-[#30343a] text-center">
