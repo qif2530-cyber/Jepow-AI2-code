@@ -38,6 +38,8 @@ const UI_RUNTIME_CAPABILITIES = Object.freeze([
   'bounds-first-native-viewport-start',
   'docked-commercial-viewport-default',
   'manual-runtime-diagnostics-overlay',
+  'interactive-docked-viewport-controls',
+  'icon-first-editor-toolbar',
 ]);
 
 const VIEWPORT_RUNTIME_CAPABILITIES = Object.freeze([

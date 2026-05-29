@@ -24,6 +24,8 @@ This is not a temporary implementation detail. Future changes must optimize with
 - Rust/wgpu viewport status must expose runtime capability flags so diagnostics can distinguish native host availability from concrete editor/rendering behavior.
 - Native viewport UI integration must use bounds-first startup and normal window level by default so the wgpu host does not flash at fallback size or cover React panels as an always-on-top window.
 - Commercial 3D workspace default must be a docked editor view; native Rust/wgpu popout windows are debug/inspection mode only and must be explicitly enabled by the user.
+- Docked 3D viewport must be interactive by default, supporting mouse orbit, pan, and zoom even before native embedding is fully productionized.
+- Editor toolbars should be icon-first with text relegated to tooltips/status labels, following Blender-style dense 3D editor ergonomics instead of large text-only controls.
 - Architecture/runtime diagnostics overlays must be user-toggleable instead of permanently covering the viewport during normal editing.
 - Runtime HUD overlays must stay compact and bounded so physics/architecture diagnostics do not obscure editing controls during normal 3D workspace use.
 - The 3D workspace must keep UI probes for import pipeline, physics world creation, and physics stepping until those controls are replaced by full production panels.

@@ -183,6 +183,57 @@ const typeColor: Record<ThreeDObject["type"], string> = {
   灯光: "text-yellow-300",
 };
 
+const toolIcons: Record<string, string> = {
+  选择: "⌖",
+  移动: "↔",
+  旋转: "⟳",
+  缩放: "□",
+  游走: "⌁",
+  测量: "⌇",
+  注释: "✎",
+};
+
+const viewIcons: Record<string, string> = {
+  前: "F",
+  后: "B",
+  右: "R",
+  左: "L",
+  顶: "T",
+  底: "D",
+  透: "P",
+};
+
+const actionIcons: Record<string, string> = {
+  网格: "▣",
+  相机: "▱",
+  灯光: "✦",
+  复制: "⧉",
+  删除: "⌫",
+  聚焦: "◎",
+  重置: "↺",
+  撤销: "↶",
+  重做: "↷",
+  架构诊断: "◆",
+  诊断层: "◈",
+  弹出原生: "▤",
+  收回原生: "▥",
+  架构自检: "✓",
+  导入管线: "⇣",
+  物理世界: "⬡",
+  物理步进: "▶",
+  物理播放: "▷",
+  物理暂停: "Ⅱ",
+  物理重置: "↻",
+  吸附: "⌁",
+};
+
+const displayIcons: Record<string, string> = {
+  线框: "◇",
+  实体: "●",
+  材质: "◐",
+  CL: "CL",
+};
+
 const toHostObjects = (objects: ThreeDObject[]) =>
   objects.map((object) => ({
     id: object.id,
@@ -326,6 +377,7 @@ export function ThreeDWorkspace({
   const physicsColliderSignatureRef = useRef("");
   const hostSceneReadyRef = useRef(false);
   const hostSceneEpochRef = useRef(0);
+  const dockedDragRef = useRef<{ button: number; x: number; y: number } | null>(null);
   const objectsRef = useRef(objects);
   const [activeTool, setActiveTool] = useState("选择");
   const [displayMode, setDisplayMode] = useState("CL");
@@ -344,6 +396,13 @@ export function ThreeDWorkspace({
   const [hostError, setHostError] = useState<string | null>(null);
   const [nativeViewportPopout, setNativeViewportPopout] = useState(false);
   const [showRuntimeOverlay, setShowRuntimeOverlay] = useState(false);
+  const [dockedCamera, setDockedCamera] = useState({
+    yaw: -38,
+    pitch: 58,
+    zoom: 1,
+    panX: 0,
+    panY: 0,
+  });
   const selectedObject = useMemo(
     () => objects.find((object) => object.id === selectedObjectId) || objects[0],
     [objects, selectedObjectId],
@@ -393,7 +452,16 @@ export function ThreeDWorkspace({
   }, [objects]);
   const applyViewPreset = (preset: keyof typeof viewPresets) => {
     const nextProjection = viewPresets[preset].projection;
+    const presetCamera = viewPresets[preset];
     setCameraProjection(nextProjection);
+    setDockedCamera((camera) => ({
+      ...camera,
+      yaw: (presetCamera.yaw * 180) / Math.PI - 38,
+      pitch: Math.max(-78, Math.min(78, (presetCamera.pitch * 180) / Math.PI + 28)),
+      zoom: preset === "透" ? 1 : camera.zoom,
+      panX: 0,
+      panY: 0,
+    }));
     window.jepowDesktop?.viewportHost?.setCamera?.({
       ...viewPresets[preset],
       distance: viewPresets[preset].distance || 7,
@@ -408,6 +476,48 @@ export function ThreeDWorkspace({
       projection: nextProjection,
       speed: activeTool === "游走" ? 1.65 : 1,
     });
+  };
+  const resetDockedView = () => {
+    setDockedCamera({ yaw: -38, pitch: 58, zoom: 1, panX: 0, panY: 0 });
+  };
+  const onDockedViewportPointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (nativeViewportPopout) return;
+    event.preventDefault();
+    dockedDragRef.current = { button: event.button, x: event.clientX, y: event.clientY };
+    event.currentTarget.setPointerCapture(event.pointerId);
+  };
+  const onDockedViewportPointerMove = (event: React.PointerEvent<HTMLDivElement>) => {
+    const drag = dockedDragRef.current;
+    if (!drag || nativeViewportPopout) return;
+    const dx = event.clientX - drag.x;
+    const dy = event.clientY - drag.y;
+    dockedDragRef.current = { ...drag, x: event.clientX, y: event.clientY };
+    setDockedCamera((camera) => {
+      if (drag.button === 1 || drag.button === 2 || event.altKey) {
+        return {
+          ...camera,
+          panX: camera.panX + dx,
+          panY: camera.panY + dy,
+        };
+      }
+      return {
+        ...camera,
+        yaw: camera.yaw + dx * 0.45,
+        pitch: Math.max(-78, Math.min(78, camera.pitch - dy * 0.35)),
+      };
+    });
+  };
+  const onDockedViewportPointerUp = (event: React.PointerEvent<HTMLDivElement>) => {
+    dockedDragRef.current = null;
+    event.currentTarget.releasePointerCapture(event.pointerId);
+  };
+  const onDockedViewportWheel = (event: React.WheelEvent<HTMLDivElement>) => {
+    if (nativeViewportPopout) return;
+    event.preventDefault();
+    setDockedCamera((camera) => ({
+      ...camera,
+      zoom: Math.max(0.45, Math.min(2.8, camera.zoom - event.deltaY * 0.0015)),
+    }));
   };
   const cycleDisplayMode = () => {
     setDisplayMode((current) => {
@@ -1225,7 +1335,7 @@ export function ThreeDWorkspace({
                 : "text-neutral-400 hover:bg-[#34363a] hover:text-white"
             }`}
           >
-            {label.slice(0, 1)}
+            {toolIcons[label] || label.slice(0, 1)}
           </button>
         ))}
       </div>
@@ -1238,23 +1348,23 @@ export function ThreeDWorkspace({
                 key={item}
                 type="button"
                 onClick={() => applyViewPreset(item)}
-                className="rounded-[3px] px-2 py-0.5 text-neutral-300 hover:bg-white/[0.08] hover:text-white"
-                title="小键盘 1/3/7，Ctrl+1/3/7 反向视图，5 切换投影"
+                className="grid h-5 min-w-5 place-items-center rounded-[3px] px-1.5 font-mono text-[10px] text-neutral-300 hover:bg-white/[0.08] hover:text-white"
+                title={`${item}视图 · 小键盘 1/3/7，Ctrl+1/3/7 反向视图`}
               >
-                {item}
+                {viewIcons[item]}
               </button>
             ))}
             <button
               type="button"
               onClick={toggleProjection}
-              className={`rounded-[3px] px-2 py-0.5 ${
+              className={`grid h-5 min-w-5 place-items-center rounded-[3px] px-1.5 font-mono text-[10px] ${
                 cameraProjection === "orthographic"
                   ? "bg-[#4772b3] text-white"
                   : "text-neutral-300 hover:bg-white/[0.08] hover:text-white"
               }`}
               title="小键盘 5 切换正交/透视"
             >
-              正交
+              ⊥
             </button>
             {[
               { label: "网格", action: () => onAddObject?.("网格") },
@@ -1269,131 +1379,132 @@ export function ThreeDWorkspace({
                 key={item.label}
                 type="button"
                 onClick={item.action}
-                className="rounded-[3px] px-2 py-0.5 text-neutral-300 hover:bg-white/[0.08] hover:text-white"
+                title={item.label}
+                className="grid h-5 min-w-5 place-items-center rounded-[3px] px-1.5 font-mono text-[10px] text-neutral-300 hover:bg-white/[0.08] hover:text-white"
               >
-                {item.label}
+                {actionIcons[item.label] || item.label}
               </button>
             ))}
             <button
               type="button"
               onClick={onUndo}
               disabled={!canUndo}
-              className="rounded-[3px] px-2 py-0.5 text-neutral-300 hover:bg-white/[0.08] hover:text-white disabled:cursor-not-allowed disabled:opacity-35"
-              title="Ctrl/Cmd+Z"
+              className="grid h-5 min-w-5 place-items-center rounded-[3px] px-1.5 font-mono text-[10px] text-neutral-300 hover:bg-white/[0.08] hover:text-white disabled:cursor-not-allowed disabled:opacity-35"
+              title="撤销 · Ctrl/Cmd+Z"
             >
-              撤销
+              {actionIcons["撤销"]}
             </button>
             <button
               type="button"
               onClick={onRedo}
               disabled={!canRedo}
-              className="rounded-[3px] px-2 py-0.5 text-neutral-300 hover:bg-white/[0.08] hover:text-white disabled:cursor-not-allowed disabled:opacity-35"
-              title="Ctrl/Cmd+Shift+Z"
+              className="grid h-5 min-w-5 place-items-center rounded-[3px] px-1.5 font-mono text-[10px] text-neutral-300 hover:bg-white/[0.08] hover:text-white disabled:cursor-not-allowed disabled:opacity-35"
+              title="重做 · Ctrl/Cmd+Shift+Z"
             >
-              重做
+              {actionIcons["重做"]}
             </button>
             <button
               type="button"
               onClick={runArchitectureDiagnostics}
               disabled={pipelineBusy !== null}
-              className="rounded-[3px] px-2 py-0.5 text-emerald-200 hover:bg-emerald-400/10 hover:text-white disabled:cursor-wait disabled:opacity-50"
+              className="grid h-5 min-w-5 place-items-center rounded-[3px] px-1.5 font-mono text-[10px] text-emerald-200 hover:bg-emerald-400/10 hover:text-white disabled:cursor-wait disabled:opacity-50"
               title="聚合 native/Cycles/import/physics 架构诊断报告"
             >
-              架构诊断
+              {actionIcons["架构诊断"]}
             </button>
             <button
               type="button"
               onClick={() => setShowRuntimeOverlay((current) => !current)}
-              className={`rounded-[3px] px-2 py-0.5 ${
+              className={`grid h-5 min-w-5 place-items-center rounded-[3px] px-1.5 font-mono text-[10px] ${
                 showRuntimeOverlay
                   ? "bg-emerald-500/25 text-white"
                   : "text-emerald-200 hover:bg-emerald-400/10 hover:text-white"
               }`}
               title="显示/隐藏运行时诊断叠层"
             >
-              诊断层
+              {actionIcons["诊断层"]}
             </button>
             <button
               type="button"
               onClick={() => setNativeViewportPopout((current) => !current)}
-              className={`rounded-[3px] px-2 py-0.5 ${
+              className={`grid h-5 min-w-5 place-items-center rounded-[3px] px-1.5 font-mono text-[10px] ${
                 nativeViewportPopout
                   ? "bg-sky-500/25 text-white"
                   : "text-sky-200 hover:bg-sky-400/10 hover:text-white"
               }`}
               title="调试模式：弹出 Rust/wgpu 原生视窗。商业默认视图保持停靠式。"
             >
-              {nativeViewportPopout ? "收回原生" : "弹出原生"}
+              {nativeViewportPopout ? actionIcons["收回原生"] : actionIcons["弹出原生"]}
             </button>
             <button
               type="button"
               onClick={probeArchitectureSelfTest}
               disabled={pipelineBusy !== null}
-              className="rounded-[3px] px-2 py-0.5 text-emerald-200 hover:bg-emerald-400/10 hover:text-white disabled:cursor-wait disabled:opacity-50"
+              className="grid h-5 min-w-5 place-items-center rounded-[3px] px-1.5 font-mono text-[10px] text-emerald-200 hover:bg-emerald-400/10 hover:text-white disabled:cursor-wait disabled:opacity-50"
               title="从 React/Electron 调用 Rust 架构自检"
             >
-              架构自检
+              {actionIcons["架构自检"]}
             </button>
             <button
               type="button"
               onClick={probeImportPipeline}
               disabled={pipelineBusy !== null}
-              className="rounded-[3px] px-2 py-0.5 text-blue-200 hover:bg-blue-400/10 hover:text-white disabled:cursor-wait disabled:opacity-50"
+              className="grid h-5 min-w-5 place-items-center rounded-[3px] px-1.5 font-mono text-[10px] text-blue-200 hover:bg-blue-400/10 hover:text-white disabled:cursor-wait disabled:opacity-50"
               title="调用 Assimp/USD 导入管线占位接口"
             >
-              导入管线
+              {actionIcons["导入管线"]}
             </button>
             <button
               type="button"
               onClick={probePhysicsWorld}
               disabled={pipelineBusy !== null}
-              className="rounded-[3px] px-2 py-0.5 text-blue-200 hover:bg-blue-400/10 hover:text-white disabled:cursor-wait disabled:opacity-50"
+              className="grid h-5 min-w-5 place-items-center rounded-[3px] px-1.5 font-mono text-[10px] text-blue-200 hover:bg-blue-400/10 hover:text-white disabled:cursor-wait disabled:opacity-50"
               title="调用 Bullet/Jolt 创建物理世界接口"
             >
-              物理世界
+              {actionIcons["物理世界"]}
             </button>
             <button
               type="button"
               onClick={probePhysicsStep}
               disabled={pipelineBusy !== null}
-              className="rounded-[3px] px-2 py-0.5 text-blue-200 hover:bg-blue-400/10 hover:text-white disabled:cursor-wait disabled:opacity-50"
+              className="grid h-5 min-w-5 place-items-center rounded-[3px] px-1.5 font-mono text-[10px] text-blue-200 hover:bg-blue-400/10 hover:text-white disabled:cursor-wait disabled:opacity-50"
               title="调用 Bullet/Jolt 物理步进接口"
             >
-              物理步进
+              {actionIcons["物理步进"]}
             </button>
             <button
               type="button"
               onClick={togglePhysicsPlayback}
               disabled={pipelineBusy !== null}
-              className={`rounded-[3px] px-2 py-0.5 ${
+              className={`grid h-5 min-w-5 place-items-center rounded-[3px] px-1.5 font-mono text-[10px] ${
                 physicsPlaying
                   ? "bg-blue-500/25 text-white"
                   : "text-blue-200 hover:bg-blue-400/10 hover:text-white"
               } disabled:cursor-wait disabled:opacity-50`}
               title="连续播放/暂停 native 物理模拟"
             >
-              {physicsPlaying ? "物理暂停" : "物理播放"}
+              {physicsPlaying ? actionIcons["物理暂停"] : actionIcons["物理播放"]}
             </button>
             <button
               type="button"
               onClick={resetPhysicsWorld}
               disabled={pipelineBusy !== null}
-              className="rounded-[3px] px-2 py-0.5 text-blue-200 hover:bg-blue-400/10 hover:text-white disabled:cursor-wait disabled:opacity-50"
+              className="grid h-5 min-w-5 place-items-center rounded-[3px] px-1.5 font-mono text-[10px] text-blue-200 hover:bg-blue-400/10 hover:text-white disabled:cursor-wait disabled:opacity-50"
               title="从当前场景对象重新生成 native 物理世界"
             >
-              物理重置
+              {actionIcons["物理重置"]}
             </button>
           </div>
           <div className="flex items-center gap-1 rounded-[3px] bg-[#252629] p-0.5">
             <button
               type="button"
               onClick={() => setSnapEnabled((current) => !current)}
-              className={`h-5 rounded-[3px] px-2 text-[10px] font-bold ${
+              className={`grid h-5 min-w-5 place-items-center rounded-[3px] px-1.5 font-mono text-[10px] font-bold ${
                 snapEnabled ? "bg-[#4772b3] text-white" : "text-neutral-400"
               }`}
               title="Shift+S 切换网格吸附"
             >
-              吸附
+              {actionIcons["吸附"]}
             </button>
             <select
               value={snapStep}
@@ -1415,13 +1526,26 @@ export function ThreeDWorkspace({
                   displayMode === item ? "bg-[#4772b3] text-white" : "text-neutral-400"
                 }`}
               >
-                {item}
+                {displayIcons[item] || item}
               </button>
             ))}
           </div>
         </div>
 
-        <div ref={mountRef} className="relative min-h-0 flex-1 overflow-hidden bg-[#30343a]">
+        <div
+          ref={mountRef}
+          onPointerDown={onDockedViewportPointerDown}
+          onPointerMove={onDockedViewportPointerMove}
+          onPointerUp={onDockedViewportPointerUp}
+          onPointerCancel={onDockedViewportPointerUp}
+          onWheel={onDockedViewportWheel}
+          onContextMenu={(event) => {
+            if (!nativeViewportPopout) event.preventDefault();
+          }}
+          className={`relative min-h-0 flex-1 overflow-hidden bg-[#30343a] ${
+            nativeViewportPopout ? "" : "cursor-grab active:cursor-grabbing"
+          }`}
+        >
           <div
             className="pointer-events-none absolute inset-0 opacity-45"
             style={{
@@ -1438,7 +1562,12 @@ export function ThreeDWorkspace({
           </div>
           {!nativeViewportPopout && (
             <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
-              <div className="relative h-32 w-32 [transform-style:preserve-3d] [transform:rotateX(58deg)_rotateZ(-38deg)]">
+              <div
+                className="relative h-32 w-32 [transform-style:preserve-3d]"
+                style={{
+                  transform: `translate3d(${dockedCamera.panX}px, ${dockedCamera.panY}px, 0) scale(${dockedCamera.zoom}) rotateX(${dockedCamera.pitch}deg) rotateZ(${dockedCamera.yaw}deg)`,
+                }}
+              >
                 {selectedObject?.type === "网格" ? (
                   <>
                     <div className="absolute inset-0 border border-orange-300/80 bg-[#9ebeed]/90 shadow-2xl shadow-black/30" />

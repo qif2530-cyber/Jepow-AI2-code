@@ -59,7 +59,7 @@ assert(
 );
 assert(viewportIpc.includes('UI_RUNTIME_CAPABILITIES'), 'viewport-ipc must expose UI runtime capabilities.');
 assert(viewportIpc.includes('uiRuntimeCapabilities'), 'viewport-ipc must include UI runtime capabilities in status.');
-for (const expected of ['compact-runtime-hud', 'bounds-first-native-viewport-start', 'docked-commercial-viewport-default', 'manual-runtime-diagnostics-overlay']) {
+for (const expected of ['compact-runtime-hud', 'bounds-first-native-viewport-start', 'docked-commercial-viewport-default', 'manual-runtime-diagnostics-overlay', 'interactive-docked-viewport-controls', 'icon-first-editor-toolbar']) {
   assert(viewportIpc.includes(expected), `viewport-ipc missing UI stability capability: ${expected}`);
 }
 assert(viewportIpc.includes('VIEWPORT_RUNTIME_CAPABILITIES'), 'viewport-ipc must expose viewport runtime capabilities.');
@@ -190,6 +190,18 @@ for (const expected of [
   'setNativeViewportPopout',
   'showRuntimeOverlay',
   'setShowRuntimeOverlay',
+  'dockedCamera',
+  'setDockedCamera',
+  'dockedDragRef',
+  'onDockedViewportPointerDown',
+  'onDockedViewportPointerMove',
+  'onDockedViewportWheel',
+  'resetDockedView',
+  'toolIcons',
+  'viewIcons',
+  'actionIcons',
+  'displayIcons',
+  'cursor-grab active:cursor-grabbing',
   '停靠式商业视图',
   '弹出原生',
   '收回原生',
