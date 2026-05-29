@@ -133,6 +133,11 @@ import { ScriptNode } from "./components/ScriptNode";
 import { GroupNode } from "./components/GroupNode";
 import { ImageTo3DNode } from "./components/ImageTo3DNode";
 import { MaterialGenNode } from "./components/MaterialGenNode";
+import {
+  isMaterialPropertyNode,
+  MaterialNodePropertiesPanel,
+} from "./components/MaterialNodePropertiesPanel";
+import { createCyclesMaterial } from "./lib/cycles-material";
 import { MaterialReplaceNode } from "./components/MaterialReplaceNode";
 import { ThreeDEditorNode } from "./components/ThreeDEditorNode";
 import { ModelAssetNode } from "./components/ModelAssetNode";
@@ -7471,6 +7476,28 @@ export default function App() {
     },
     [selectedPrimaryNode?.id, setNodes],
   );
+  const updateMaterialNodeField = useCallback(
+    (key: string, value: string | number) => {
+      if (!selectedPrimaryNode || !isMaterialPropertyNode(selectedPrimaryNode.type)) return;
+      setNodes((nds) =>
+        nds.map((node) => {
+          if (node.id !== selectedPrimaryNode.id) return node;
+          const nextRaw = {
+            ...(node.data as Record<string, unknown>),
+            [key]: value,
+          };
+          return {
+            ...node,
+            data: {
+              ...nextRaw,
+              cyclesMaterial: createCyclesMaterial(nextRaw),
+            },
+          };
+        }),
+      );
+    },
+    [selectedPrimaryNode?.id, setNodes],
+  );
   const selectedNodePropertyGroups = useMemo(() => {
     if (!selectedPrimaryNode) return [];
     const groups: {
@@ -9260,7 +9287,12 @@ export default function App() {
                           );
                         })()}
 
-                      {selectedNodePropertyGroups.length === 0 ? (
+                      {isMaterialPropertyNode(selectedPrimaryNode.type) ? (
+                        <MaterialNodePropertiesPanel
+                          node={selectedPrimaryNode}
+                          onPatch={updateMaterialNodeField}
+                        />
+                      ) : selectedNodePropertyGroups.length === 0 ? (
                         <section className="rounded-xl border border-white/10 bg-black/20 p-3 text-[10px] leading-relaxed text-neutral-500">
                           这个节点没有可编辑参数，或它的内容是输出结果/资源链接，已从属性栏中过滤。
                         </section>

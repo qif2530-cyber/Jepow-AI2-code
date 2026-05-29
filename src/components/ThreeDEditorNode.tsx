@@ -12,7 +12,17 @@ import { JepowViewportPreview } from "./JepowViewportPreview";
 import { useDesktopScenePath } from "../hooks/useDesktopScenePath";
 import { getLocalUserId } from "../lib/local-user-id";
 import { getCurrentProjectId } from "../lib/current-project";
-import { createCyclesMaterial, cyclesToViewportMaterial } from "../lib/cycles-material";
+import {
+  createCyclesMaterial,
+  cyclesToViewportMaterial,
+  type CyclesMaterial,
+} from "../lib/cycles-material";
+
+/** Cycles resident 路径只用 principled 标量；shaderGraph 留给 XML 回退且在主进程构建。 */
+function cyclesMaterialForCyclesSession(mat: CyclesMaterial): CyclesMaterial {
+  const { shaderGraph: _shaderGraph, ...rest } = mat;
+  return rest;
+}
 import { resolveEditorInputs } from "../lib/native-3d-pipeline";
 import { buildCyclesLightPayload } from "../lib/cycles-light-payload";
 import { getViewportEngine } from "../lib/viewport-engine";
@@ -509,6 +519,25 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
         : null,
     [cyclesMaterialRenderKey],
   );
+  const previewUsesNativeMaterial =
+    viewportMode === "preview" && !!activeViewportMaterial;
+
+  const [debouncedCyclesMaterialKey, setDebouncedCyclesMaterialKey] =
+    useState(cyclesMaterialRenderKey);
+  const cyclesMaterialDebounceFirstRef = useRef(true);
+  useEffect(() => {
+    if (viewportMode !== "render") {
+      cyclesMaterialDebounceFirstRef.current = true;
+      setDebouncedCyclesMaterialKey(cyclesMaterialRenderKey);
+      return;
+    }
+    const delay = cyclesMaterialDebounceFirstRef.current ? 0 : 480;
+    cyclesMaterialDebounceFirstRef.current = false;
+    const timer = window.setTimeout(() => {
+      setDebouncedCyclesMaterialKey(cyclesMaterialRenderKey);
+    }, delay);
+    return () => window.clearTimeout(timer);
+  }, [cyclesMaterialRenderKey, viewportMode]);
 
   const glbToRender = activeGlb || "";
   const blendSourcePath =
@@ -1156,7 +1185,9 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
         return;
       }
 
-      const stableCyclesMaterial = JSON.parse(cyclesMaterialRenderKey);
+      const stableCyclesMaterial = cyclesMaterialForCyclesSession(
+        JSON.parse(debouncedCyclesMaterialKey) as CyclesMaterial,
+      );
       const stableNativeLighting = JSON.parse(nativeLightingKey);
       const stableTransform = JSON.parse(transformKey);
       const baseRequest = {
@@ -1305,7 +1336,6 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
   }, [
     viewportMode,
     renderActive,
-    cyclesMaterialRenderKey,
     renderSettingsKey,
     cyclesLightKey,
     transformKey,
@@ -1314,6 +1344,7 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
     nativeLightingKey,
     viewportPixelSize,
     blendSourcePath,
+    debouncedCyclesMaterialKey,
   ]);
 
   useEffect(() => {
@@ -1476,8 +1507,8 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
           }
         `}} />
 
-        <div className="absolute top-2 right-2 z-10 flex gap-1.5 pointer-events-auto select-none">
-            <div className="h-7 p-0.5 rounded bg-black/60 border border-neutral-800/80 backdrop-blur-sm flex items-center gap-0.5">
+        <div className="absolute top-2 right-2 z-[30] flex gap-1.5 pointer-events-auto select-none">
+            <div className="h-7 p-0.5 rounded bg-black/70 border border-neutral-700/90 backdrop-blur-md flex items-center gap-0.5 shadow-lg">
               <button
                 type="button"
                 onClick={(e) => {
@@ -1517,7 +1548,7 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
                 e.stopPropagation();
                 toggleRenderActive();
               }}
-              className="h-7 w-7 bg-black/60 hover:bg-black/85 border border-neutral-800/80 text-neutral-400 hover:text-white backdrop-blur-sm rounded animate-in fade-in transition-all"
+              className="h-7 w-7 bg-black/70 hover:bg-black/90 border border-neutral-700/90 text-neutral-400 hover:text-white backdrop-blur-md shadow-lg rounded animate-in fade-in transition-all"
               title={
                 renderActive
                   ? "暂停渲染器（保留静态预览）"
@@ -1530,7 +1561,7 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
               type="button"
               size="icon"
               onClick={handleResetTransforms}
-              className="h-7 w-7 bg-black/60 hover:bg-black/85 border border-neutral-800/80 text-neutral-400 hover:text-white backdrop-blur-sm rounded animate-in fade-in transition-all"
+              className="h-7 w-7 bg-black/70 hover:bg-black/90 border border-neutral-700/90 text-neutral-400 hover:text-white backdrop-blur-md shadow-lg rounded animate-in fade-in transition-all"
               title="重置旋转与缩放"
             >
               <RefreshCw className="w-3.5 h-3.5" />
@@ -1555,7 +1586,7 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
               liveRender
               lockRenderSize
               highPerformanceMode={highPerfDynamic}
-              shading="clay"
+              shading={previewUsesNativeMaterial ? "render" : "clay"}
               ghostOverlay={false}
               transform={{
                 x: transform.x,
@@ -1567,7 +1598,7 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
                 scale: transform.scale,
               }}
               lighting={nativeLighting}
-              material={null}
+              material={previewUsesNativeMaterial ? activeViewportMaterial : null}
               resetViewToken={viewportResetToken}
               viewCamera={effectiveViewportCamera}
               onCameraChange={handleViewportCameraChange}
@@ -1597,9 +1628,9 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
               fill
               mode="turntable"
               liveRender={false}
-              shading="clay"
+              shading={previewUsesNativeMaterial ? "render" : "clay"}
               lighting={nativeLighting}
-              material={null}
+              material={previewUsesNativeMaterial ? activeViewportMaterial : null}
               resetViewToken={viewportResetToken}
               viewCamera={effectiveViewportCamera}
               onCameraChange={handleViewportCameraChange}

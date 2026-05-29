@@ -74,6 +74,20 @@ function cyclesMaterialParams(opts = {}) {
   };
 }
 
+function isMaterialOnlyPatch(patch = {}) {
+  const keys = Object.keys(patch);
+  if (!keys.length) return false;
+  return keys.every((k) => k === 'cyclesMaterial' || k === 'material');
+}
+
+function daemonSessionEnded(status = {}) {
+  return (
+    status.ok === true &&
+    Object.prototype.hasOwnProperty.call(status, 'resident') &&
+    status.resident === false
+  );
+}
+
 function cyclesTransformParams(opts = {}) {
   const t = opts.transform || {};
   return {
@@ -1102,7 +1116,23 @@ async function runProgressiveSession(session) {
     session.opts = { ...session.opts, ...session.pendingPatch };
     session.pendingPatch = null;
   }
-  if (useMeshCache || pendingPatch) {
+  if (useMeshCache) {
+    if (pendingPatch && isMaterialOnlyPatch(pendingPatch)) {
+      const matRes = await updateResidentMaterial(session.id, session.opts);
+      if (!matRes.ok) {
+        session.debugMessage = matRes.error || 'Cycles 材质同步失败';
+      }
+    } else {
+      const initialCameraUpdate = await updateResidentCamera(
+        session.id,
+        session.opts,
+        finalWidth,
+        finalHeight,
+        finalSamples,
+      );
+      if (initialCameraUpdate.ok) scheduleNavigationSettle(session.id);
+    }
+  } else if (pendingPatch) {
     const initialCameraUpdate = await updateResidentCamera(
       session.id,
       session.opts,
@@ -1119,10 +1149,19 @@ async function runProgressiveSession(session) {
   let cameraRecoveryApplied = false;
   while (!session.stopped) {
     const status = await runDaemonCommand('status', { sessionId: session.id }, 1500);
-    if (status.ok && status.resident === false) {
+    if (daemonSessionEnded(status)) {
+      if (session.stopped) return;
       session.status = 'error';
       session.frameVersion += 1;
-      session.frame = buildFramePayload(session, { error: 'Cycles daemon restarted or session lost' }, 'error', 'error');
+      session.frame = buildFramePayload(
+        session,
+        {
+          error:
+            'Cycles 会话已结束（可能因切换预览/材质或守护进程重启）。请点刷新或重新进入 CL 模式。',
+        },
+        'error',
+        'error',
+      );
       return;
     }
     const currentDaemonFrameVersion = Number(status.frameVersion) || 0;
@@ -1232,6 +1271,17 @@ async function updateResidentCamera(sessionId, opts = {}, width, height, samples
   );
 }
 
+async function updateResidentMaterial(sessionId, opts = {}) {
+  return runDaemonCommand(
+    'update_material',
+    {
+      sessionId,
+      ...cyclesMaterialParams(opts),
+    },
+    8000,
+  );
+}
+
 function startSession(opts = {}) {
   const sessionId = `cycles-${Date.now()}-${++cyclesSessionSeq}`;
   const session = {
@@ -1318,6 +1368,30 @@ async function updateSession(sessionId, patch = {}) {
     1536,
   );
   const samples = clampNumber(session.opts.samples || session.opts.renderSettings?.samples, 1, 4096, 64);
+  const materialOnlyPatch =
+    Object.prototype.hasOwnProperty.call(patch, 'cyclesMaterial') ||
+    Object.prototype.hasOwnProperty.call(patch, 'material');
+  const cameraPatch =
+    patch.camera != null ||
+    patch.cameraVersion != null ||
+    patch.width != null ||
+    patch.height != null ||
+    patch.samples != null ||
+    patch.renderSettings != null;
+
+  if (materialOnlyPatch && !cameraPatch) {
+    const matRes = await updateResidentMaterial(session.id, session.opts);
+    session.updatedAt = Date.now();
+    return {
+      ...matRes,
+      sessionId,
+      status: session.status,
+      cameraVersion: Number(session.opts.cameraVersion) || 0,
+      frame: session.frame,
+      materialUpdated: !!matRes.ok,
+    };
+  }
+
   const beforeStatus = await runDaemonCommand('status', { sessionId: session.id }, 1200);
   const beforeDaemonFrameVersion = Number(beforeStatus.frameVersion) || 0;
   const res = await updateResidentCamera(session.id, session.opts, width, height, samples);
