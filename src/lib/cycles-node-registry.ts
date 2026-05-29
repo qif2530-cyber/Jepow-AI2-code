@@ -216,7 +216,7 @@ export function getCyclesNodeDefaultData(
         bounces: 8,
         width: 2048,
         height: 1536,
-        device: "CPU",
+        device: "METAL",
         denoise: true,
         cyclesRenderSettings: {
           type: "cycles_render_settings",
@@ -224,7 +224,7 @@ export function getCyclesNodeDefaultData(
           bounces: 8,
           width: 2048,
           height: 1536,
-          device: "CPU",
+          device: "METAL",
           denoise: true,
         },
       };

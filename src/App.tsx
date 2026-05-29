@@ -76,6 +76,7 @@ import {
   getAppOrigin,
   isCanvasOnlyMode,
   canUseInfiniteCanvas,
+  isDesktopApp,
   shouldStoreProjectsLocally,
   shouldUseLocalCanvasAssets,
   openJepowWeb,
@@ -146,6 +147,19 @@ import {
   type SceneObjectEntry,
   type SceneObjectTreeNode,
 } from "./lib/scene-object-list";
+import {
+  isDescendantOf,
+  type SceneObjectParentOverrides,
+} from "./lib/scene-object-hierarchy";
+import {
+  findThreeDEditorForModelAsset,
+  listMaterialsForThreeDEditor,
+} from "./lib/scene-object-materials";
+import {
+  SCENE_OBJECT_SELECTION_EVENT,
+  type SceneObjectSelectionDetail,
+} from "./lib/scene-object-selection";
+import { SceneObjectPropertiesPanel } from "./components/SceneObjectPropertiesPanel";
 import { ThreeDRenderNode } from "./components/ThreeDRenderNode";
 import { CyclesLightNode } from "./components/CyclesLightNode";
 import { CyclesCameraNode } from "./components/CyclesCameraNode";
@@ -1699,6 +1713,98 @@ export default function App() {
     }
   }, [reactFlowInstance, user]);
   const [selectedNodes, setSelectedNodes] = useState<Node[]>([]);
+  const [selectedSceneObject, setSelectedSceneObject] = useState<{
+    nodeId: string;
+    object: SceneObjectEntry;
+  } | null>(null);
+
+  useEffect(() => {
+    const onViewportPick = (event: Event) => {
+      const detail = (event as CustomEvent<SceneObjectSelectionDetail>).detail;
+      if (!detail?.nodeId) return;
+      if (!detail.object) {
+        setSelectedSceneObject(null);
+        return;
+      }
+      setSelectedSceneObject({
+        nodeId: detail.nodeId,
+        object: detail.object,
+      });
+      setSelectedNodes([]);
+      setRightPanelMode("properties");
+      setNodes((currentNodes) =>
+        currentNodes.map((item) => {
+          if (item.id === detail.nodeId) {
+            return {
+              ...item,
+              selected: false,
+              data: {
+                ...(item.data as Record<string, unknown>),
+                selectedSceneObjectId: detail.object.id,
+                selectedSceneObjectName: detail.object.name,
+              },
+            };
+          }
+          return { ...item, selected: false };
+        }),
+      );
+      const modelNode = nodes.find((node) => node.id === detail.nodeId);
+      const sceneObjects =
+        (modelNode?.data as { sceneObjects?: SceneObjectEntry[] } | undefined)
+          ?.sceneObjects ?? [];
+      const parentOverrides = (
+        modelNode?.data as
+          | { sceneObjectParentOverrides?: SceneObjectParentOverrides }
+          | undefined
+      )?.sceneObjectParentOverrides;
+      const parentById = new Map<string, string | null>();
+      for (const object of sceneObjects) {
+        parentById.set(
+          object.id,
+          parentOverrides && object.id in parentOverrides
+            ? parentOverrides[object.id]
+            : object.parentId ?? null,
+        );
+      }
+      const ancestors = new Set<string>();
+      let currentParent = parentById.get(detail.object.id) ?? null;
+      while (currentParent) {
+        ancestors.add(currentParent);
+        currentParent = parentById.get(currentParent) ?? null;
+      }
+      if (ancestors.size > 0) {
+        setCollapsedSceneObjectIds((current) => {
+          const next = new Set(current);
+          for (const ancestor of ancestors) next.delete(ancestor);
+          return next;
+        });
+      }
+      setCollapsedSceneModelSubtreeIds((current) => {
+        if (!current.has(detail.nodeId)) return current;
+        const next = new Set(current);
+        next.delete(detail.nodeId);
+        return next;
+      });
+      window.setTimeout(() => {
+        const rows = document.querySelectorAll<HTMLElement>(
+          "[data-scene-object-row]",
+        );
+        for (const row of rows) {
+          if (
+            row.dataset.canvasNodeId === detail.nodeId &&
+            row.dataset.sceneObjectId === detail.object.id
+          ) {
+            row.scrollIntoView({ block: "center", behavior: "smooth" });
+            break;
+          }
+        }
+      }, 80);
+    };
+    window.addEventListener(SCENE_OBJECT_SELECTION_EVENT, onViewportPick);
+    return () =>
+      window.removeEventListener(SCENE_OBJECT_SELECTION_EVENT, onViewportPick);
+  }, [nodes, setNodes]);
+
   const [shouldAutoLayout, setShouldAutoLayout] = useState(false);
   const [globalLayoutDirection, setGlobalLayoutDirection] = useState<
     "LR" | "TB" | "GRID"
@@ -1932,6 +2038,18 @@ export default function App() {
     nodeId: string;
     label: string;
   } | null>(null);
+  const [collapsedSceneModelSubtreeIds, setCollapsedSceneModelSubtreeIds] =
+    useState<Set<string>>(new Set());
+  const [collapsedSceneObjectIds, setCollapsedSceneObjectIds] = useState<
+    Set<string>
+  >(new Set());
+  const sceneObjectDragRef = useRef<{
+    canvasNodeId: string;
+    objectId: string;
+  } | null>(null);
+  const sceneObjectLongPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
+    null,
+  );
   const [collapsedSceneGroupIds, setCollapsedSceneGroupIds] = useState<Set<string>>(
     () => new Set(),
   );
@@ -6768,6 +6886,7 @@ export default function App() {
   ) => {
     const id = `${type}-${Date.now()}`;
     const manualNodeLabels: Record<string, string> = {
+      modelAssetNode: "模型资产",
       imageTo3DNode: "3D 图像转模型",
       materialGenNode: "3D PBR材质生成",
       materialReplaceNode: "3D 材质贴附重贴",
@@ -6881,6 +7000,36 @@ export default function App() {
         data: {
           url: "https://picsum.photos/seed/media/800/600",
           type: "image",
+        },
+      },
+    ]);
+    setRadialMenu(null);
+    setPaneContextMenu(null);
+  };
+
+  const handleAddModelAssetNode = (flowPos?: { x: number; y: number }) => {
+    const id = `modelAssetNode-${Date.now()}`;
+    let centerPos = flowPos;
+    if (!centerPos && reactFlowInstance) {
+      centerPos = reactFlowInstance.screenToFlowPosition({
+        x: lastMousePos.current.x,
+        y: lastMousePos.current.y,
+      });
+    }
+    setNodes((nds) => [
+      ...nds,
+      {
+        id,
+        type: "modelAssetNode",
+        position: centerPos || {
+          x: Math.random() * 200 + 100,
+          y: Math.random() * 200 + 100,
+        },
+        data: {
+          label: "模型资产",
+          modelName: "",
+          renderActive: true,
+          viewportBackend: isDesktopApp() ? "jepow-native" : "web",
         },
       },
     ]);
@@ -7058,6 +7207,36 @@ export default function App() {
     [reactFlowInstance],
   );
 
+  const hasCanvasNodeSelection = useMemo(
+    () =>
+      selectedNodes.length > 0 ||
+      nodes.some((node) => node.selected && node.type !== "modelAssetNode"),
+    [selectedNodes, nodes],
+  );
+
+  const clearModelSceneObjectSelection = useCallback(() => {
+    setSelectedSceneObject(null);
+    setNodes((currentNodes) => {
+      let changed = false;
+      const next = currentNodes.map((item) => {
+        if (item.type !== "modelAssetNode") return item;
+        const data = item.data as {
+          selectedSceneObjectId?: string;
+          selectedSceneObjectName?: string;
+        };
+        if (!data.selectedSceneObjectId && !data.selectedSceneObjectName) {
+          return item;
+        }
+        changed = true;
+        const patched = { ...(item.data as Record<string, unknown>) };
+        delete patched.selectedSceneObjectId;
+        delete patched.selectedSceneObjectName;
+        return { ...item, data: patched };
+      });
+      return changed ? next : currentNodes;
+    });
+  }, [setNodes]);
+
   const handlePaneClick = useCallback(() => {
     setPaneContextMenu(null);
     setShowUserMenu(false);
@@ -7071,6 +7250,10 @@ export default function App() {
       setShowUserMenu(false);
       setShowTransferMenu(false);
       setShowLayoutMenu(false);
+      if (node.type !== "modelAssetNode") {
+        clearModelSceneObjectSelection();
+        setRightPanelMode("properties");
+      }
 
       if (isSelectingAiReference) {
         // Find image URL from node
@@ -7094,7 +7277,7 @@ export default function App() {
         }
       }
     },
-    [isSelectingAiReference],
+    [clearModelSceneObjectSelection, isSelectingAiReference],
   );
 
   const handleAddHistoryToCanvas = useCallback(
@@ -7273,48 +7456,219 @@ export default function App() {
       return !nodes.some((parent) => parent.id === node.parentId);
     });
   }, [desktopStartupLocked, nodes]);
+
+  const effectiveSceneObjectSelection = useMemo(() => {
+    if (hasCanvasNodeSelection) return null;
+    if (selectedSceneObject) return selectedSceneObject;
+    for (const node of nodes) {
+      if (node.type !== "modelAssetNode") continue;
+      const data = node.data as {
+        selectedSceneObjectId?: string;
+        sceneObjects?: SceneObjectEntry[];
+      };
+      const objectId = data.selectedSceneObjectId?.trim();
+      if (!objectId) continue;
+      const entry = data.sceneObjects?.find((object) => object.id === objectId);
+      if (entry) return { nodeId: node.id, object: entry };
+    }
+    return null;
+  }, [hasCanvasNodeSelection, selectedSceneObject, nodes]);
+
+  const selectSceneObject = useCallback(
+    (canvasNodeId: string, entry: SceneObjectEntry) => {
+      setSelectedSceneObject({ nodeId: canvasNodeId, object: entry });
+      setSelectedNodes([]);
+      setRightPanelMode("properties");
+      setNodes((currentNodes) =>
+        currentNodes.map((item) => {
+          if (item.id === canvasNodeId) {
+            return {
+              ...item,
+              selected: false,
+              data: {
+                ...(item.data as Record<string, unknown>),
+                selectedSceneObjectId: entry.id,
+                selectedSceneObjectName: entry.name,
+              },
+            };
+          }
+          return { ...item, selected: false };
+        }),
+      );
+    },
+    [setNodes],
+  );
+
+  const setSceneObjectParentOverride = useCallback(
+    (
+      canvasNodeId: string,
+      objectId: string,
+      newParentId: string | null,
+      flatObjects: SceneObjectEntry[],
+    ) => {
+      if (newParentId && isDescendantOf(newParentId, objectId, flatObjects)) {
+        return;
+      }
+      setNodes((currentNodes) =>
+        currentNodes.map((item) => {
+          if (item.id !== canvasNodeId || item.type !== "modelAssetNode") {
+            return item;
+          }
+          const data = { ...(item.data as Record<string, unknown>) };
+          const overrides = {
+            ...((data.sceneObjectParentOverrides as SceneObjectParentOverrides) ||
+              {}),
+          };
+          overrides[objectId] = newParentId;
+          return { ...item, data: { ...data, sceneObjectParentOverrides: overrides } };
+        }),
+      );
+    },
+    [setNodes],
+  );
+
   const renderSceneObjectTree = (
     canvasNodeId: string,
     entry: SceneObjectTreeNode,
     depth: number,
-  ): React.ReactNode => (
-    <React.Fragment key={`${canvasNodeId}:obj:${entry.id}`}>
-      <div
-        role="button"
-        tabIndex={0}
-        onClick={() => {
-          const canvasNode = nodes.find((n) => n.id === canvasNodeId);
-          if (!canvasNode) return;
-          setSelectedNodes([canvasNode]);
-          setNodes((currentNodes) =>
-            currentNodes.map((item) => ({
-              ...item,
-              selected: item.id === canvasNodeId,
-            })),
-          );
-          focusCanvasNode(canvasNode);
-        }}
-        className="flex h-6 w-full items-center gap-1 px-2 text-left text-[10px] text-neutral-500 transition-colors hover:bg-white/[0.04] hover:text-neutral-300"
-        style={{ paddingLeft: 8 + depth * 12 }}
-      >
-        <span className="h-4 w-4 shrink-0" />
-        <Box
-          className={`h-3 w-3 shrink-0 ${
-            entry.kind === "mesh" ? "text-emerald-400/90" : "text-neutral-600"
-          }`}
-        />
-        <span className="min-w-0 flex-1 truncate">{entry.name}</span>
-        {entry.triangleCount != null && entry.triangleCount > 0 ? (
-          <span className="shrink-0 font-mono text-[8px] text-neutral-600">
-            {entry.triangleCount.toLocaleString()}△
-          </span>
-        ) : null}
-      </div>
-      {entry.children.map((child) =>
-        renderSceneObjectTree(canvasNodeId, child, depth + 1),
-      )}
-    </React.Fragment>
-  );
+    flatObjects: SceneObjectEntry[],
+    parentOverrides?: SceneObjectParentOverrides,
+    materialAssignments?: Record<string, string>,
+    materialTintByNodeId?: Record<string, string>,
+  ): React.ReactNode => {
+    const nodeSelectedSceneObjectId = (
+      nodes.find((node) => node.id === canvasNodeId)?.data as
+        | { selectedSceneObjectId?: string }
+        | undefined
+    )?.selectedSceneObjectId;
+    const isObjectSelected =
+      (effectiveSceneObjectSelection?.nodeId === canvasNodeId &&
+        effectiveSceneObjectSelection.object.id === entry.id) ||
+      nodeSelectedSceneObjectId === entry.id;
+    const hasChildren = entry.children.length > 0;
+    const isCollapsed = collapsedSceneObjectIds.has(entry.id);
+    const assignedMatId = materialAssignments?.[entry.id];
+    const matTint = assignedMatId
+      ? materialTintByNodeId?.[assignedMatId]
+      : undefined;
+    const isDragTarget =
+      sceneObjectDragRef.current?.canvasNodeId === canvasNodeId &&
+      sceneObjectDragRef.current?.objectId !== entry.id;
+
+    return (
+      <React.Fragment key={`${canvasNodeId}:obj:${entry.id}`}>
+        <div
+          role="button"
+          tabIndex={0}
+          data-scene-object-row="true"
+          data-canvas-node-id={canvasNodeId}
+          data-scene-object-id={entry.id}
+          onClick={(event) => {
+            event.stopPropagation();
+            if (sceneObjectDragRef.current) return;
+            selectSceneObject(canvasNodeId, entry);
+          }}
+          onMouseDown={(event) => {
+            if (event.button !== 0) return;
+            event.stopPropagation();
+            if (sceneObjectLongPressTimerRef.current) {
+              clearTimeout(sceneObjectLongPressTimerRef.current);
+            }
+            sceneObjectLongPressTimerRef.current = setTimeout(() => {
+              sceneObjectDragRef.current = {
+                canvasNodeId,
+                objectId: entry.id,
+              };
+            }, 420);
+          }}
+          onMouseUp={(event) => {
+            event.stopPropagation();
+            if (sceneObjectLongPressTimerRef.current) {
+              clearTimeout(sceneObjectLongPressTimerRef.current);
+              sceneObjectLongPressTimerRef.current = null;
+            }
+            const drag = sceneObjectDragRef.current;
+            if (drag && drag.canvasNodeId === canvasNodeId && drag.objectId !== entry.id) {
+              setSceneObjectParentOverride(
+                canvasNodeId,
+                drag.objectId,
+                entry.id,
+                flatObjects,
+              );
+              const dragged =
+                flatObjects.find((o) => o.id === drag.objectId) || entry;
+              selectSceneObject(canvasNodeId, dragged);
+            }
+            sceneObjectDragRef.current = null;
+          }}
+          onMouseLeave={() => {
+            if (sceneObjectLongPressTimerRef.current) {
+              clearTimeout(sceneObjectLongPressTimerRef.current);
+              sceneObjectLongPressTimerRef.current = null;
+            }
+          }}
+          className={`flex h-6 w-full items-center gap-1 px-2 text-left text-[10px] transition-colors outline-none ${
+            isObjectSelected
+              ? "bg-cyan-500/30 text-cyan-50 ring-1 ring-inset ring-cyan-300/60"
+              : isDragTarget && sceneObjectDragRef.current
+                ? "bg-sky-500/10 text-sky-200/90 ring-1 ring-inset ring-sky-400/40"
+                : "text-neutral-500 hover:bg-white/[0.04] hover:text-neutral-300"
+          } ${sceneObjectDragRef.current?.objectId === entry.id ? "opacity-60" : ""}`}
+          style={{ paddingLeft: 8 + depth * 12 }}
+        >
+          {hasChildren ? (
+            <button
+              type="button"
+              aria-label={isCollapsed ? "展开子对象" : "收起子对象"}
+              onClick={(event) => {
+                event.stopPropagation();
+                setCollapsedSceneObjectIds((current) => {
+                  const next = new Set(current);
+                  if (next.has(entry.id)) next.delete(entry.id);
+                  else next.add(entry.id);
+                  return next;
+                });
+              }}
+              className="flex h-4 w-4 shrink-0 items-center justify-center rounded-[3px] text-neutral-500 hover:bg-white/[0.08] hover:text-neutral-200"
+            >
+              {isCollapsed ? (
+                <ChevronRight className="h-3 w-3" />
+              ) : (
+                <ChevronDown className="h-3 w-3" />
+              )}
+            </button>
+          ) : (
+            <span className="h-4 w-4 shrink-0" />
+          )}
+          <Box
+            className={`h-3 w-3 shrink-0 ${
+              entry.kind === "mesh" ? "text-emerald-400/90" : "text-amber-400/70"
+            }`}
+          />
+          <span className="min-w-0 flex-1 truncate">{entry.name}</span>
+          {matTint ? (
+            <span
+              className="h-3.5 w-3.5 shrink-0 rounded-full border border-white/25 shadow-inner"
+              style={{ background: matTint }}
+              title="已指定材质"
+            />
+          ) : null}
+        </div>
+        {!isCollapsed &&
+          entry.children.map((child) =>
+            renderSceneObjectTree(
+              canvasNodeId,
+              child,
+              depth + 1,
+              flatObjects,
+              parentOverrides,
+              materialAssignments,
+              materialTintByNodeId,
+            ),
+          )}
+      </React.Fragment>
+    );
+  };
 
   const renderSceneTreeNode = (node: Node, depth = 0): React.ReactNode => {
     const children = sceneChildrenByParentId.get(node.id) || [];
@@ -7322,13 +7676,37 @@ export default function App() {
       node.type === "modelAssetNode"
         ? ((node.data as { sceneObjects?: SceneObjectEntry[] })?.sceneObjects ?? [])
         : [];
+    const parentOverrides = (
+      node.data as { sceneObjectParentOverrides?: SceneObjectParentOverrides }
+    )?.sceneObjectParentOverrides;
+    const sceneObjectMaterials = (
+      node.data as { sceneObjectMaterials?: Record<string, string> }
+    )?.sceneObjectMaterials;
     const sceneObjectTree =
-      sceneObjects.length > 0 ? sceneObjectForest(sceneObjects) : [];
+      sceneObjects.length > 0
+        ? sceneObjectForest(sceneObjects, parentOverrides)
+        : [];
+    const editorForMaterials =
+      node.type === "modelAssetNode"
+        ? findThreeDEditorForModelAsset(node.id, nodes, edges)
+        : undefined;
+    const materialTintByNodeId = Object.fromEntries(
+      (editorForMaterials
+        ? listMaterialsForThreeDEditor(editorForMaterials.id, nodes, edges)
+        : []
+      ).map((m) => [m.materialNodeId, m.tint]),
+    );
+    const hasSceneObjects = sceneObjectTree.length > 0;
     const isGroup = node.type === "groupNode";
     const isCollapsed = collapsedSceneGroupIds.has(node.id);
+    const modelSubtreeCollapsed =
+      node.type === "modelAssetNode" && collapsedSceneModelSubtreeIds.has(node.id);
+    const hasSelectedSceneObject =
+      effectiveSceneObjectSelection?.nodeId === node.id;
     const isSelected =
-      node.id === selectedPrimaryNode?.id ||
-      selectedNodes.some((selected) => selected.id === node.id);
+      !effectiveSceneObjectSelection &&
+      (node.id === selectedPrimaryNode?.id ||
+        selectedNodes.some((selected) => selected.id === node.id));
     const nodeLabel = formatNodeTreeLabel(node);
 
     return (
@@ -7336,18 +7714,53 @@ export default function App() {
         <div
           role="button"
           tabIndex={0}
+          onMouseUp={(event) => {
+            event.stopPropagation();
+            const drag = sceneObjectDragRef.current;
+            if (
+              drag &&
+              drag.canvasNodeId === node.id &&
+              node.type === "modelAssetNode" &&
+              sceneObjects.length > 0
+            ) {
+              setSceneObjectParentOverride(
+                node.id,
+                drag.objectId,
+                null,
+                sceneObjects,
+              );
+              const dragged = sceneObjects.find((o) => o.id === drag.objectId);
+              if (dragged) selectSceneObject(node.id, dragged);
+              sceneObjectDragRef.current = null;
+            }
+            if (sceneObjectLongPressTimerRef.current) {
+              clearTimeout(sceneObjectLongPressTimerRef.current);
+              sceneObjectLongPressTimerRef.current = null;
+            }
+          }}
           onClick={() => {
+            setSelectedSceneObject(null);
             setSelectedNodes([node]);
+            setRightPanelMode("properties");
             setNodes((currentNodes) =>
-              currentNodes.map((item) => ({
-                ...item,
-                selected: item.id === node.id,
-              })),
+              currentNodes.map((item) => {
+                if (item.id === node.id && item.type === "modelAssetNode") {
+                  const data = { ...(item.data as Record<string, unknown>) };
+                  delete data.selectedSceneObjectId;
+                  delete data.selectedSceneObjectName;
+                  return { ...item, selected: true, data };
+                }
+                return {
+                  ...item,
+                  selected: item.id === node.id,
+                };
+              }),
             );
           }}
           onKeyDown={(event) => {
             if (event.key === "Enter" || event.key === " ") {
               event.preventDefault();
+              setSelectedSceneObject(null);
               setSelectedNodes([node]);
               setNodes((currentNodes) =>
                 currentNodes.map((item) => ({
@@ -7376,17 +7789,36 @@ export default function App() {
           className={`flex h-6 w-full items-center gap-1 px-2 text-left text-[10px] transition-colors outline-none ${
             isSelected
               ? "bg-blue-500/20 text-blue-100"
-              : "text-neutral-400 hover:bg-white/[0.06] hover:text-neutral-200"
+              : hasSelectedSceneObject
+                ? "bg-emerald-950/30 text-emerald-200/80"
+                : "text-neutral-400 hover:bg-white/[0.06] hover:text-neutral-200"
           }`}
           style={{ paddingLeft: 8 + depth * 12 }}
         >
-          {isGroup ? (
+          {isGroup || (node.type === "modelAssetNode" && hasSceneObjects) ? (
             <button
               type="button"
-              aria-label={isCollapsed ? "展开组" : "收起组"}
+              aria-label={
+                isGroup
+                  ? isCollapsed
+                    ? "展开组"
+                    : "收起组"
+                  : modelSubtreeCollapsed
+                    ? "展开模型子对象"
+                    : "收起模型子对象"
+              }
               onClick={(event) => {
                 event.stopPropagation();
-                setCollapsedSceneGroupIds((current) => {
+                if (isGroup) {
+                  setCollapsedSceneGroupIds((current) => {
+                    const next = new Set(current);
+                    if (next.has(node.id)) next.delete(node.id);
+                    else next.add(node.id);
+                    return next;
+                  });
+                  return;
+                }
+                setCollapsedSceneModelSubtreeIds((current) => {
                   const next = new Set(current);
                   if (next.has(node.id)) next.delete(node.id);
                   else next.add(node.id);
@@ -7395,7 +7827,13 @@ export default function App() {
               }}
               className="flex h-4 w-4 shrink-0 items-center justify-center rounded-[3px] text-neutral-500 hover:bg-white/[0.08] hover:text-neutral-200"
             >
-              {isCollapsed ? (
+              {isGroup ? (
+                isCollapsed ? (
+                  <ChevronRight className="h-3 w-3" />
+                ) : (
+                  <ChevronDown className="h-3 w-3" />
+                )
+              ) : modelSubtreeCollapsed ? (
                 <ChevronRight className="h-3 w-3" />
               ) : (
                 <ChevronDown className="h-3 w-3" />
@@ -7432,8 +7870,17 @@ export default function App() {
         {!isCollapsed &&
           children.map((child) => renderSceneTreeNode(child, depth + 1))}
         {!isCollapsed &&
+          !modelSubtreeCollapsed &&
           sceneObjectTree.map((obj) =>
-            renderSceneObjectTree(node.id, obj, depth + 1),
+            renderSceneObjectTree(
+              node.id,
+              obj,
+              depth + 1,
+              sceneObjects,
+              parentOverrides,
+              sceneObjectMaterials,
+              materialTintByNodeId,
+            ),
           )}
       </React.Fragment>
     );
@@ -7534,12 +7981,11 @@ export default function App() {
     },
     [selectedPrimaryNode?.id, setNodes],
   );
-  const updateMaterialNodeField = useCallback(
-    (key: string, value: string | number) => {
-      if (!selectedPrimaryNode || !isMaterialPropertyNode(selectedPrimaryNode.type)) return;
+  const patchMaterialNodeById = useCallback(
+    (nodeId: string, key: string, value: string | number) => {
       setNodes((nds) =>
         nds.map((node) => {
-          if (node.id !== selectedPrimaryNode.id) return node;
+          if (node.id !== nodeId || !isMaterialPropertyNode(node.type)) return node;
           const nextRaw = {
             ...(node.data as Record<string, unknown>),
             [key]: value,
@@ -7554,7 +8000,14 @@ export default function App() {
         }),
       );
     },
-    [selectedPrimaryNode?.id, setNodes],
+    [setNodes],
+  );
+  const updateMaterialNodeField = useCallback(
+    (key: string, value: string | number) => {
+      if (!selectedPrimaryNode || !isMaterialPropertyNode(selectedPrimaryNode.type)) return;
+      patchMaterialNodeById(selectedPrimaryNode.id, key, value);
+    },
+    [selectedPrimaryNode?.id, patchMaterialNodeById],
   );
   const selectedNodePropertyGroups = useMemo(() => {
     if (!selectedPrimaryNode) return [];
@@ -7786,6 +8239,12 @@ export default function App() {
                   .react-flow__node.selected [class*="border-cyan"],
                   .react-flow__node.selected [class*="border-amber"] {
                     border-color: rgba(38, 38, 38, 0.9) !important;
+                  }
+                  #jepow-viewport-workspace-overlay,
+                  #jepow-viewport-workspace-overlay img,
+                  [id^="canvas-container-"] img {
+                    -webkit-user-drag: none;
+                    user-select: none;
                   }
                 `,
               }}
@@ -8035,7 +8494,13 @@ export default function App() {
                   onConnect={onConnect}
                   isValidConnection={isValidConnection}
                   onConnectEnd={onConnectEnd}
-                  onSelectionChange={({ nodes }) => setSelectedNodes(nodes)}
+                  onSelectionChange={({ nodes: picked }) => {
+                    setSelectedNodes(picked);
+                    if (picked.length > 0) {
+                      clearModelSceneObjectSelection();
+                      setRightPanelMode("properties");
+                    }
+                  }}
                   onNodeDragStop={onNodeDragStop}
                   onInit={setReactFlowInstance}
                   onDrop={onDrop}
@@ -8814,6 +9279,10 @@ export default function App() {
                     </div>
                   )}
                 </ReactFlow>
+                <div
+                  id="jepow-viewport-workspace-overlay"
+                  className="pointer-events-none absolute inset-0 z-[12000]"
+                />
               </ShotContext.Provider>
                 </div>
               </main>
@@ -8839,8 +9308,11 @@ export default function App() {
                     </div>
                     <Search className="h-3.5 w-3.5 text-neutral-600" />
                   </div>
-                  <div className="h-[calc(100%-1.5rem)] overflow-y-auto custom-scrollbar p-px">
-                    <div className="h-full rounded-[8px] border border-[#25272b] bg-[#252629] overflow-hidden">
+                  <div
+                    className="h-[calc(100%-1.5rem)] overflow-y-auto overflow-x-hidden custom-scrollbar p-px overscroll-contain"
+                    onWheel={(e) => e.stopPropagation()}
+                  >
+                    <div className="rounded-[8px] border border-[#25272b] bg-[#252629]">
                       <div className="flex items-center gap-1.5 border-b border-[#2b2d31] px-2 py-1 text-[10px] font-bold text-neutral-400">
                         <ChevronDown className="h-3 w-3" />
                         集合
@@ -8958,16 +9430,110 @@ export default function App() {
                     </div>
                   ) : (
                     <>
-                  {!selectedPrimaryNode ? (
+                  {!selectedPrimaryNode && !effectiveSceneObjectSelection ? (
                     <div className="h-full min-h-[420px] rounded-xl border border-dashed border-white/10 bg-black/20 px-5 py-8 text-center flex flex-col items-center justify-center">
                       <MousePointer2 className="mb-3 h-8 w-8 text-neutral-600" />
                       <div className="text-[12px] font-black text-neutral-300">
                         选择一个节点
                       </div>
                       <p className="mt-2 text-[10px] leading-relaxed text-neutral-500">
-                        点击画布中的任意节点后，只在这里显示它的可编辑参数。
+                        点击画布节点或场景集合中的模型子对象，在这里查看可编辑参数。
                       </p>
                     </div>
+                  ) : effectiveSceneObjectSelection ? (
+                    (() => {
+                      const parentNode = nodes.find(
+                        (n) => n.id === effectiveSceneObjectSelection.nodeId,
+                      );
+                      if (!parentNode) {
+                        return (
+                          <section className="rounded-xl border border-white/10 bg-black/20 p-3 text-[10px] text-neutral-500">
+                            所属模型节点已删除
+                          </section>
+                        );
+                      }
+                      const editorNode = findThreeDEditorForModelAsset(
+                        parentNode.id,
+                        nodes,
+                        edges,
+                      );
+                      const matOptions = editorNode
+                        ? listMaterialsForThreeDEditor(
+                            editorNode.id,
+                            nodes,
+                            edges,
+                          )
+                        : [];
+                      const matAssignments = (
+                        parentNode.data as {
+                          sceneObjectMaterials?: Record<string, string>;
+                        }
+                      )?.sceneObjectMaterials;
+                      const assignedMatId =
+                        matAssignments?.[effectiveSceneObjectSelection.object.id] ??
+                        null;
+                      const assignedMaterialNode = assignedMatId
+                        ? nodes.find((n) => n.id === assignedMatId)
+                        : undefined;
+                      return (
+                        <div className="space-y-3">
+                          <SceneObjectPropertiesPanel
+                            parentNode={parentNode}
+                            object={effectiveSceneObjectSelection.object}
+                            materialOptions={matOptions}
+                            assignedMaterialNodeId={assignedMatId}
+                          onAssignMaterial={(materialNodeId) => {
+                            const objectEntry = effectiveSceneObjectSelection.object;
+                            setNodes((currentNodes) =>
+                              currentNodes.map((item) => {
+                                if (item.id !== parentNode.id) return item;
+                                const data = {
+                                  ...(item.data as Record<string, unknown>),
+                                };
+                                const next = {
+                                  ...((data.sceneObjectMaterials as Record<
+                                    string,
+                                    string
+                                  >) || {}),
+                                };
+                                if (materialNodeId) {
+                                  next[objectEntry.id] = materialNodeId;
+                                } else {
+                                  delete next[objectEntry.id];
+                                }
+                                return {
+                                  ...item,
+                                  selected: false,
+                                  data: {
+                                    ...data,
+                                    selectedSceneObjectId: objectEntry.id,
+                                    selectedSceneObjectName: objectEntry.name,
+                                    sceneObjectMaterialsVersion: String(Date.now()),
+                                    sceneObjectMaterials: next,
+                                  },
+                                };
+                              }),
+                            );
+                            selectSceneObject(parentNode.id, objectEntry);
+                            setRightPanelMode("properties");
+                          }}
+                          />
+                          {assignedMaterialNode &&
+                          isMaterialPropertyNode(assignedMaterialNode.type) ? (
+                            <MaterialNodePropertiesPanel
+                              node={assignedMaterialNode}
+                              onPatch={(key, value) =>
+                                patchMaterialNodeById(assignedMaterialNode.id, key, value)
+                              }
+                            />
+                          ) : assignedMatId ? (
+                            <section className="rounded-xl border border-amber-500/30 bg-amber-950/20 p-3 text-[10px] text-amber-200/90">
+                              已指定材质节点，但节点数据不可用。请确认材质节点仍连在 3D 场景编辑器的材质端口。
+                            </section>
+                          ) : null}
+                        </div>
+                      );
+                    })()
                   ) : (
                     <div className="space-y-3">
                       {(selectedPrimaryNode.type === "imageShotNode" ||
@@ -9712,6 +10278,22 @@ export default function App() {
           >
             <Box className="w-4 h-4 mr-2.5 text-neutral-500" />
             3D 图像转模型
+          </button>
+
+          <div className="h-px w-full bg-neutral-100 my-0.5" />
+
+          <button
+            className="flex items-center justify-start h-9 px-3 rounded-md text-xs font-medium transition-all duration-200 bg-transparent text-neutral-600 hover:bg-black/5 hover:text-neutral-900"
+            onClick={() => {
+              handleAddModelAssetNode({
+                x: paneContextMenu.flowX,
+                y: paneContextMenu.flowY,
+              });
+              setPaneContextMenu(null);
+            }}
+          >
+            <Box className="w-4 h-4 mr-2.5 text-orange-400" />
+            模型资产
           </button>
 
           <div className="h-px w-full bg-neutral-100 my-0.5" />

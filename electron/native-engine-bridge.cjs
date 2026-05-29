@@ -9,6 +9,42 @@ const { app } = require('electron');
 
 const ENGINE_NAME = process.platform === 'win32' ? 'jepow-engine.exe' : 'jepow-engine';
 const LIVE_FRAME_NAME = 'daemon-live.png';
+const viewportFrameStats = {
+  windowStartedAt: Date.now(),
+  calls: 0,
+  daemonCalls: 0,
+  fallbackCalls: 0,
+  lastFrameMs: 0,
+  lastTotalMs: 0,
+  lastWidth: 0,
+  lastHeight: 0,
+};
+
+function noteViewportFrame(kind, width, height, result, startedAt) {
+  const now = Date.now();
+  if (now - viewportFrameStats.windowStartedAt > 1000) {
+    viewportFrameStats.windowStartedAt = now;
+    viewportFrameStats.calls = 0;
+    viewportFrameStats.daemonCalls = 0;
+    viewportFrameStats.fallbackCalls = 0;
+  }
+  viewportFrameStats.calls += 1;
+  if (kind === 'daemon') viewportFrameStats.daemonCalls += 1;
+  else viewportFrameStats.fallbackCalls += 1;
+  viewportFrameStats.lastFrameMs = Number(result?.frameMs ?? 0);
+  viewportFrameStats.lastTotalMs = Math.max(0, now - startedAt);
+  viewportFrameStats.lastWidth = Number(width) || 0;
+  viewportFrameStats.lastHeight = Number(height) || 0;
+  return {
+    fpsWindowCalls: viewportFrameStats.calls,
+    daemonWindowCalls: viewportFrameStats.daemonCalls,
+    fallbackWindowCalls: viewportFrameStats.fallbackCalls,
+    lastFrameMs: viewportFrameStats.lastFrameMs,
+    lastTotalMs: viewportFrameStats.lastTotalMs,
+    lastWidth: viewportFrameStats.lastWidth,
+    lastHeight: viewportFrameStats.lastHeight,
+  };
+}
 
 function getEngineCandidates() {
   const root = path.join(__dirname, '..');
@@ -73,24 +109,105 @@ let daemonSessionPath = null;
 let daemonSessionInfo = null;
 let daemonStarting = null;
 
-function killDaemon() {
-  if (daemonProc && !daemonProc.killed) {
-    try {
-      daemonProc.stdin.write(`${JSON.stringify({ cmd: 'shutdown', id: 0 })}\n`);
-    } catch {
-      /* ignore */
-    }
-    daemonProc.kill('SIGTERM');
+function failDaemonPending(reason) {
+  const err =
+    reason instanceof Error ? reason : new Error(String(reason || 'daemon stopped'));
+  for (const [, p] of daemonPending) {
+    clearTimeout(p.timer);
+    p.reject(err);
   }
+  daemonPending.clear();
+}
+
+function resetDaemonState() {
   daemonProc = null;
   daemonBuf = '';
   daemonSessionPath = null;
   daemonSessionInfo = null;
-  for (const [, p] of daemonPending) {
-    clearTimeout(p.timer);
-    p.reject(new Error('daemon stopped'));
+  daemonStarting = null;
+}
+
+function killDaemon() {
+  const proc = daemonProc;
+  resetDaemonState();
+  failDaemonPending(new Error('daemon stopped'));
+  if (proc && !proc.killed) {
+    try {
+      if (proc.stdin?.writable && !proc.stdin.destroyed) {
+        proc.stdin.write(`${JSON.stringify({ cmd: 'shutdown', id: 0 })}\n`, () => {});
+      }
+    } catch {
+      /* ignore */
+    }
+    try {
+      proc.kill('SIGTERM');
+    } catch {
+      /* ignore */
+    }
   }
-  daemonPending.clear();
+}
+
+function attachDaemonProcHandlers(proc) {
+  if (!proc?.stdin) return;
+  proc.stdin.on('error', (err) => {
+    console.warn('[jepow-engine daemon] stdin error:', err?.message || err);
+    failDaemonPending(err);
+    resetDaemonState();
+  });
+  proc.stdout?.on('error', (err) => {
+    console.warn('[jepow-engine daemon] stdout error:', err?.message || err);
+  });
+  proc.stderr?.on('data', (d) => {
+    const panic = extractEnginePanic(d.toString());
+    if (panic) console.warn('[jepow-engine daemon]', panic);
+  });
+  proc.on('error', (err) => {
+    console.warn('[jepow-engine daemon] process error:', err?.message || err);
+    failDaemonPending(err);
+    resetDaemonState();
+  });
+  proc.on('close', (code, signal) => {
+    if (code !== 0 && code != null) {
+      console.warn(`[jepow-engine daemon] exited code=${code} signal=${signal || ''}`);
+    }
+    failDaemonPending(new Error('daemon exited'));
+    resetDaemonState();
+  });
+  proc.stdout.on('data', (d) => {
+    daemonBuf += d.toString();
+    flushDaemonBuffer();
+  });
+}
+
+function writeDaemonLine(line) {
+  return new Promise((resolve, reject) => {
+    const proc = daemonProc;
+    if (!proc || proc.killed || !proc.stdin || proc.stdin.destroyed || proc.stdin.writableEnded) {
+      reject(new Error('daemon not running'));
+      return;
+    }
+    const payload = line.endsWith('\n') ? line : `${line}\n`;
+    try {
+      const ok = proc.stdin.write(payload, (err) => {
+        if (err) {
+          failDaemonPending(err);
+          resetDaemonState();
+          reject(err);
+          return;
+        }
+        resolve();
+      });
+      if (!ok) {
+        proc.stdin.once('drain', () => {
+          writeDaemonLine(line).then(resolve, reject);
+        });
+      }
+    } catch (err) {
+      failDaemonPending(err);
+      resetDaemonState();
+      reject(err);
+    }
+  });
 }
 
 function flushDaemonBuffer() {
@@ -132,31 +249,7 @@ function ensureDaemon() {
       windowsHide: true,
       stdio: ['pipe', 'pipe', 'pipe'],
     });
-
-    daemonProc.stdout.on('data', (d) => {
-      daemonBuf += d.toString();
-      flushDaemonBuffer();
-    });
-
-    daemonProc.stderr.on('data', (d) => {
-      const panic = extractEnginePanic(d.toString());
-      if (panic) console.warn('[jepow-engine daemon]', panic);
-    });
-
-    daemonProc.on('error', (err) => {
-      daemonStarting = null;
-      reject(err);
-    });
-
-    daemonProc.on('close', () => {
-      daemonProc = null;
-      daemonSessionPath = null;
-      for (const [, p] of daemonPending) {
-        clearTimeout(p.timer);
-        p.reject(new Error('daemon exited'));
-      }
-      daemonPending.clear();
-    });
+    attachDaemonProcHandlers(daemonProc);
 
     daemonRequest({ cmd: 'ping' }, 30000)
       .then((r) => {
@@ -173,26 +266,37 @@ function ensureDaemon() {
   return daemonStarting;
 }
 
-function daemonRequest(payload, timeoutMs = 120000) {
-  return ensureDaemon().then(
-    () =>
-      new Promise((resolve, reject) => {
-        const id = ++daemonReqId;
-        const timer = setTimeout(() => {
-          daemonPending.delete(id);
-          reject(new Error(`daemon 超时 (${payload.cmd})`));
-        }, timeoutMs);
+function daemonRequest(payload, timeoutMs = 120000, retried = false) {
+  return ensureDaemon()
+    .then(
+      () =>
+        new Promise((resolve, reject) => {
+          const id = ++daemonReqId;
+          const timer = setTimeout(() => {
+            daemonPending.delete(id);
+            reject(new Error(`daemon 超时 (${payload.cmd})`));
+          }, timeoutMs);
 
-        daemonPending.set(id, { resolve, reject, timer });
-        try {
-          daemonProc.stdin.write(`${JSON.stringify({ ...payload, id })}\n`);
-        } catch (e) {
-          clearTimeout(timer);
-          daemonPending.delete(id);
-          reject(e);
-        }
-      }),
-  );
+          daemonPending.set(id, { resolve, reject, timer });
+          writeDaemonLine(JSON.stringify({ ...payload, id })).catch((e) => {
+            clearTimeout(timer);
+            daemonPending.delete(id);
+            reject(e);
+          });
+        }),
+    )
+    .catch(async (err) => {
+      const msg = String(err?.message || err || '');
+      if (
+        !retried &&
+        /EPIPE|daemon exited|daemon not running|ECONNRESET|broken pipe/i.test(msg)
+      ) {
+        killDaemon();
+        await ensureDaemon();
+        return daemonRequest(payload, timeoutMs, true);
+      }
+      throw err;
+    });
 }
 
 let engineQueue = Promise.resolve();
@@ -555,6 +659,13 @@ function normalizeScenePath(scenePath) {
   return path.normalize(raw);
 }
 
+function warmPickCache(scenePath) {
+  const p = normalizeScenePath(scenePath);
+  if (!p) return Promise.resolve();
+  // GPU ID picking uses the already loaded viewport session; no CPU pre-warm is needed.
+  return Promise.resolve();
+}
+
 async function openScene(scenePath) {
   const p = normalizeScenePath(scenePath);
   try {
@@ -563,12 +674,16 @@ async function openScene(scenePath) {
       if (loaded.ok) {
         daemonSessionPath = p;
         daemonSessionInfo = loaded;
+        void warmPickCache(p);
       }
       return loaded;
     }
+    void warmPickCache(p);
     return daemonSessionInfo || { ok: true, scenePath: p, cached: true };
   } catch {
-    return runEngineCommand('open_scene', { scenePath: p });
+    const loaded = await runEngineCommand('open_scene', { scenePath: p });
+    if (loaded?.ok) void warmPickCache(p);
+    return loaded;
   }
 }
 
@@ -576,6 +691,45 @@ async function listSceneObjects(scenePath) {
   const p = normalizeScenePath(scenePath);
   if (!p) return { ok: false, error: 'scenePath required' };
   return runEngineCommand('list_scene_objects', { scenePath: p }, 120000);
+}
+
+async function pickSceneObject(opts = {}) {
+  const p = normalizeScenePath(opts.scenePath);
+  if (!p) return { ok: false, error: 'scenePath required' };
+  const payload = {
+    scenePath: p,
+    cursorX: opts.cursorX,
+    cursorY: opts.cursorY,
+    width: opts.width,
+    height: opts.height,
+    cameraYaw: opts.cameraYaw,
+    cameraPitch: opts.cameraPitch,
+    cameraDistance: opts.cameraDistance,
+    cameraFov: opts.cameraFov,
+    panX: opts.panX,
+    panY: opts.panY,
+    panZ: opts.panZ,
+    x: opts.x,
+    y: opts.y,
+    z: opts.z,
+    rx: opts.rx,
+    ry: opts.ry,
+    rz: opts.rz,
+    scale: opts.scale,
+  };
+  try {
+    await ensureDaemon();
+    if (daemonSessionPath === p) {
+      return await daemonRequest({ cmd: 'pick_scene_object', ...payload }, 45000);
+    }
+  } catch {
+    /* fallback */
+  }
+  try {
+    return await runEngineCommand('pick_scene_object', payload, 45000);
+  } catch (e) {
+    return { ok: false, error: e.message || String(e) };
+  }
 }
 
 async function renderPreview(opts = {}) {
@@ -589,6 +743,7 @@ async function renderPreview(opts = {}) {
     cameraFov,
     panX,
     panY,
+    panZ,
     lightYaw,
     lightPitch,
     lightAmbient,
@@ -611,6 +766,15 @@ async function renderPreview(opts = {}) {
     materialEmissionStrength,
     shading,
     liveRender,
+    highlightSceneObjectId,
+    highlightSubmeshMaterialTint,
+    highlightSubmeshMaterialRoughness,
+    highlightSubmeshMaterialMetalness,
+    highlightSubmeshMaterialSpecular,
+    highlightSubmeshMaterialClearcoat,
+    highlightSubmeshMaterialTransmission,
+    highlightSubmeshMaterialEmissionStrength,
+    assignedSubmeshMaterials,
   } = opts;
 
   const p = normalizeScenePath(scenePath);
@@ -628,6 +792,7 @@ async function renderPreview(opts = {}) {
     cameraFov,
     panX,
     panY,
+    panZ,
     lightYaw,
     lightPitch,
     lightAmbient,
@@ -649,20 +814,38 @@ async function renderPreview(opts = {}) {
     materialTransmission,
     materialEmissionStrength,
     shading: shading || (liveRender ? 'clay' : 'clay'),
+    highlightSceneObjectId:
+      typeof highlightSceneObjectId === 'string' && highlightSceneObjectId.trim()
+        ? highlightSceneObjectId.trim()
+        : undefined,
+    highlightSubmeshMaterialTint,
+    highlightSubmeshMaterialRoughness,
+    highlightSubmeshMaterialMetalness,
+    highlightSubmeshMaterialSpecular,
+    highlightSubmeshMaterialClearcoat,
+    highlightSubmeshMaterialTransmission,
+    highlightSubmeshMaterialEmissionStrength,
+    assignedSubmeshMaterials: Array.isArray(assignedSubmeshMaterials)
+      ? assignedSubmeshMaterials
+      : undefined,
   };
 
   try {
+    const startedAt = Date.now();
     const result = await daemonRequest(payload, liveRender ? 60000 : 300000);
     if (!result.ok) return result;
+    const stats = noteViewportFrame('daemon', width, height, result, startedAt);
     return {
       ...result,
       previewUrl: `viewport-cache://${LIVE_FRAME_NAME}`,
       localPath: outputPath,
       daemon: true,
+      viewportStats: stats,
     };
   } catch (e) {
     const id = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     const fallbackPath = path.join(getViewportCacheDir(), `jepow-${id}.png`);
+    const startedAt = Date.now();
     const result = await runEngineCommand('render_frame', {
       scenePath: p,
       outputPath: fallbackPath,
@@ -674,6 +857,7 @@ async function renderPreview(opts = {}) {
       cameraFov,
       panX,
       panY,
+      panZ,
       lightYaw,
       lightPitch,
       lightAmbient,
@@ -695,13 +879,29 @@ async function renderPreview(opts = {}) {
       materialTransmission,
       materialEmissionStrength,
       shading: shading || 'clay',
+      highlightSceneObjectId:
+        typeof highlightSceneObjectId === 'string' && highlightSceneObjectId.trim()
+          ? highlightSceneObjectId.trim()
+          : undefined,
+      highlightSubmeshMaterialTint,
+      highlightSubmeshMaterialRoughness,
+      highlightSubmeshMaterialMetalness,
+      highlightSubmeshMaterialSpecular,
+      highlightSubmeshMaterialClearcoat,
+      highlightSubmeshMaterialTransmission,
+      highlightSubmeshMaterialEmissionStrength,
+      assignedSubmeshMaterials: Array.isArray(assignedSubmeshMaterials)
+        ? assignedSubmeshMaterials
+        : undefined,
     });
     if (!result.ok) return { ...result, error: e.message || result.error };
+    const stats = noteViewportFrame('fallback', width, height, result, startedAt);
     return {
       ...result,
       previewUrl: `viewport-cache://${path.basename(fallbackPath)}`,
       localPath: fallbackPath,
       daemon: false,
+      viewportStats: stats,
     };
   }
 }
@@ -762,6 +962,7 @@ module.exports = {
   getStatus,
   openScene,
   listSceneObjects,
+  pickSceneObject,
   renderPreview,
   meshForCycles,
   runArchitectureSelfTest,

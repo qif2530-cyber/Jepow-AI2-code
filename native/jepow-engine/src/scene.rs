@@ -46,7 +46,7 @@ pub fn load_scene_stats(path: &str) -> Result<SceneStats> {
 }
 
 fn load_fbx_stats(path: &str, ext: &str) -> Result<SceneStats> {
-    let scene = ufbx::load_file(path, ufbx::LoadOpts::default())
+    let scene = ufbx::load_file(path, crate::mesh_loader::fbx_load_opts_blender_style())
         .map_err(|e| anyhow::anyhow!("fbx load: {:?}", e))?;
     let mesh_count = scene.meshes.len();
     let mut triangle_count = 0_usize;
@@ -150,7 +150,7 @@ fn list_single_mesh_object(path: &str, _ext: &str) -> Result<Vec<SceneObjectEntr
 }
 
 fn list_fbx_objects(path: &str) -> Result<Vec<SceneObjectEntry>> {
-    let scene = ufbx::load_file(path, ufbx::LoadOpts::default())
+    let scene = ufbx::load_file(path, crate::mesh_loader::fbx_load_opts_blender_style())
         .map_err(|e| anyhow::anyhow!("fbx load: {:?}", e))?;
     let mut out = Vec::new();
     for node in &scene.nodes {

@@ -7,12 +7,43 @@ import {
   invalidateViewportCache,
 } from "../lib/viewport-engine";
 import { invalidateViewportPerformance } from "../lib/viewport-performance";
+import { pickSceneObjectAtCursor } from "../lib/scene-object-pick";
+import { panCameraByScreenDelta } from "../lib/viewport-camera";
 import type {
   ViewportCamera,
   ViewportLighting,
   ViewportMaterialPreview,
   ViewportObjectTransform,
 } from "../lib/viewport-engine/types";
+
+function materialToHighlightPayload(mat: ViewportMaterialPreview | null | undefined) {
+  if (!mat) return {};
+  return {
+    highlightSubmeshMaterialTint: mat.tint,
+    highlightSubmeshMaterialRoughness: mat.roughness,
+    highlightSubmeshMaterialMetalness: mat.metalness,
+    highlightSubmeshMaterialSpecular: mat.specular,
+    highlightSubmeshMaterialClearcoat: mat.clearcoat,
+    highlightSubmeshMaterialTransmission: mat.transmission,
+    highlightSubmeshMaterialEmissionStrength: mat.emissionStrength,
+  };
+}
+
+export type AssignedSubmeshMaterialPreview = ViewportMaterialPreview & {
+  objectId: string;
+};
+
+function materialToAssignedPayload(mat: ViewportMaterialPreview) {
+  return {
+    materialTint: mat.tint,
+    materialRoughness: mat.roughness,
+    materialMetalness: mat.metalness,
+    materialSpecular: mat.specular,
+    materialClearcoat: mat.clearcoat,
+    materialTransmission: mat.transmission,
+    materialEmissionStrength: mat.emissionStrength,
+  };
+}
 
 export type ViewportPreviewMode = "turntable" | "orbit";
 
@@ -40,6 +71,10 @@ interface JepowViewportPreviewProps {
   viewCamera?: ViewportCamera;
   /** 锁定首次测量分辨率，避免无限画布缩放触发反复重渲 */
   lockRenderSize?: boolean;
+  /** 静态预览最大宽度（3D 编辑器默认 2048） */
+  previewMaxWidth?: number;
+  /** final 质量时按 previewMaxWidth 离屏渲染（显示更清晰，与容器 CSS 尺寸无关） */
+  native2KFinal?: boolean;
   /** Orbit 相机变化时同步给父组件，供 Cycles 使用同一视角。 */
   onCameraChange?: (camera: ViewportCamera) => void;
   onInteractingChange?: (interacting: boolean) => void;
@@ -47,6 +82,15 @@ interface JepowViewportPreviewProps {
    * Cycles 模式下叠在路径追踪图之上：容器可交互，白膜图透明，便于旋转/平移/缩放时看到实时反馈。
    */
   ghostOverlay?: boolean;
+  /** `fbx-{id}` from scene outliner — highlights sub-mesh in native viewport */
+  highlightSceneObjectId?: string | null;
+  /** 选中子对象已指定材质时，在视口子网格上预览该 PBR */
+  highlightSubmeshMaterial?: ViewportMaterialPreview | null;
+  /** 场景集合里按对象指定的材质（可多个，仅作用于对应子网格） */
+  assignedSubmeshMaterials?: AssignedSubmeshMaterialPreview[];
+  /** 视口单击拾取子对象（小位移视为点击，非拖拽轨道） */
+  onSceneObjectPick?: (objectId: string | null) => void;
+  sceneObjectNameById?: Record<string, string>;
   onSceneInfo?: (info: {
     meshCount?: number;
     nodeCount?: number;
@@ -78,12 +122,24 @@ function computeRenderSize(
   viewportH: number,
   quality: "draft" | "final",
   liveRender: boolean,
+  previewMaxWidth = 2048,
+  native2KFinal = false,
 ) {
   const vw = Math.max(1, viewportW);
   const vh = Math.max(1, viewportH);
   const aspect = vh / vw;
-  const maxW = quality === "draft" ? 960 : 2048;
-  const maxH = quality === "draft" ? 720 : 1536;
+  const finalCapW = Math.max(640, Math.min(2048, previewMaxWidth));
+  const maxH = quality === "draft" ? 720 : Math.round((1536 * finalCapW) / 2048);
+  if (quality === "final" && native2KFinal) {
+    let w = finalCapW;
+    let h = Math.round(w * aspect);
+    if (h > maxH) {
+      h = maxH;
+      w = Math.max(640, Math.round(h / aspect));
+    }
+    return { w, h };
+  }
+  const maxW = quality === "draft" ? 960 : finalCapW;
   let w =
     quality === "draft"
       ? Math.min(Math.max(vw, 480), maxW)
@@ -111,21 +167,8 @@ function mapEditorLighting(lighting?: ViewportLighting) {
   };
 }
 
-/** 屏幕空间平移（与当前 orbit yaw 对齐） */
-function panCameraScreen(
-  base: ViewportCamera,
-  dx: number,
-  dy: number,
-  sens = 0.004,
-): ViewportCamera {
-  const yaw = base.yaw ?? 0;
-  const cos = Math.cos(yaw);
-  const sin = Math.sin(yaw);
-  return {
-    ...base,
-    panX: (base.panX ?? 0) + (-dx * cos + dy * sin * 0.25) * sens,
-    panY: (base.panY ?? 0) + dy * sens,
-  };
+function isPanPointerButton(button: number, shiftKey: boolean, altKey: boolean) {
+  return button === 1 || button === 2 || shiftKey || altKey;
 }
 
 export function JepowViewportPreview({
@@ -144,10 +187,17 @@ export function JepowViewportPreview({
   defaultCamera,
   viewCamera,
   lockRenderSize = false,
+  previewMaxWidth = 2048,
+  native2KFinal = false,
   onCameraChange,
   onInteractingChange,
   onSceneInfo,
   ghostOverlay = false,
+  highlightSceneObjectId = null,
+  highlightSubmeshMaterial = null,
+  assignedSubmeshMaterials = [],
+  onSceneObjectPick,
+  sceneObjectNameById,
 }: JepowViewportPreviewProps) {
   const initialCameraRef = useRef<ViewportCamera>({
     ...(viewCamera ?? defaultCamera ?? DEFAULT_CAM),
@@ -160,6 +210,7 @@ export function JepowViewportPreview({
       defaultCamera?.distance,
       defaultCamera?.panX,
       defaultCamera?.panY,
+      defaultCamera?.panZ,
     ],
   );
   const containerRef = useRef<HTMLDivElement>(null);
@@ -172,8 +223,18 @@ export function JepowViewportPreview({
   const staticRendered = useRef(false);
   const [isDragging, setIsDragging] = useState(false);
   const [previewSrc, setPreviewSrc] = useState<string | null>(null);
+  const previewSrcRef = useRef<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [, setSceneLabel] = useState<string | null>(null);
+  const [viewportStats, setViewportStats] = useState<{
+    fpsWindowCalls?: number;
+    daemonWindowCalls?: number;
+    fallbackWindowCalls?: number;
+    lastFrameMs?: number;
+    lastTotalMs?: number;
+    lastWidth?: number;
+    lastHeight?: number;
+  } | null>(null);
   const [engineReady, setEngineReady] = useState<boolean | null>(null);
   const [engineError, setEngineError] = useState<string | null>(null);
   const [camera, setCamera] = useState<ViewportCamera>({ ...initialCam });
@@ -182,14 +243,54 @@ export function JepowViewportPreview({
   const transformRef = useRef(transform);
   const lightingRef = useRef(lighting);
   const materialRef = useRef(material);
+  const onCameraChangeRef = useRef(onCameraChange);
+  const highlightRef = useRef(highlightSceneObjectId);
+  const highlightSubmeshMaterialRef = useRef(highlightSubmeshMaterial);
+  const assignedSubmeshMaterialsRef = useRef(assignedSubmeshMaterials);
+  const onSceneInfoRef = useRef(onSceneInfo);
+  const pendingParentCameraRef = useRef<ViewportCamera | null>(null);
+  const parentCameraNotifyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastParentCameraNotifyAtRef = useRef(0);
   cameraRef.current = camera;
-  const syncCamera = useCallback(
-    (next: ViewportCamera) => {
-      cameraRef.current = next;
-      setCamera(next);
-      onCameraChange?.(next);
+  const flushParentCameraChange = useCallback((next: ViewportCamera) => {
+    pendingParentCameraRef.current = null;
+    if (parentCameraNotifyTimerRef.current != null) {
+      clearTimeout(parentCameraNotifyTimerRef.current);
+      parentCameraNotifyTimerRef.current = null;
+    }
+    lastParentCameraNotifyAtRef.current = Date.now();
+    onCameraChangeRef.current?.(next);
+  }, []);
+  const scheduleParentCameraChange = useCallback(
+    (next: ViewportCamera, defer: boolean) => {
+      if (!defer) {
+        flushParentCameraChange(next);
+        return;
+      }
+      pendingParentCameraRef.current = next;
+      const elapsed = Date.now() - lastParentCameraNotifyAtRef.current;
+      if (elapsed >= 90) {
+        flushParentCameraChange(next);
+        return;
+      }
+      if (parentCameraNotifyTimerRef.current != null) return;
+      parentCameraNotifyTimerRef.current = setTimeout(() => {
+        const pending = pendingParentCameraRef.current;
+        if (pending) flushParentCameraChange(pending);
+      }, Math.max(16, 90 - elapsed));
     },
-    [onCameraChange],
+    [flushParentCameraChange],
+  );
+  const syncCamera = useCallback(
+    (
+      next: ViewportCamera,
+      opts: { deferParent?: boolean; deferState?: boolean } = {},
+    ) => {
+      cameraRef.current = next;
+      if (!opts.deferState) setCamera(next);
+      scheduleParentCameraChange(next, opts.deferParent === true);
+    },
+    [scheduleParentCameraChange],
   );
 
   useEffect(() => {
@@ -201,6 +302,7 @@ export function JepowViewportPreview({
       Math.abs((current.distance ?? 0) - (viewCamera.distance ?? 0)) < 0.0001 &&
       Math.abs((current.panX ?? 0) - (viewCamera.panX ?? 0)) < 0.0001 &&
       Math.abs((current.panY ?? 0) - (viewCamera.panY ?? 0)) < 0.0001 &&
+      Math.abs((current.panZ ?? 0) - (viewCamera.panZ ?? 0)) < 0.0001 &&
       Math.abs((current.fov ?? Math.PI / 4) - (viewCamera.fov ?? Math.PI / 4)) < 0.0001;
     if (same) return;
     cameraRef.current = { ...viewCamera };
@@ -210,12 +312,18 @@ export function JepowViewportPreview({
   transformRef.current = transform;
   lightingRef.current = lighting;
   materialRef.current = material;
+  onCameraChangeRef.current = onCameraChange;
+  highlightRef.current = highlightSceneObjectId;
+  highlightSubmeshMaterialRef.current = highlightSubmeshMaterial;
+  assignedSubmeshMaterialsRef.current = assignedSubmeshMaterials;
+  onSceneInfoRef.current = onSceneInfo;
   viewCameraRef.current = viewCamera;
 
   const turntableYaw = useRef(0);
   const animRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const renderGen = useRef(0);
   const renderInFlight = useRef(false);
+  const lastRenderRequestKey = useRef("");
   const queuedRender = useRef<{
     cam: ViewportCamera;
     silent: boolean;
@@ -231,9 +339,31 @@ export function JepowViewportPreview({
   const [heavyScene, setHeavyScene] = useState(false);
   const [sceneMetaReady, setSceneMetaReady] = useState(false);
   const lockedRenderSize = useRef<{ w: number; h: number } | null>(null);
+  const lastPickRenderSize = useRef({ w: 640, h: 480 });
+  const clickStartRef = useRef<{ x: number; y: number } | null>(null);
+  const orbitDragActiveRef = useRef(false);
+  const pickInFlight = useRef(false);
+  const [picking, setPicking] = useState(false);
+  const [pickStatus, setPickStatus] = useState<string | null>(null);
+  const spacePanRef = useRef(false);
 
   useEffect(() => {
-    if (!liveRender) {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.code === "Space") spacePanRef.current = true;
+    };
+    const onKeyUp = (e: KeyboardEvent) => {
+      if (e.code === "Space") spacePanRef.current = false;
+    };
+    window.addEventListener("keydown", onKeyDown);
+    window.addEventListener("keyup", onKeyUp);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+      window.removeEventListener("keyup", onKeyUp);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!liveRender && !fill) {
       staticPreviewSize.current = { w: 480, h: Math.max(200, height) };
       setViewportSize(staticPreviewSize.current);
       return;
@@ -282,6 +412,11 @@ export function JepowViewportPreview({
     };
   }, [fill, height, liveRender, lockRenderSize]);
 
+  useEffect(() => {
+    if (!fill || !lockRenderSize) return;
+    lockedRenderSize.current = null;
+  }, [scenePath, fill, lockRenderSize]);
+
   const renderWithCamera = useCallback(
     async (
       cam: ViewportCamera,
@@ -309,7 +444,7 @@ export function JepowViewportPreview({
             setSceneLabel(
               `${info.extension?.toUpperCase() || "3D"} · ${info.meshCount ?? 0} 网格 · ${info.nodeCount ?? 0} 节点${heavy && !liveRender ? " · 静态预览" : liveRender ? " · 2K 实时" : ""}`,
             );
-            onSceneInfo?.(info);
+            onSceneInfoRef.current?.(info);
           } else if (!silent) {
             setEngineError(info.error || "无法打开场景");
           }
@@ -320,10 +455,42 @@ export function JepowViewportPreview({
           viewportSize.h,
           quality,
           liveRender,
+          previewMaxWidth,
+          native2KFinal,
         );
+        lastPickRenderSize.current = { w: previewW, h: previewH };
         const lit = mapEditorLighting(lightingRef.current);
         const tr = transformRef.current;
         const mat = materialRef.current;
+        const assigned = assignedSubmeshMaterialsRef.current;
+        const assignedPayload = assigned.map((entry) => ({
+          objectId: entry.objectId,
+          ...materialToAssignedPayload(entry),
+          ...materialToHighlightPayload(entry),
+        }));
+        const pickHighlightId = highlightRef.current || undefined;
+        const singleHighlightPayload = pickHighlightId
+          ? materialToHighlightPayload(highlightSubmeshMaterialRef.current)
+          : {};
+        const requestKey = JSON.stringify({
+          scenePath,
+          previewW,
+          previewH,
+          cam,
+          lighting: lit,
+          transform: tr,
+          material: mat,
+          shading,
+          liveRender,
+          quality,
+          highlightSceneObjectId: pickHighlightId,
+          highlight: singleHighlightPayload,
+          assigned: assignedPayload,
+        });
+        if (requestKey === lastRenderRequestKey.current && previewSrcRef.current) {
+          return;
+        }
+        lastRenderRequestKey.current = requestKey;
         const result = await eng.renderPreview({
           scenePath,
           width: previewW,
@@ -335,14 +502,19 @@ export function JepowViewportPreview({
           shading,
           liveRender,
           previewQuality: quality,
+          highlightSceneObjectId: pickHighlightId,
+          ...singleHighlightPayload,
+          assignedSubmeshMaterials: assignedPayload,
         });
         if (gen !== renderGen.current) return;
         if (!result.ok || !result.previewUrl) {
           const msg = result.error || "原生视口渲染失败";
           setEngineError(msg);
+          previewSrcRef.current = null;
           setPreviewSrc(null);
           return;
         }
+        setViewportStats(result.viewportStats ?? null);
         const dataUrl = await eng.readPreviewDataUrl(
           `${result.previewUrl}?t=${Date.now()}`,
         );
@@ -351,6 +523,7 @@ export function JepowViewportPreview({
           const img = new Image();
           img.onload = () => {
             if (gen !== renderGen.current) return;
+            previewSrcRef.current = dataUrl;
             setPreviewSrc(dataUrl);
             setEngineError(null);
           };
@@ -379,11 +552,12 @@ export function JepowViewportPreview({
       scenePath,
       height,
       heavyScene,
-      onSceneInfo,
       viewportSize,
       lighting,
       shading,
       liveRender,
+      previewMaxWidth,
+      native2KFinal,
     ],
   );
   const renderWithCameraRef = useRef(renderWithCamera);
@@ -392,6 +566,7 @@ export function JepowViewportPreview({
   const lightingKey = JSON.stringify(lighting ?? {});
   const transformKey = JSON.stringify(transform ?? {});
   const materialKey = JSON.stringify(material ?? {});
+  const highlightKey = `${highlightSceneObjectId || ""}:${JSON.stringify(highlightSubmeshMaterial || null)}:${JSON.stringify(assignedSubmeshMaterials || [])}`;
 
   useEffect(() => {
     if (engineReady !== true || !sceneMetaReady) return;
@@ -402,7 +577,16 @@ export function JepowViewportPreview({
     }, delay);
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [lightingKey, transformKey, materialKey, shading, engineReady, sceneMetaReady, liveRender]);
+  }, [
+    lightingKey,
+    transformKey,
+    materialKey,
+    highlightKey,
+    shading,
+    engineReady,
+    sceneMetaReady,
+    liveRender,
+  ]);
 
   const lastResetToken = useRef(0);
   useEffect(() => {
@@ -427,10 +611,12 @@ export function JepowViewportPreview({
     setSceneMetaReady(false);
     renderGen.current += 1;
     renderInFlight.current = false;
+    lastRenderRequestKey.current = "";
     invalidateViewportCache();
     invalidateViewportPerformance();
     setEngineReady(null);
     setEngineError(null);
+    previewSrcRef.current = null;
     lockedRenderSize.current = null;
     syncCamera({ ...(viewCameraRef.current ?? initialCam) });
     turntableYaw.current = 0;
@@ -452,6 +638,10 @@ export function JepowViewportPreview({
 
     return () => {
       if (animRef.current) clearInterval(animRef.current);
+      if (parentCameraNotifyTimerRef.current != null) {
+        clearTimeout(parentCameraNotifyTimerRef.current);
+        parentCameraNotifyTimerRef.current = null;
+      }
     };
   }, [scenePath, initialCam]);
 
@@ -477,7 +667,7 @@ export function JepowViewportPreview({
                     : " · 静态预览"
             }`,
           );
-          onSceneInfo?.(info);
+          onSceneInfoRef.current?.(info);
           setEngineError(null);
           setSceneMetaReady(true);
           return;
@@ -499,14 +689,12 @@ export function JepowViewportPreview({
     return () => {
       cancelled = true;
     };
-  }, [engineReady, scenePath, onSceneInfo]);
+  }, [engineReady, scenePath]);
 
   useEffect(() => {
     if (engineReady !== true || !sceneMetaReady) return;
 
     if (!liveRender) {
-      if (staticRendered.current) return;
-      staticRendered.current = true;
       void renderWithCamera({ ...cameraRef.current }, false, "final");
       return undefined;
     }
@@ -570,7 +758,7 @@ export function JepowViewportPreview({
     let raf = 0;
     let last = 0;
     const loop = (now: number) => {
-      const interval = heavyScene ? 52 : 36;
+      const interval = heavyScene ? 120 : 80;
       if (now - last >= interval && !renderInFlight.current) {
         last = now;
         void renderWithCamera(cameraRef.current, true, "draft");
@@ -589,24 +777,80 @@ export function JepowViewportPreview({
     renderWithCamera,
   ]);
 
+  const tryPickSceneObject = useCallback(
+    async (clientX: number, clientY: number) => {
+      if (!scenePath || !onSceneObjectPick || !containerRef.current) return;
+      if (pickInFlight.current) return;
+      const rect = containerRef.current.getBoundingClientRect();
+      if (rect.width < 8 || rect.height < 8) return;
+      pickInFlight.current = true;
+      setPicking(true);
+      try {
+        const { w, h } = lastPickRenderSize.current;
+        const objectId = await pickSceneObjectAtCursor({
+          scenePath,
+          clientX,
+          clientY,
+          containerRect: rect,
+          width: w,
+          height: h,
+          camera: cameraRef.current,
+          transform: transformRef.current,
+        });
+        highlightRef.current = objectId;
+        onSceneObjectPick(objectId);
+        const label = objectId ? sceneObjectNameById?.[objectId] || objectId : "";
+        setPickStatus(objectId ? `命中 ${label}` : "未命中子对象");
+        if (objectId) {
+          void renderWithCamera(cameraRef.current, true, "final");
+        }
+      } finally {
+        pickInFlight.current = false;
+        setPicking(false);
+      }
+    },
+    [scenePath, onSceneObjectPick, renderWithCamera, sceneObjectNameById],
+  );
+
   const onPointerDown = (e: React.PointerEvent) => {
     if (mode !== "orbit") return;
-    if (!liveRender) return;
+    if (!liveRender && !onSceneObjectPick) return;
     e.stopPropagation();
-    e.currentTarget.setPointerCapture(e.pointerId);
-    setIsDragging(true);
-    onInteractingChange?.(true);
+    clickStartRef.current = { x: e.clientX, y: e.clientY };
+    orbitDragActiveRef.current = false;
+    const panMode =
+      !orbitOnly &&
+      (spacePanRef.current ||
+        isPanPointerButton(e.button, e.shiftKey, e.altKey));
     dragging.current = {
-      kind:
-        orbitOnly || !(e.button === 2 || e.shiftKey) ? "orbit" : "pan",
+      kind: panMode ? "pan" : "orbit",
       x: e.clientX,
       y: e.clientY,
-      cam: { ...cameraRef.current },
+      cam: {
+        ...cameraRef.current,
+        distance: cameraRef.current.distance ?? 2.45,
+        fov: cameraRef.current.fov ?? Math.PI / 4,
+      },
     };
   };
 
   const onPointerMove = (e: React.PointerEvent) => {
     if (!dragging.current || mode !== "orbit") return;
+    const start = clickStartRef.current;
+    if (start && !orbitDragActiveRef.current) {
+      const moved = Math.hypot(e.clientX - start.x, e.clientY - start.y);
+      if (moved > 6) {
+        orbitDragActiveRef.current = true;
+        setIsDragging(true);
+        onInteractingChange?.(true);
+        try {
+          e.currentTarget.setPointerCapture(e.pointerId);
+        } catch {
+          /* ignore */
+        }
+      }
+    }
+    if (!orbitDragActiveRef.current) return;
     e.stopPropagation();
     const dx = e.clientX - dragging.current.x;
     const dy = e.clientY - dragging.current.y;
@@ -620,15 +864,27 @@ export function JepowViewportPreview({
               -1.1,
               Math.min(1.1, (base.pitch ?? 0) + dy * 0.006),
             ),
+            distance: base.distance ?? 2.45,
+            panX: base.panX ?? 0,
+            panY: base.panY ?? 0,
+            panZ: base.panZ ?? 0,
           }
-        : panCameraScreen(base, dx, dy);
-    syncCamera(next);
+        : panCameraByScreenDelta(base, dx, dy);
+    syncCamera(next, { deferParent: true, deferState: true });
   };
 
   const onPointerUp = (e: React.PointerEvent) => {
     if (!dragging.current) return;
     e.stopPropagation();
+    const start = clickStartRef.current;
+    clickStartRef.current = null;
+    const dx = start ? e.clientX - start.x : 0;
+    const dy = start ? e.clientY - start.y : 0;
+    const isClick =
+      start != null && Math.hypot(dx, dy) < 12 && e.button === 0;
     dragging.current = null;
+    const wasDrag = orbitDragActiveRef.current;
+    orbitDragActiveRef.current = false;
     setIsDragging(false);
     onInteractingChange?.(false);
     try {
@@ -636,13 +892,24 @@ export function JepowViewportPreview({
     } catch {
       /* ignore */
     }
-    if (liveRender && mode === "orbit") {
-      void renderWithCamera(cameraRef.current, true, "final");
+    if (isClick && !wasDrag && onSceneObjectPick) {
+      void tryPickSceneObject(e.clientX, e.clientY);
+      return;
+    }
+    if (mode === "orbit") {
+      const finalCamera = cameraRef.current;
+      setCamera(finalCamera);
+      flushParentCameraChange(finalCamera);
+      void renderWithCamera(
+        finalCamera,
+        true,
+        liveRender && wasDrag ? "draft" : "final",
+      );
     }
   };
 
   const onWheel = (e: React.WheelEvent) => {
-    if (orbitOnly || !liveRender || mode !== "orbit") return;
+    if (orbitOnly || mode !== "orbit" || dragging.current?.kind === "pan") return;
     e.stopPropagation();
     e.preventDefault();
     const next = {
@@ -653,9 +920,13 @@ export function JepowViewportPreview({
       ),
     };
     onInteractingChange?.(true);
-    syncCamera(next);
+    syncCamera(next, { deferParent: true });
     window.setTimeout(() => onInteractingChange?.(false), 160);
-    void renderWithCamera(next, true, "draft");
+    void renderWithCamera(
+      next,
+      true,
+      liveRender ? "draft" : "final",
+    );
   };
 
   if (engineReady !== true) {
@@ -685,7 +956,7 @@ export function JepowViewportPreview({
   return (
     <div
       ref={containerRef}
-      className={`${shellClass} nodrag nopan nowheel ${
+      className={`${shellClass} nodrag nopan nowheel select-none ${
         ghostOverlay ? "bg-transparent border-0" : "bg-neutral-950 border"
       } ${
         !ghostOverlay && !fill
@@ -693,7 +964,11 @@ export function JepowViewportPreview({
             ? "border-purple-500/50"
             : "border-emerald-500/40"
           : ""
-      } ${(liveRender || orbitOnly) && mode === "orbit" ? "cursor-grab active:cursor-grabbing" : ""}`}
+      } ${
+        (liveRender || onSceneObjectPick || orbitOnly) && mode === "orbit"
+          ? "cursor-grab active:cursor-grabbing"
+          : ""
+      }`}
       style={shellStyle}
       onPointerDown={onPointerDown}
       onPointerMove={onPointerMove}
@@ -703,16 +978,18 @@ export function JepowViewportPreview({
       onLostPointerCapture={onPointerUp}
       onWheel={onWheel}
       onContextMenu={(e) => e.preventDefault()}
+      onDragStart={(e) => e.preventDefault()}
     >
       {previewSrc ? (
         <img
           src={previewSrc}
           alt="Jepow native viewport"
-          className={`w-full h-full pointer-events-none select-none object-cover transition-opacity duration-75 ${
+          className={`w-full h-full pointer-events-none select-none object-contain transition-opacity duration-75 [user-drag:none] [-webkit-user-drag:none] ${
             ghostOverlay ? "opacity-100 bg-[#1a1b1e]" : "opacity-100 bg-[#1a1b1e]"
           }`}
-          style={{ imageRendering: "auto" }}
+          style={{ imageRendering: "auto", WebkitUserDrag: "none" } as React.CSSProperties}
           draggable={false}
+          onDragStart={(e) => e.preventDefault()}
         />
       ) : (
         <div className="absolute inset-0 flex flex-col items-center justify-center text-neutral-500 gap-2 p-3 text-center pointer-events-none">
@@ -725,20 +1002,60 @@ export function JepowViewportPreview({
         </div>
       )}
 
-      {loading && mode === "orbit" && !liveRender && (
+      {(loading || picking) && mode === "orbit" && (
         <div className="absolute top-14 right-2 pointer-events-none">
           <span className="text-[8px] bg-black/70 text-violet-300 px-1.5 py-0.5 rounded border border-violet-900/40">
-            渲染中…
+            {picking ? "拾取中…" : "渲染中…"}
+          </span>
+        </div>
+      )}
+
+      {assignedSubmeshMaterials.length > 0 && mode === "orbit" && !picking && (
+        <div className="absolute top-14 right-2 pointer-events-none">
+          <span className="text-[8px] px-1.5 py-0.5 rounded border bg-black/70 text-emerald-200 border-emerald-500/40">
+            已赋材质 {assignedSubmeshMaterials.length} 个
+          </span>
+        </div>
+      )}
+      {viewportStats && mode === "orbit" && (
+        <div className="absolute left-2 top-2 pointer-events-none rounded border border-neutral-700/70 bg-black/65 px-1.5 py-1 text-[7px] leading-tight text-neutral-300">
+          <div>
+            wgpu {viewportStats.fpsWindowCalls ?? 0}/s · {viewportStats.lastWidth}x{viewportStats.lastHeight}
+          </div>
+          <div className="text-neutral-500">
+            gpu {Math.round(viewportStats.lastFrameMs ?? 0)}ms / ipc {Math.round(viewportStats.lastTotalMs ?? 0)}ms
+          </div>
+        </div>
+      )}
+      {pickStatus && mode === "orbit" && !picking && (
+        <div
+          className={`absolute pointer-events-none ${
+            assignedSubmeshMaterials.length > 0 ? "top-[4.5rem]" : "top-14"
+          } right-2`}
+        >
+          <span
+            className={`text-[8px] px-1.5 py-0.5 rounded border bg-black/70 ${
+              pickStatus.startsWith("命中")
+                ? "text-cyan-200 border-cyan-500/40"
+                : "text-amber-200 border-amber-500/40"
+            }`}
+          >
+            {pickStatus}
           </span>
         </div>
       )}
 
       {mode === "orbit" && !orbitOnly && (
-        <div className="absolute bottom-2 left-2 flex gap-1 pointer-events-none text-[7px] text-neutral-500">
-          <RotateCw className="w-3 h-3" />
-          <span>旋转</span>
-          <Move className="w-3 h-3 ml-1" />
-          <span>平移</span>
+        <div className="absolute bottom-2 left-2 flex flex-wrap gap-x-2 gap-y-0.5 pointer-events-none text-[7px] text-neutral-500 max-w-[220px]">
+          <span className="inline-flex items-center gap-1">
+            <RotateCw className="w-3 h-3" />
+            左键旋转
+          </span>
+          <span className="inline-flex items-center gap-1">
+            <Move className="w-3 h-3" />
+            中/右键·Shift 相机平面平移
+          </span>
+          <span className="opacity-70">滚轮缩放</span>
         </div>
       )}
       {mode === "orbit" && orbitOnly && (

@@ -54,6 +54,7 @@ fn main() {
         "physics_step_world" => cmd_physics_step_world(&payload),
         "open_scene" | "scene_info" => cmd_open_scene(&payload),
         "list_scene_objects" => cmd_list_scene_objects(&payload),
+        "pick_scene_object" => cmd_pick_scene_object(&payload),
         "render_frame" => cmd_render_frame(&payload),
         "mesh_stats" => cmd_mesh_stats(&payload),
         "mesh_for_cycles" => cmd_mesh_for_cycles(&payload),
@@ -209,6 +210,57 @@ fn cmd_list_scene_objects(payload: &serde_json::Value) {
     }
 }
 
+fn cmd_pick_scene_object(payload: &serde_json::Value) {
+    let scene_path = match payload.get("scenePath").and_then(|v| v.as_str()) {
+        Some(p) => p,
+        None => return emit_err("scenePath required"),
+    };
+    let cursor_x = payload
+        .get("cursorX")
+        .and_then(|v| v.as_f64())
+        .unwrap_or(0.0) as f32;
+    let cursor_y = payload
+        .get("cursorY")
+        .and_then(|v| v.as_f64())
+        .unwrap_or(0.0) as f32;
+    let width = payload
+        .get("width")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(640)
+        .clamp(1, 4096) as u32;
+    let height = payload
+        .get("height")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(480)
+        .clamp(1, 4096) as u32;
+    if payload.get("warmCacheOnly").and_then(|v| v.as_bool()) == Some(true) {
+        emit(serde_json::json!({
+            "scenePath": scene_path,
+            "warmed": true,
+        }));
+        return;
+    }
+    let camera = render::parse_camera(payload);
+    let transform = viewport_session::parse_object_transform(payload);
+    let mut session = match viewport_session::ViewportSession::new() {
+        Ok(session) => session,
+        Err(e) => return emit_err(e.to_string()),
+    };
+    if let Err(e) = session.load_scene(scene_path) {
+        return emit_err(e.to_string());
+    }
+    session.set_camera(camera);
+    session.set_transform(transform);
+    match session.pick_scene_object(cursor_x, cursor_y, width, height) {
+        Ok(object_id) => emit(serde_json::json!({
+            "scenePath": scene_path,
+            "objectId": object_id,
+            "picked": object_id.is_some(),
+        })),
+        Err(e) => emit_err(e.to_string()),
+    }
+}
+
 fn cmd_mesh_stats(payload: &serde_json::Value) {
     let scene_path = match payload.get("scenePath").and_then(|v| v.as_str()) {
         Some(p) => p,
@@ -278,7 +330,11 @@ fn cmd_render_frame(payload: &serde_json::Value) {
     let camera = render::parse_camera(payload);
     let light = render::parse_light(payload);
     let material = render::parse_material(payload);
-    match render::render_viewport_frame(
+    let highlight = payload
+        .get("highlightSceneObjectId")
+        .and_then(|v| v.as_str());
+    let highlight_mat = render::parse_highlight_submesh_material(payload);
+    match render::render_viewport_frame_from_payload(
         output_path,
         width,
         height,
@@ -286,6 +342,9 @@ fn cmd_render_frame(payload: &serde_json::Value) {
         camera,
         light,
         material,
+        highlight,
+        highlight_mat,
+        payload,
     ) {
         Ok(()) => emit(serde_json::json!({
             "imagePath": output_path,

@@ -39,6 +39,8 @@ export interface ViewportCamera {
   distance?: number;
   panX?: number;
   panY?: number;
+  /** 与 panX/panY 组成世界空间目标点偏移（相机平面平移） */
+  panZ?: number;
   /** Vertical field of view in radians; matches Cycles camera fov. */
   fov?: number;
 }
@@ -84,6 +86,20 @@ export interface RenderPreviewOptions {
   lighting?: ViewportLighting;
   transform?: ViewportObjectTransform;
   material?: ViewportMaterialPreview | null;
+  /** Scene outliner object id, e.g. fbx-167 — native viewport draws blue highlight */
+  highlightSceneObjectId?: string | null;
+  /** Assigned material preview on the highlighted sub-mesh */
+  highlightSubmeshMaterialTint?: string;
+  highlightSubmeshMaterialRoughness?: number;
+  highlightSubmeshMaterialMetalness?: number;
+  highlightSubmeshMaterialSpecular?: number;
+  highlightSubmeshMaterialClearcoat?: number;
+  highlightSubmeshMaterialTransmission?: number;
+  highlightSubmeshMaterialEmissionStrength?: number;
+  /** Per-object material assignments from scene outliner */
+  assignedSubmeshMaterials?: Array<
+    ViewportMaterialPreview & { objectId: string }
+  >;
   /** clay = Blender 白模视口；render = 更重光照（开渲染器） */
   shading?: 'clay' | 'render';
   liveRender?: boolean;
@@ -100,6 +116,15 @@ export interface RenderPreviewResult {
   frameMs?: number;
   renderSeconds?: number;
   daemon?: boolean;
+  viewportStats?: {
+    fpsWindowCalls?: number;
+    daemonWindowCalls?: number;
+    fallbackWindowCalls?: number;
+    lastFrameMs?: number;
+    lastTotalMs?: number;
+    lastWidth?: number;
+    lastHeight?: number;
+  };
   error?: string;
 }
 

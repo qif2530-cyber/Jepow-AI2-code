@@ -1,6 +1,7 @@
 use crate::viewport_session::ViewportSession;
 use anyhow::Result;
 use glam::{Mat4, Vec3};
+use serde_json::json;
 
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
@@ -104,6 +105,7 @@ pub struct ViewCamera {
     pub distance: f32,
     pub pan_x: f32,
     pub pan_y: f32,
+    pub pan_z: f32,
     pub fov: f32,
 }
 
@@ -115,6 +117,7 @@ impl Default for ViewCamera {
             distance: 2.45,
             pan_x: 0.0,
             pan_y: 0.0,
+            pan_z: 0.0,
             fov: 45.0_f32.to_radians(),
         }
     }
@@ -126,7 +129,7 @@ pub fn camera_mvp(width: u32, height: u32, cam: ViewCamera) -> Mat4 {
     let proj = Mat4::perspective_rh_gl(fov, aspect, 0.05, 100.0);
     let pitch = cam.pitch.clamp(-1.2, 1.2);
     let dist = cam.distance.clamp(0.35, 48.0);
-    let center = Vec3::new(cam.pan_x, cam.pan_y, 0.0);
+    let center = Vec3::new(cam.pan_x, cam.pan_y, cam.pan_z);
     let eye = center
         + Vec3::new(
             dist * pitch.cos() * cam.yaw.sin(),
@@ -196,7 +199,7 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
 }
 "#;
 
-pub fn render_viewport_frame(
+pub fn render_viewport_frame_from_payload(
     output_path: &str,
     width: u32,
     height: u32,
@@ -204,6 +207,9 @@ pub fn render_viewport_frame(
     camera: ViewCamera,
     light: ViewLight,
     material: ViewMaterial,
+    highlight_object_id: Option<&str>,
+    highlight_submesh_material: Option<ViewMaterial>,
+    payload: &serde_json::Value,
 ) -> Result<()> {
     let mut session = ViewportSession::new()?;
     if let Some(path) = scene_path.filter(|p| !p.is_empty()) {
@@ -212,15 +218,16 @@ pub fn render_viewport_frame(
     session.set_camera(camera);
     session.set_light(light);
     session.set_material(material);
+    session.set_highlight_object_id(highlight_object_id);
+    session.set_highlight_submesh_material(highlight_submesh_material);
+    session.set_assigned_submesh_materials(parse_assigned_submesh_materials(payload));
     session.draw_frame(output_path, width, height)?;
     Ok(())
 }
 
 fn parse_hex_color(raw: &str) -> Option<[f32; 3]> {
-    let s = raw.trim().trim_start_matches('#');
-    if s.len() != 6 {
-        return None;
-    }
+    let normalized = normalize_hex_tint(raw)?;
+    let s = normalized.trim_start_matches('#');
     let r = u8::from_str_radix(&s[0..2], 16).ok()? as f32 / 255.0;
     let g = u8::from_str_radix(&s[2..4], 16).ok()? as f32 / 255.0;
     let b = u8::from_str_radix(&s[4..6], 16).ok()? as f32 / 255.0;
@@ -281,6 +288,173 @@ pub fn parse_light(payload: &serde_json::Value) -> ViewLight {
     light
 }
 
+pub fn parse_highlight_submesh_material(payload: &serde_json::Value) -> Option<ViewMaterial> {
+    let tint = payload
+        .get("highlightSubmeshMaterialTint")
+        .and_then(|v| v.as_str())?;
+    let mut mapped = serde_json::json!({ "materialTint": tint });
+    if let Some(v) = payload
+        .get("highlightSubmeshMaterialRoughness")
+        .and_then(|v| v.as_f64())
+    {
+        mapped["materialRoughness"] = json!(v);
+    }
+    if let Some(v) = payload
+        .get("highlightSubmeshMaterialMetalness")
+        .and_then(|v| v.as_f64())
+    {
+        mapped["materialMetalness"] = json!(v);
+    }
+    if let Some(v) = payload
+        .get("highlightSubmeshMaterialSpecular")
+        .and_then(|v| v.as_f64())
+    {
+        mapped["materialSpecular"] = json!(v);
+    }
+    if let Some(v) = payload
+        .get("highlightSubmeshMaterialClearcoat")
+        .and_then(|v| v.as_f64())
+    {
+        mapped["materialClearcoat"] = json!(v);
+    }
+    if let Some(v) = payload
+        .get("highlightSubmeshMaterialTransmission")
+        .and_then(|v| v.as_f64())
+    {
+        mapped["materialTransmission"] = json!(v);
+    }
+    if let Some(v) = payload
+        .get("highlightSubmeshMaterialEmissionStrength")
+        .and_then(|v| v.as_f64())
+    {
+        mapped["materialEmissionStrength"] = json!(v);
+    }
+    Some(parse_material(&mapped))
+}
+
+#[derive(Clone, Debug)]
+pub struct AssignedSubmeshMaterialEntry {
+    pub object_id: String,
+    pub material: ViewMaterial,
+}
+
+fn normalize_hex_tint(raw: &str) -> Option<String> {
+    let s = raw.trim().trim_start_matches('#');
+    if s.len() == 6 && s.chars().all(|c| c.is_ascii_hexdigit()) {
+        return Some(format!("#{}", s));
+    }
+    if s.len() == 3 && s.chars().all(|c| c.is_ascii_hexdigit()) {
+        let expanded: String = s.chars().flat_map(|c| [c, c]).collect();
+        return Some(format!("#{}", expanded));
+    }
+    None
+}
+
+fn parse_submesh_material_from_value(obj: &serde_json::Value) -> Option<ViewMaterial> {
+    if let Some(mat) = parse_material_fields_from_object(obj) {
+        return Some(mat);
+    }
+    let mut mapped = serde_json::json!({});
+    if let Some(tint) = obj
+        .get("highlightSubmeshMaterialTint")
+        .and_then(|v| v.as_str())
+    {
+        mapped["materialTint"] = json!(tint);
+    }
+    for (src, dst) in [
+        ("highlightSubmeshMaterialRoughness", "materialRoughness"),
+        ("highlightSubmeshMaterialMetalness", "materialMetalness"),
+        ("highlightSubmeshMaterialSpecular", "materialSpecular"),
+        ("highlightSubmeshMaterialClearcoat", "materialClearcoat"),
+        ("highlightSubmeshMaterialTransmission", "materialTransmission"),
+        ("highlightSubmeshMaterialEmissionStrength", "materialEmissionStrength"),
+    ] {
+        if let Some(v) = obj.get(src).and_then(|v| v.as_f64()) {
+            mapped[dst] = json!(v);
+        }
+    }
+    if mapped.get("materialTint").is_some() {
+        return Some(parse_material(&mapped));
+    }
+    None
+}
+
+fn parse_material_fields_from_object(obj: &serde_json::Value) -> Option<ViewMaterial> {
+    let tint_raw = obj
+        .get("materialTint")
+        .or_else(|| obj.get("tint"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("#cccccc");
+    let tint = normalize_hex_tint(tint_raw).unwrap_or_else(|| "#cccccc".to_string());
+    let mut mapped = serde_json::json!({ "materialTint": tint });
+    for (src, dst) in [
+        ("materialRoughness", "materialRoughness"),
+        ("roughness", "materialRoughness"),
+        ("materialMetalness", "materialMetalness"),
+        ("metalness", "materialMetalness"),
+        ("materialSpecular", "materialSpecular"),
+        ("specular", "materialSpecular"),
+        ("materialClearcoat", "materialClearcoat"),
+        ("clearcoat", "materialClearcoat"),
+        ("materialTransmission", "materialTransmission"),
+        ("transmission", "materialTransmission"),
+        ("materialEmissionStrength", "materialEmissionStrength"),
+        ("emissionStrength", "materialEmissionStrength"),
+    ] {
+        if let Some(v) = obj.get(src).and_then(|v| v.as_f64()) {
+            mapped[dst] = json!(v);
+        }
+    }
+    Some(parse_material(&mapped))
+}
+
+pub fn parse_assigned_submesh_materials(
+    payload: &serde_json::Value,
+) -> Vec<AssignedSubmeshMaterialEntry> {
+    let Some(items) = payload
+        .get("assignedSubmeshMaterials")
+        .and_then(|v| v.as_array())
+    else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for item in items {
+        let object_id = item
+            .get("objectId")
+            .or_else(|| item.get("object_id"))
+            .and_then(|v| v.as_str())
+            .map(str::trim)
+            .filter(|s| !s.is_empty());
+        let Some(object_id) = object_id else {
+            continue;
+        };
+        let material = parse_submesh_material_from_value(item).unwrap_or(ViewMaterial {
+            base_color: [0.8, 0.2, 0.2],
+            ..ViewMaterial::default()
+        });
+        out.push(AssignedSubmeshMaterialEntry {
+            object_id: object_id.to_string(),
+            material,
+        });
+    }
+    out
+}
+
+pub fn find_submesh_index_range<'a>(
+    submeshes: &'a [crate::mesh_loader::SubmeshRange],
+    object_id: &str,
+) -> Option<&'a crate::mesh_loader::SubmeshRange> {
+    let needle = object_id.trim();
+    submeshes
+        .iter()
+        .find(|r| r.object_id == needle)
+        .or_else(|| {
+            submeshes
+                .iter()
+                .find(|r| r.object_id.eq_ignore_ascii_case(needle))
+        })
+}
+
 pub fn parse_camera(payload: &serde_json::Value) -> ViewCamera {
     let mut cam = ViewCamera::default();
     if let Some(v) = payload.get("cameraYaw").and_then(|v| v.as_f64()) {
@@ -300,6 +474,9 @@ pub fn parse_camera(payload: &serde_json::Value) -> ViewCamera {
     }
     if let Some(v) = payload.get("panY").and_then(|v| v.as_f64()) {
         cam.pan_y = v as f32;
+    }
+    if let Some(v) = payload.get("panZ").and_then(|v| v.as_f64()) {
+        cam.pan_z = v as f32;
     }
     cam
 }

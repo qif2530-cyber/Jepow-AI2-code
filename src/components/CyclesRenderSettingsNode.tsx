@@ -21,7 +21,7 @@ export function CyclesRenderSettingsNode({ id, data, selected }: CyclesRenderSet
   const bounces = data.bounces ?? 8;
   const width = data.width == null || data.width === 768 ? 2048 : data.width;
   const height = data.height == null || data.height === 512 ? 1536 : data.height;
-  const device = data.device ?? "CPU";
+  const device = data.device ?? "METAL";
   const denoise = data.denoise ?? true;
   const [metalAvailable, setMetalAvailable] = useState(false);
 
@@ -50,7 +50,7 @@ export function CyclesRenderSettingsNode({ id, data, selected }: CyclesRenderSet
         bounces: next.bounces ?? 8,
         width: next.width ?? 2048,
         height: next.height ?? 1536,
-        device: next.device ?? "CPU",
+        device: next.device ?? "METAL",
         denoise: next.denoise ?? true,
       },
     });

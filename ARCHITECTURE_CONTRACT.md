@@ -14,6 +14,16 @@ This is not a temporary implementation detail. Future changes must optimize with
 - `Assimp/USD Import`: owns broad DCC import and scene interchange. Runtime support can be incremental, but the architecture slot must remain.
 - `Bullet/Jolt Physics`: owns simulation, collision, rigid bodies, and debug draw. Runtime support can be incremental, but the architecture slot must remain.
 
+## Unified Material Authoring (Single Workflow)
+
+- Product material authoring uses one schema: `CyclesMaterial` in `src/lib/cycles-material.ts` (`principled`, optional `textures`, optional `shaderGraph`).
+- Canvas nodes resolve material through `resolveEditorInputs()` / `resolveCyclesMaterialForEditor()`; authors must not maintain a parallel material model for viewport vs Cycles.
+- `Rust/wgpu` and `Cycles/CL` are two render backends over the same material payload, not two separate editor workflows.
+- Interactive viewport shading may approximate the same material (tint, roughness, metalness, emission, staged textures) while Cycles/CL owns path-traced final output.
+- Cycles resident mesh-cache updates may pass scalar principled parameters first; full `shaderGraph` and staged textures remain on the XML/export path until the bridge parity is filled in.
+- UI panels and material-gen nodes edit `cyclesMaterial` only; preview and render sessions read that object through the native 3D pipeline registry.
+- Native viewport orbit mode must support click-picking scene sub-objects (`pick_scene_object`) and draw a light-blue highlight mesh for the picked outliner id (FBX/glTF node ids).
+
 ## Required IPC/Command Surface
 
 - Rust engine commands: `architecture_status`, `architecture_self_test`, `import_pipeline_status`, `import_scene_pipeline`, `physics_pipeline_status`, `physics_create_world`, `physics_step_world`.

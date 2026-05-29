@@ -41,6 +41,7 @@ declare global {
         openScene: (scenePath: string) => Promise<Record<string, unknown>>;
         sceneInfo: (scenePath: string) => Promise<Record<string, unknown>>;
         listSceneObjects?: (scenePath: string) => Promise<Record<string, unknown>>;
+        pickSceneObject?: (opts: Record<string, unknown>) => Promise<Record<string, unknown>>;
         renderPreview: (opts: Record<string, unknown>) => Promise<Record<string, unknown>>;
         renderCyclesFrame?: (opts: Record<string, unknown>) => Promise<Record<string, unknown>>;
         startCyclesSession?: (opts: Record<string, unknown>) => Promise<Record<string, unknown>>;

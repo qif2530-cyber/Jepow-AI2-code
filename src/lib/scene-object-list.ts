@@ -28,20 +28,7 @@ export async function fetchSceneObjectList(
 
 export type SceneObjectTreeNode = SceneObjectEntry & { children: SceneObjectTreeNode[] };
 
-/** 将扁平对象列表整理为树形（仅包含可挂到父节点下的子项） */
-export function sceneObjectForest(objects: SceneObjectEntry[]): SceneObjectTreeNode[] {
-  const byId = new Map<string, SceneObjectTreeNode>();
-  for (const obj of objects) {
-    byId.set(obj.id, { ...obj, children: [] });
-  }
-  const roots: SceneObjectTreeNode[] = [];
-  for (const obj of objects) {
-    const row = byId.get(obj.id)!;
-    if (obj.parentId && byId.has(obj.parentId)) {
-      byId.get(obj.parentId)!.children.push(row);
-    } else {
-      roots.push(row);
-    }
-  }
-  return roots;
-}
+export {
+  sceneObjectForest,
+  type SceneObjectParentOverrides,
+} from "./scene-object-hierarchy";

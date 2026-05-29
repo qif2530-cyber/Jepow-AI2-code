@@ -1,14 +1,31 @@
-import React, { useState, useEffect, Suspense, useMemo, useRef } from "react";
-import { Handle, Position, useReactFlow, useStore } from "@xyflow/react";
+import React, {
+  useState,
+  useEffect,
+  Suspense,
+  useMemo,
+  useRef,
+  useCallback,
+} from "react";
+import { createPortal } from "react-dom";
+import {
+  Handle,
+  Position,
+  useReactFlow,
+  useStore,
+  useUpdateNodeInternals,
+} from "@xyflow/react";
 import { Canvas } from "@react-three/fiber";
 import { OrbitControls } from "@react-three/drei";
 import * as THREE from "three";
-import { Box, Settings, Compass, Sun, Sliders, RefreshCw, ZoomIn, Eye, Plus, GripHorizontal, Pause, Play } from "lucide-react";
+import { Box, Settings, Compass, Sun, Sliders, RefreshCw, ZoomIn, Eye, Plus, GripHorizontal, Pause, Play, Maximize2, Minimize2 } from "lucide-react";
 import { Button } from "@/src/components/ui/button";
 import { isDesktopApp } from "../lib/runtime";
 import { parseLocalAssetRef } from "../lib/local-assets";
 import { loadModelGroup } from "../lib/model-asset-loader";
-import { JepowViewportPreview } from "./JepowViewportPreview";
+import {
+  JepowViewportPreview,
+  type AssignedSubmeshMaterialPreview,
+} from "./JepowViewportPreview";
 import { useDesktopScenePath } from "../hooks/useDesktopScenePath";
 import { getLocalUserId } from "../lib/local-user-id";
 import { getCurrentProjectId } from "../lib/current-project";
@@ -24,6 +41,12 @@ function cyclesMaterialForCyclesSession(mat: CyclesMaterial): CyclesMaterial {
   return rest;
 }
 import { resolveEditorInputs } from "../lib/native-3d-pipeline";
+import {
+  fetchSceneObjectList,
+  type SceneObjectEntry,
+} from "../lib/scene-object-list";
+import { dispatchSceneObjectSelection } from "../lib/scene-object-selection";
+import { viewportMaterialForSceneObject } from "../lib/scene-object-materials";
 import { buildCyclesLightPayload } from "../lib/cycles-light-payload";
 import { getViewportEngine } from "../lib/viewport-engine";
 import type { ViewportCamera } from "../lib/viewport-engine/types";
@@ -445,8 +468,25 @@ function getCyclesViewportTarget(
 
 export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) {
   const { getNodes, getEdges, updateNodeData } = useReactFlow();
+  const updateNodeInternals = useUpdateNodeInternals();
   const [loadError, setLoadError] = useState<string | null>(null);
   const [canvasMounted, setCanvasMounted] = useState(false);
+  const [viewportExpanded, setViewportExpanded] = useState(false);
+  const [viewportWorkspacePortal, setViewportWorkspacePortal] =
+    useState<HTMLElement | null>(null);
+
+  useEffect(() => {
+    setViewportWorkspacePortal(
+      document.getElementById("jepow-viewport-workspace-overlay"),
+    );
+  }, []);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      updateNodeInternals(id);
+    }, viewportExpanded ? 80 : 0);
+    return () => window.clearTimeout(timer);
+  }, [viewportExpanded, id, updateNodeInternals]);
 
   const renderActive = data.renderActive === true;
   const [viewportMode, setViewportMode] = useState<"preview" | "render">(
@@ -468,6 +508,12 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
 
   const modelEdge = edges.find((e) => e.target === id && e.targetHandle === "modelInput");
   const modelNode = modelEdge ? nodes.find((n) => n.id === modelEdge.source) : null;
+  const sceneObjectNameById = useMemo(() => {
+    const objects =
+      (modelNode?.data as { sceneObjects?: SceneObjectEntry[] } | undefined)
+        ?.sceneObjects ?? [];
+    return Object.fromEntries(objects.map((object) => [object.id, object.name]));
+  }, [modelNode?.data]);
 
   const editorPipeline = useMemo(
     () =>
@@ -481,6 +527,140 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
   const modelPreviewCamera = editorPipeline.model?.previewCamera as
     | ViewportCamera
     | undefined;
+
+  const highlightSceneObjectId = useMemo(() => {
+    const raw = modelNode?.data as { selectedSceneObjectId?: string };
+    const id = raw?.selectedSceneObjectId?.trim();
+    return id || null;
+  }, [modelNode?.data]);
+
+  const sceneObjectMaterialsKey = useMemo(() => {
+    const data = modelNode?.data as {
+      sceneObjectMaterials?: Record<string, string>;
+      sceneObjectMaterialsVersion?: string;
+    };
+    return JSON.stringify({
+      assignments: data?.sceneObjectMaterials ?? {},
+      version: data?.sceneObjectMaterialsVersion ?? "",
+    });
+  }, [modelNode?.data]);
+
+  const assignedMaterialNodeId = useMemo(() => {
+    if (!highlightSceneObjectId || !modelNode) return null;
+    const assignments = (
+      modelNode.data as { sceneObjectMaterials?: Record<string, string> }
+    )?.sceneObjectMaterials;
+    return assignments?.[highlightSceneObjectId] ?? null;
+  }, [highlightSceneObjectId, sceneObjectMaterialsKey, modelNode]);
+
+  const assignedMaterialNodeDataKey = useMemo(() => {
+    if (!assignedMaterialNodeId) return "";
+    const node = nodes.find((n) => n.id === assignedMaterialNodeId);
+    return node ? JSON.stringify(node.data) : "";
+  }, [assignedMaterialNodeId, nodes]);
+
+  const highlightSubmeshMaterial = useMemo(() => {
+    if (!assignedMaterialNodeId) return null;
+    return viewportMaterialForSceneObject(
+      assignedMaterialNodeId,
+      getNodes(),
+      getEdges(),
+    );
+  }, [assignedMaterialNodeId, assignedMaterialNodeDataKey, getNodes, getEdges]);
+
+  const assignedSubmeshMaterials = useMemo(() => {
+    if (!modelNode) return [];
+    const assignments = (
+      modelNode.data as { sceneObjectMaterials?: Record<string, string> }
+    )?.sceneObjectMaterials;
+    if (!assignments) return [];
+    const out: AssignedSubmeshMaterialPreview[] = [];
+    for (const [objectId, materialNodeId] of Object.entries(assignments)) {
+      if (!materialNodeId?.trim()) continue;
+      const mat =
+        viewportMaterialForSceneObject(
+          materialNodeId,
+          getNodes(),
+          getEdges(),
+        ) ?? { tint: "#cccccc", roughness: 0.5, metalness: 0, specular: 0.5 };
+      out.push({
+        objectId,
+        tint: mat.tint || "#cccccc",
+        roughness: mat.roughness,
+        metalness: mat.metalness,
+        specular: mat.specular,
+        clearcoat: mat.clearcoat,
+        transmission: mat.transmission,
+        emissionStrength: mat.emissionStrength,
+      });
+    }
+    return out;
+  }, [modelNode, sceneObjectMaterialsKey, nodes, getNodes, getEdges]);
+  const hasPerObjectViewportMaterial = assignedSubmeshMaterials.length > 0;
+
+  /** 已赋材质由 assignedSubmeshMaterials 持久绘制；高亮通道仅用于未赋材质的选中轮廓 */
+  const viewportSelectionHighlightMaterial = useMemo(() => {
+    if (!highlightSceneObjectId) return null;
+    const hasAssignedOnSelection = assignedSubmeshMaterials.some(
+      (entry) => entry.objectId === highlightSceneObjectId,
+    );
+    if (hasAssignedOnSelection) return null;
+    return highlightSubmeshMaterial;
+  }, [
+    highlightSceneObjectId,
+    highlightSubmeshMaterial,
+    assignedSubmeshMaterials,
+  ]);
+
+  const [materialPreviewRevision, setMaterialPreviewRevision] = useState(0);
+  useEffect(() => {
+    setMaterialPreviewRevision((value) => value + 1);
+  }, [sceneObjectMaterialsKey]);
+
+  const handleViewportSceneObjectPick = useCallback(
+    (objectId: string | null) => {
+      if (!modelNode) return;
+      const objects =
+        (modelNode.data as { sceneObjects?: SceneObjectEntry[] })
+          ?.sceneObjects ?? [];
+      if (!objectId) {
+        updateNodeData(modelNode.id, {
+          selectedSceneObjectId: undefined,
+          selectedSceneObjectName: undefined,
+        });
+        dispatchSceneObjectSelection({ nodeId: modelNode.id, object: null });
+        return;
+      }
+      const entry = objects.find((row) => row.id === objectId);
+      if (entry) {
+        updateNodeData(modelNode.id, {
+          selectedSceneObjectId: entry.id,
+          selectedSceneObjectName: entry.name,
+        });
+        dispatchSceneObjectSelection({ nodeId: modelNode.id, object: entry });
+        return;
+      }
+      const scenePath =
+        (modelNode.data as { nativeScenePath?: string } | undefined)
+          ?.nativeScenePath?.trim() || "";
+      if (!scenePath) return;
+      void fetchSceneObjectList(scenePath).then((freshObjects) => {
+        if (freshObjects.length === 0) return;
+        updateNodeData(modelNode.id, { sceneObjects: freshObjects });
+        const resolved = freshObjects.find((row) => row.id === objectId);
+        if (!resolved) return;
+        updateNodeData(modelNode.id, {
+          selectedSceneObjectId: resolved.id,
+          selectedSceneObjectName: resolved.name,
+        });
+        dispatchSceneObjectSelection({
+          nodeId: modelNode.id,
+          object: resolved,
+        });
+      });
+    },
+    [modelNode, updateNodeData],
+  );
 
   const activeGlb =
     editorPipeline.model?.glbUrl ||
@@ -561,45 +741,12 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
 
   const hasNativeScene = isDesktopApp() && !!resolvedScenePath;
   const [viewportResetToken, setViewportResetToken] = useState(0);
-  const [perfProfile, setPerfProfile] = useState<"unknown" | "high" | "low">(
-    "unknown",
-  );
-  const editorAutoStarted = useRef(false);
-
-  useEffect(() => {
-    if (!resolvedScenePath) {
-      setPerfProfile("unknown");
-      return;
-    }
-    let cancelled = false;
-    import("../lib/viewport-performance").then(({ detectViewportPerformance }) =>
-      detectViewportPerformance(resolvedScenePath).then((p) => {
-        if (!cancelled) setPerfProfile(p);
-      }),
-    );
-    return () => {
-      cancelled = true;
-    };
-  }, [resolvedScenePath]);
 
   useEffect(() => {
     sceneCameraFramedRef.current = false;
   }, [resolvedScenePath]);
 
-  useEffect(() => {
-    if (!modelNode) {
-      editorAutoStarted.current = false;
-      return;
-    }
-    if (!hasNativeScene || editorAutoStarted.current) return;
-    editorAutoStarted.current = true;
-    if (data.renderActive !== true) {
-      updateNodeData(id, { renderActive: true });
-    }
-  }, [hasNativeScene, modelNode, id, data.renderActive, updateNodeData]);
-
-  const highPerfDynamic = perfProfile === "high";
-  const showLiveViewport = hasNativeScene;
+  const showLiveViewport = hasNativeScene && renderActive;
   const showPausedOverlay = hasNativeScene && !renderActive;
 
   // Position, Rotation, Scale configurations
@@ -668,6 +815,8 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
   const cyclesPatchQueuedRef = useRef(false);
   const pendingCameraRenderRef = useRef(false);
   const cyclesInteractLoopRef = useRef<number | null>(null);
+  const lastInteractLoopCameraVersionRef = useRef(-1);
+  const lastInteractLoopFlushAtRef = useRef(0);
   const lastAppliedModelPreviewCameraKeyRef = useRef("");
   const viewportContainerRef = useRef<HTMLDivElement | null>(null);
   const [viewportPixelSize, setViewportPixelSize] = useState({ width: 640, height: 360 });
@@ -698,20 +847,23 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
         farclip?: number;
       })
     | null;
-  const effectiveRenderSettings = useMemo(
-    () => {
-      const merged = {
-        ...renderSettings,
-        ...(connectedCyclesSettings || {}),
-      };
-      return {
-        ...merged,
-        width: merged.width == null || merged.width === 768 ? 2048 : merged.width,
-        height: merged.height == null || merged.height === 512 ? 1536 : merged.height,
-      };
-    },
-    [renderSettings, connectedCyclesSettings],
-  );
+  const effectiveRenderSettings = useMemo(() => {
+    const merged = {
+      ...renderSettings,
+      ...(connectedCyclesSettings || {}),
+    };
+    const device = connectedCyclesSettings
+      ? connectedCyclesSettings.device === "CPU"
+        ? "CPU"
+        : "METAL"
+      : "METAL";
+    return {
+      ...merged,
+      device,
+      width: merged.width == null || merged.width === 768 ? 2048 : merged.width,
+      height: merged.height == null || merged.height === 512 ? 1536 : merged.height,
+    };
+  }, [renderSettings, connectedCyclesSettings]);
   const renderSettingsKey = useMemo(
     () => JSON.stringify(effectiveRenderSettings),
     [effectiveRenderSettings],
@@ -736,6 +888,7 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
       distance: viewportCamera.distance,
       panX: viewportCamera.panX,
       panY: viewportCamera.panY,
+      panZ: viewportCamera.panZ,
       fov: connectedCyclesCamera?.fov ?? viewportCamera.fov ?? Math.PI / 4,
     }),
     [viewportCamera, connectedCyclesCamera],
@@ -756,6 +909,7 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
       distance: cam.distance,
       panX: cam.panX,
       panY: cam.panY,
+      panZ: cam.panZ,
       fov: connectedCyclesCamera?.fov ?? cam.fov ?? Math.PI / 4,
     };
   };
@@ -799,7 +953,7 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
   };
 
   const flushCyclesCameraPatch = async (quality: "interactive" | "final") => {
-    if (viewportMode !== "render" || !renderActive) return;
+    if (viewportMode !== "render" || !renderActive || hasPerObjectViewportMaterial) return;
     const sessionId = activeCyclesSessionRef.current;
     if (!sessionId) {
       pendingCameraRenderRef.current = true;
@@ -877,7 +1031,12 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
         cyclesPatchQueuedRef.current || sentCameraVersion !== cameraVersionRef.current;
       cyclesPatchQueuedRef.current = false;
       pendingCameraRenderRef.current = needsLatestCameraPatch;
-      if (needsLatestCameraPatch && viewportMode === "render" && renderActive) {
+      if (
+        needsLatestCameraPatch &&
+        viewportMode === "render" &&
+        renderActive &&
+        !hasPerObjectViewportMaterial
+      ) {
         lastCyclesSessionPatchKeyRef.current = "";
         scheduleCyclesCameraPatch(
           cyclesWantsInteractivePatch() ? "interactive" : "final",
@@ -901,7 +1060,7 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
   };
 
   useEffect(() => {
-    if (viewportMode !== "render") return;
+    if (viewportMode !== "render" || hasPerObjectViewportMaterial) return;
     const live = getLiveCyclesCamera();
     viewportCameraRef.current = {
       ...viewportCameraRef.current,
@@ -911,7 +1070,7 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
     lastCyclesSessionPatchKeyRef.current = "";
     scheduleCyclesCameraPatch("interactive", 0);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [viewportMode]);
+  }, [viewportMode, hasPerObjectViewportMaterial]);
 
   const handleViewportCameraChange = (next: ViewportCamera) => {
     const current = viewportCameraRef.current;
@@ -921,6 +1080,7 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
       Math.abs((current.distance ?? 0) - (next.distance ?? 0)) > 0.0001 ||
       Math.abs((current.panX ?? 0) - (next.panX ?? 0)) > 0.0001 ||
       Math.abs((current.panY ?? 0) - (next.panY ?? 0)) > 0.0001 ||
+      Math.abs((current.panZ ?? 0) - (next.panZ ?? 0)) > 0.0001 ||
       Math.abs((current.fov ?? Math.PI / 4) - (next.fov ?? Math.PI / 4)) > 0.0001;
     viewportCameraRef.current = next;
     setViewportCamera(next);
@@ -930,7 +1090,7 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
       setCameraVersion(nextCameraVersion);
       lastCameraChangeAtRef.current = Date.now();
       persistCyclesViewportCamera(next);
-      if (viewportMode === "render") {
+      if (viewportMode === "render" && !hasPerObjectViewportMaterial) {
         cyclesCameraPatchEpochRef.current += 1;
         pendingCameraRenderRef.current = true;
         lastCyclesSessionPatchKeyRef.current = "";
@@ -965,7 +1125,7 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
     }
     viewportInteractingRef.current = interacting;
     setViewportInteracting(interacting);
-    if (interacting && viewportMode === "render") {
+    if (interacting && viewportMode === "render" && !hasPerObjectViewportMaterial) {
       lastCyclesSessionPatchKeyRef.current = "";
       scheduleCyclesCameraPatch("interactive", 0);
       viewportInteractionTimerRef.current = window.setTimeout(() => {
@@ -974,14 +1134,19 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
         setViewportInteracting(false);
         scheduleCyclesCameraPatch("final", 80);
       }, 700);
-    } else if (!interacting && viewportMode === "render") {
+    } else if (!interacting && viewportMode === "render" && !hasPerObjectViewportMaterial) {
       lastCyclesSessionPatchKeyRef.current = "";
       scheduleCyclesCameraPatch("final", 0);
     }
   };
 
   useEffect(() => {
-    if (viewportMode !== "render" || !renderActive || !viewportInteracting) {
+    if (
+      viewportMode !== "render" ||
+      !renderActive ||
+      !viewportInteracting ||
+      hasPerObjectViewportMaterial
+    ) {
       if (cyclesInteractLoopRef.current != null) {
         window.clearInterval(cyclesInteractLoopRef.current);
         cyclesInteractLoopRef.current = null;
@@ -989,9 +1154,19 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
       return;
     }
     cyclesInteractLoopRef.current = window.setInterval(() => {
-      lastCyclesSessionPatchKeyRef.current = "";
+      const cameraVersionNow = cameraVersionRef.current;
+      const hasNewCamera =
+        cameraVersionNow !== lastInteractLoopCameraVersionRef.current;
+      const hasQueuedPatch =
+        pendingCameraRenderRef.current || cyclesPatchQueuedRef.current;
+      if (!hasNewCamera && !hasQueuedPatch) return;
+
+      const now = Date.now();
+      if (now - lastInteractLoopFlushAtRef.current < 140) return;
+      lastInteractLoopCameraVersionRef.current = cameraVersionNow;
+      lastInteractLoopFlushAtRef.current = now;
       void flushCyclesCameraPatch("interactive");
-    }, 90);
+    }, 120);
     return () => {
       if (cyclesInteractLoopRef.current != null) {
         window.clearInterval(cyclesInteractLoopRef.current);
@@ -999,7 +1174,13 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
       }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [viewportMode, renderActive, viewportInteracting, cameraVersion]);
+  }, [
+    viewportMode,
+    renderActive,
+    viewportInteracting,
+    cameraVersion,
+    hasPerObjectViewportMaterial,
+  ]);
 
   useEffect(() => {
     if (!modelPreviewCamera) return;
@@ -1124,13 +1305,18 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
   }, [sceneDataSyncKey, glbToRender, transform, lights, renderSettings, connectedCyclesLight, connectedCyclesCamera, updateNodeData, id]);
 
   useEffect(() => {
-    if (viewportMode !== "render") {
+    if (viewportMode !== "render" || hasPerObjectViewportMaterial) {
       setCyclesFrame({ status: "idle" });
     }
-  }, [viewportMode]);
+  }, [viewportMode, hasPerObjectViewportMaterial]);
 
   useEffect(() => {
-    if (viewportMode !== "render" || !renderActive || !effectiveCyclesMaterialForRender) return;
+    if (
+      viewportMode !== "render" ||
+      !renderActive ||
+      !effectiveCyclesMaterialForRender ||
+      hasPerObjectViewportMaterial
+    ) return;
     let cancelled = false;
     let pollTimer: number | null = null;
     const seq = cyclesRenderSeqRef.current + 1;
@@ -1215,7 +1401,7 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
         camera: getLiveCyclesCamera(),
         lighting: stableNativeLighting,
         transform: stableTransform,
-        device: effectiveRenderSettings.device || "CPU",
+        device: effectiveRenderSettings.device,
       } as any;
       const stableRenderSettings = JSON.parse(renderSettingsKey);
       const finalWidth = Number(stableRenderSettings.width) || 2048;
@@ -1359,10 +1545,16 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
     viewportPixelSize,
     blendSourcePath,
     debouncedCyclesMaterialKey,
+    hasPerObjectViewportMaterial,
   ]);
 
   useEffect(() => {
-    if (viewportMode !== "render" || !renderActive || !activeCyclesSessionRef.current) return;
+    if (
+      viewportMode !== "render" ||
+      !renderActive ||
+      hasPerObjectViewportMaterial ||
+      !activeCyclesSessionRef.current
+    ) return;
     const quality = cyclesWantsInteractivePatch() ? "interactive" : "final";
     scheduleCyclesCameraPatch(quality, quality === "interactive" ? 40 : 320);
     return () => {
@@ -1377,6 +1569,7 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
     viewportInteracting,
     cameraVersion,
     viewportPixelSize,
+    hasPerObjectViewportMaterial,
   ]);
 
   useEffect(() => {
@@ -1427,6 +1620,7 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
 
   const cyclesFrameMatchesCamera =
     viewportMode === "render" &&
+    !hasPerObjectViewportMaterial &&
     !!cyclesFrame.previewDataUrl &&
     cyclesFrame.status !== "error" &&
     (cyclesFrame.cameraVersion == null ||
@@ -1445,14 +1639,23 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
       ).length === 1,
   );
 
-  return (
-    <div id={`node-${id}`} className={`w-[520px] h-[390px] bg-[#141414] border ${selected ? "border-purple-600 shadow-[0_0_20px_rgba(147,51,234,0.4)]" : "border-neutral-800"} rounded-lg font-sans text-white transition-all duration-200 relative`}>
-      {/* Outer Floating Drag Grip Handle (Grab to Move Node) */}
-      <div className="absolute -top-[26px] left-1/2 -translate-x-1/2 w-36 h-6 bg-neutral-900/90 border border-neutral-800/80 rounded flex items-center justify-center select-none shadow-xl backdrop-blur-md cursor-grab active:cursor-grabbing hover:bg-neutral-850 hover:border-neutral-700 transition-all z-[999] group">
-        <GripHorizontal className="w-4 h-4 text-purple-400 opacity-60 group-hover:opacity-100 transition-opacity" />
-      </div>
+  const usePerObjectViewportMaterial = hasPerObjectViewportMaterial;
+  const modelInputMissing = hasNativeScene && !modelNode;
 
-      {/* Visual Input / Output Connections */}
+  const nodeSurfaceClass = `relative flex h-full min-h-0 min-w-0 flex-col bg-[#141414] font-sans text-white transition-all duration-200 ${
+    viewportExpanded ? "rounded-xl" : "rounded-lg"
+  } ${
+    selected || viewportExpanded
+      ? "shadow-[0_0_20px_rgba(147,51,234,0.4)] ring-2 ring-inset ring-purple-600"
+      : "ring-1 ring-inset ring-neutral-800"
+  }`;
+
+  const nodeHandles = (
+    <>
+      <div className="absolute -top-[26px] left-1/2 -translate-x-1/2 z-[999] flex h-6 w-36 cursor-grab select-none items-center justify-center rounded border border-neutral-800/80 bg-neutral-900/90 shadow-xl backdrop-blur-md transition-all hover:border-neutral-700 active:cursor-grabbing group">
+        <GripHorizontal className="h-4 w-4 text-purple-400 opacity-60 transition-opacity group-hover:opacity-100" />
+      </div>
+      {/* Visual Input / Output Connections — 始终挂在流程图节点上，避免全屏后入出点丢失 */}
       <Handle
         type="target"
         position={Position.Left}
@@ -1510,14 +1713,23 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
       >
         <Plus className="w-5 h-5 pointer-events-none" />
       </Handle>
- 
-      {/* Main Workspace (Full viewport width & height covering with perfect 1px inset to avoid border overlap & clipping bleed) */}
+    </>
+  );
+
+  const nodeViewport = (
+    <>
+      {/* Main Workspace */}
       <div
         ref={viewportContainerRef}
         id={`canvas-container-${id}`}
-        className="absolute inset-[1px] bg-neutral-950 rounded-[7px] overflow-hidden nodrag nowheel nopan z-0"
+        className={`${
+          viewportExpanded
+            ? "relative min-h-0 flex-1 w-full"
+            : "absolute inset-0"
+        } bg-neutral-950 overflow-hidden nodrag nowheel nopan z-0 select-none`}
         onMouseDown={(e) => e.stopPropagation()}
         onTouchStart={(e) => e.stopPropagation()}
+        onDragStart={(e) => e.preventDefault()}
       >
         <style dangerouslySetInnerHTML={{ __html: `
           #canvas-container-${id} canvas {
@@ -1526,6 +1738,11 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
           }
         `}} />
 
+        {modelInputMissing ? (
+          <div className="absolute top-12 left-3 right-3 z-[35] pointer-events-none rounded-md border border-amber-500/40 bg-amber-950/80 px-2 py-1.5 text-[9px] text-amber-100 leading-snug">
+            模型资产未连到「模型输入」端口，场景树中的按对象赋材质无法作用到本视口。
+          </div>
+        ) : null}
         <div className="absolute top-2 right-2 z-[30] flex gap-1.5 pointer-events-auto select-none">
             <div className="h-7 p-0.5 rounded bg-black/70 border border-neutral-700/90 backdrop-blur-md flex items-center gap-0.5 shadow-lg">
               <button
@@ -1565,6 +1782,22 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
               size="icon"
               onClick={(e) => {
                 e.stopPropagation();
+                setViewportExpanded((value) => !value);
+              }}
+              className="h-7 w-7 bg-black/70 hover:bg-black/90 border border-neutral-700/90 text-neutral-400 hover:text-white backdrop-blur-md shadow-lg rounded animate-in fade-in transition-all"
+              title={viewportExpanded ? "缩小视窗" : "放大视窗"}
+            >
+              {viewportExpanded ? (
+                <Minimize2 className="w-3.5 h-3.5 text-cyan-300" />
+              ) : (
+                <Maximize2 className="w-3.5 h-3.5" />
+              )}
+            </Button>
+            <Button
+              type="button"
+              size="icon"
+              onClick={(e) => {
+                e.stopPropagation();
                 toggleRenderActive();
               }}
               className="h-7 w-7 bg-black/70 hover:bg-black/90 border border-neutral-700/90 text-neutral-400 hover:text-white backdrop-blur-md shadow-lg rounded animate-in fade-in transition-all"
@@ -1594,20 +1827,25 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
           </div>
         ) : showLiveViewport ? (
           <div
-            className={`absolute inset-0 ${
-              cyclesShowLiveNativeOverlay ? "z-[14]" : viewportMode === "render" ? "z-[10]" : "z-0"
-            }`}
+            className="absolute inset-0 z-[20] pointer-events-auto"
             onMouseDown={(e) => e.stopPropagation()}
             onTouchStart={(e) => e.stopPropagation()}
           >
             <JepowViewportPreview
+              key={`${id}-mat-${materialPreviewRevision}-${sceneObjectMaterialsKey}`}
               scenePath={resolvedScenePath}
               fill
               mode="orbit"
-              liveRender
+              liveRender={false}
+              previewMaxWidth={2048}
+              native2KFinal
               lockRenderSize
-              highPerformanceMode={highPerfDynamic}
-              shading="clay"
+              highPerformanceMode={false}
+              shading={
+                previewUsesNativeMaterial && !usePerObjectViewportMaterial
+                  ? "render"
+                  : "clay"
+              }
               ghostOverlay={viewportMode === "render"}
               transform={{
                 x: transform.x,
@@ -1619,11 +1857,20 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
                 scale: transform.scale,
               }}
               lighting={nativeLighting}
-              material={previewUsesNativeMaterial ? activeViewportMaterial : null}
+              material={
+                previewUsesNativeMaterial && !usePerObjectViewportMaterial
+                  ? activeViewportMaterial
+                  : null
+              }
               resetViewToken={viewportResetToken}
               viewCamera={effectiveViewportCamera}
               onCameraChange={handleViewportCameraChange}
               onInteractingChange={handleViewportInteractingChange}
+              highlightSceneObjectId={highlightSceneObjectId}
+              highlightSubmeshMaterial={viewportSelectionHighlightMaterial}
+              assignedSubmeshMaterials={assignedSubmeshMaterials}
+              onSceneObjectPick={handleViewportSceneObjectPick}
+              sceneObjectNameById={sceneObjectNameById}
               onSceneInfo={(info) => {
                 if (sceneCameraFramedRef.current) return;
                 const tris = Number(info.triangleCount ?? 0);
@@ -1633,7 +1880,7 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
                 viewportCameraRef.current = framed;
                 setViewportCamera(framed);
                 persistCyclesViewportCamera(framed);
-                if (viewportMode === "render") {
+                if (viewportMode === "render" && !hasPerObjectViewportMaterial) {
                   cameraVersionRef.current += 1;
                   setCameraVersion(cameraVersionRef.current);
                   lastCyclesSessionPatchKeyRef.current = "";
@@ -1644,21 +1891,44 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
           </div>
         ) : showPausedOverlay ? (
           <>
-            <JepowViewportPreview
-              scenePath={resolvedScenePath}
-              fill
-              mode="turntable"
-              liveRender={false}
-              shading={previewUsesNativeMaterial ? "render" : "clay"}
-              lighting={nativeLighting}
-              material={previewUsesNativeMaterial ? activeViewportMaterial : null}
-              resetViewToken={viewportResetToken}
-              viewCamera={effectiveViewportCamera}
-              onCameraChange={handleViewportCameraChange}
-              onInteractingChange={handleViewportInteractingChange}
-            />
-            <div className="absolute inset-0 z-10 flex flex-col items-center justify-center bg-black/55 pointer-events-none">
+            <div
+              className="absolute inset-0 z-[20] pointer-events-auto"
+              onMouseDown={(e) => e.stopPropagation()}
+              onTouchStart={(e) => e.stopPropagation()}
+            >
+              <JepowViewportPreview
+                key={`${id}-mat-paused-${materialPreviewRevision}-${sceneObjectMaterialsKey}`}
+                scenePath={resolvedScenePath}
+                fill
+                mode="orbit"
+                liveRender={false}
+                previewMaxWidth={2048}
+                native2KFinal
+                shading={
+                  previewUsesNativeMaterial && !usePerObjectViewportMaterial
+                    ? "render"
+                    : "clay"
+                }
+                lighting={nativeLighting}
+                material={
+                  previewUsesNativeMaterial && !usePerObjectViewportMaterial
+                    ? activeViewportMaterial
+                    : null
+                }
+                resetViewToken={viewportResetToken}
+                viewCamera={effectiveViewportCamera}
+                onCameraChange={handleViewportCameraChange}
+                onInteractingChange={handleViewportInteractingChange}
+                highlightSceneObjectId={highlightSceneObjectId}
+                highlightSubmeshMaterial={viewportSelectionHighlightMaterial}
+                assignedSubmeshMaterials={assignedSubmeshMaterials}
+                onSceneObjectPick={handleViewportSceneObjectPick}
+                sceneObjectNameById={sceneObjectNameById}
+              />
+            </div>
+            <div className="absolute inset-0 z-30 flex flex-col items-center justify-center bg-black/40 pointer-events-none">
               <Pause className="w-8 h-8 text-purple-400/90 mb-2" />
+              <span className="text-[9px] text-zinc-400">渲染已暂停 · 仍可单击选中零件</span>
             </div>
           </>
         ) : canvasMounted && renderActive && glbToRender ? (
@@ -1742,7 +2012,9 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
             <img
               src={cyclesFrame.previewDataUrl}
               alt="Cycles Render"
-              className="w-full h-full object-cover opacity-100 pointer-events-none"
+              draggable={false}
+              className="w-full h-full object-cover opacity-100 pointer-events-none select-none [user-drag:none] [-webkit-user-drag:none]"
+              onDragStart={(e) => e.preventDefault()}
               onError={() =>
                 setCyclesFrame({
                   status: "error",
@@ -2162,6 +2434,43 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
           </div>
         </div>
       )}
+    </>
+  );
+
+  const expandedViewport =
+    viewportExpanded && viewportWorkspacePortal
+      ? createPortal(
+          <div
+            className={`pointer-events-auto absolute inset-0 flex h-full w-full min-h-0 min-w-0 select-none overflow-hidden ${nodeSurfaceClass}`}
+            onMouseDown={(e) => e.stopPropagation()}
+            onPointerDown={(e) => e.stopPropagation()}
+            onDragStart={(e) => e.preventDefault()}
+          >
+            {nodeViewport}
+          </div>,
+          viewportWorkspacePortal,
+        )
+      : null;
+
+  return (
+    <div
+      id={`node-${id}`}
+      className={`relative h-[390px] w-[520px] overflow-visible ${
+        viewportExpanded ? "" : ""
+      }`}
+    >
+      {expandedViewport}
+      <div
+        className={`relative h-full w-full overflow-visible ${nodeSurfaceClass}`}
+        onDragStart={(e) => e.preventDefault()}
+      >
+        {nodeHandles}
+        {!viewportExpanded ? (
+          <div className="relative min-h-0 flex-1 overflow-hidden">{nodeViewport}</div>
+        ) : (
+          <div className="relative h-[340px] shrink-0 overflow-hidden rounded-lg bg-neutral-950/80" aria-hidden />
+        )}
+      </div>
     </div>
   );
 }

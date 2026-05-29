@@ -35,6 +35,8 @@ import {
   type SceneObjectEntry,
 } from "../lib/scene-object-list";
 
+const SCENE_OBJECT_LIST_VERSION = "native-fbx-blender-style-v2";
+
 interface ModelAssetNodeProps {
   id: string;
   data: {
@@ -52,6 +54,10 @@ interface ModelAssetNodeProps {
     previewCamera?: ViewportCamera;
     /** 场景文件内对象/网格层级（桌面原生解析） */
     sceneObjects?: SceneObjectEntry[];
+    sceneObjectsVersion?: string;
+    /** 场景集合中选中的子对象 */
+    selectedSceneObjectId?: string;
+    selectedSceneObjectName?: string;
   };
   selected?: boolean;
 }
@@ -262,16 +268,32 @@ export function ModelAssetNode({ id, data, selected }: ModelAssetNodeProps) {
   useEffect(() => {
     if (!desktop3d || !scenePathForNative) return;
     const existing = data.sceneObjects;
-    if (existing && existing.length > 0) return;
+    if (
+      existing &&
+      existing.length > 0 &&
+      data.sceneObjectsVersion === SCENE_OBJECT_LIST_VERSION
+    ) {
+      return;
+    }
     let cancelled = false;
     void fetchSceneObjectList(scenePathForNative).then((objects) => {
       if (cancelled || objects.length === 0) return;
-      updateNodeData(id, { sceneObjects: objects });
+      updateNodeData(id, {
+        sceneObjects: objects,
+        sceneObjectsVersion: SCENE_OBJECT_LIST_VERSION,
+      });
     });
     return () => {
       cancelled = true;
     };
-  }, [desktop3d, scenePathForNative, id, data.sceneObjects, updateNodeData]);
+  }, [
+    desktop3d,
+    scenePathForNative,
+    id,
+    data.sceneObjects,
+    data.sceneObjectsVersion,
+    updateNodeData,
+  ]);
 
   /** 桌面端：jepow-engine 视口（显示用导出的 GLB/FBX，.blend 仅作工程源文件） */
   const useDesktopNativeRenderer =
@@ -341,6 +363,7 @@ export function ModelAssetNode({ id, data, selected }: ModelAssetNodeProps) {
       viewportBackend: "jepow-native",
       localPreviewUrl: "",
       sceneObjects: objects,
+      sceneObjectsVersion: SCENE_OBJECT_LIST_VERSION,
     });
     setLoadError(null);
     toast.success(
@@ -464,6 +487,7 @@ export function ModelAssetNode({ id, data, selected }: ModelAssetNodeProps) {
           viewportBackend: "jepow-native",
           localPreviewUrl: "",
           sceneObjects: objects,
+          sceneObjectsVersion: SCENE_OBJECT_LIST_VERSION,
         });
         setLoadError(null);
         toast.success(

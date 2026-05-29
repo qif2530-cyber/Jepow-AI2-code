@@ -1,5 +1,8 @@
 use crate::jobs;
-use crate::render::{parse_camera, parse_light, parse_material};
+use crate::render::{
+    parse_assigned_submesh_materials, parse_camera, parse_highlight_submesh_material,
+    parse_light, parse_material,
+};
 use crate::scene;
 use crate::viewport_session::{
     parse_object_transform, parse_shading, ShadingMode, ViewportSession,
@@ -35,6 +38,57 @@ fn err_response(id: Option<u64>, message: impl ToString) -> Value {
 
 fn request_id(req: &Value) -> Option<u64> {
     req.get("id").and_then(|v| v.as_u64())
+}
+
+fn handle_pick_scene_object(
+    session: &mut Option<ViewportSession>,
+    loaded_path: &mut Option<String>,
+    id: Option<u64>,
+    req: &Value,
+) -> Value {
+    let Some(path) = req.get("scenePath").and_then(|v| v.as_str()) else {
+        return err_response(id, "scenePath required");
+    };
+    if loaded_path.as_deref() != Some(path) {
+        let sess = match ensure_session(session, id) {
+            Ok(s) => s,
+            Err(v) => return v,
+        };
+        if let Err(e) = sess.load_scene(path) {
+            return err_response(id, e.to_string());
+        }
+        *loaded_path = Some(path.to_string());
+    }
+    let cursor_x = req.get("cursorX").and_then(|v| v.as_f64()).unwrap_or(0.0) as f32;
+    let cursor_y = req.get("cursorY").and_then(|v| v.as_f64()).unwrap_or(0.0) as f32;
+    let width = req
+        .get("width")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(640)
+        .clamp(1, 4096) as u32;
+    let height = req
+        .get("height")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(480)
+        .clamp(1, 4096) as u32;
+    let transform = parse_object_transform(req);
+    let sess = match ensure_session(session, id) {
+        Ok(s) => s,
+        Err(v) => return v,
+    };
+    sess.set_camera(parse_camera(req));
+    sess.set_transform(transform);
+    match sess.pick_scene_object(cursor_x, cursor_y, width, height) {
+        Ok(object_id) => ok_response(
+            id,
+            json!({
+                "scenePath": path,
+                "objectId": object_id,
+                "picked": object_id.is_some(),
+            }),
+        ),
+        Err(e) => err_response(id, e.to_string()),
+    }
 }
 
 fn handle_viewport_frame(
@@ -74,6 +128,9 @@ fn handle_viewport_frame(
     sess.set_transform(parse_object_transform(req));
     let shading = parse_shading(req);
     sess.set_shading(shading);
+    sess.set_highlight_object_id(req.get("highlightSceneObjectId").and_then(|v| v.as_str()));
+    sess.set_highlight_submesh_material(parse_highlight_submesh_material(req));
+    sess.set_assigned_submesh_materials(parse_assigned_submesh_materials(req));
 
     match sess.draw_frame(output_path, width, height) {
         Ok(ms) => ok_response(
@@ -203,6 +260,16 @@ pub fn run_daemon_loop() {
                 },
             },
             "viewport_frame" => handle_viewport_frame(&mut session, &mut loaded_path, id, &req),
+            "pick_scene_object" => {
+                if req.get("warmCacheOnly").and_then(|v| v.as_bool()) == Some(true) {
+                    match req.get("scenePath").and_then(|v| v.as_str()) {
+                        None => err_response(id, "scenePath required"),
+                        Some(path) => ok_response(id, json!({ "scenePath": path, "warmed": true })),
+                    }
+                } else {
+                    handle_pick_scene_object(&mut session, &mut loaded_path, id, &req)
+                }
+            }
             "close_scene" => {
                 loaded_path = None;
                 ok_response(id, json!({ "closed": true }))

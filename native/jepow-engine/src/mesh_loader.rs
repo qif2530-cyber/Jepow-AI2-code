@@ -1,4 +1,5 @@
 use anyhow::{Context, Result};
+use glam::{Mat4, Quat, Vec3, Vec4};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock};
@@ -11,17 +12,27 @@ pub struct Vertex {
     pub normal: [f32; 3],
     pub uv: [f32; 2],
     pub material_tint: [f32; 3],
+    pub pick_id: f32,
 }
 
 #[derive(Clone)]
 pub struct MeshData {
     pub vertices: Vec<Vertex>,
     pub indices: Vec<u32>,
+    pub submeshes: Vec<SubmeshRange>,
     pub material_color: Option<[f32; 3]>,
     pub metallic_factor: f32,
     pub roughness_factor: f32,
     pub base_color_texture: Option<TextureData>,
     pub metallic_roughness_texture: Option<TextureData>,
+}
+
+#[derive(Clone, Debug)]
+pub struct SubmeshRange {
+    pub object_id: String,
+    pub index_start: u32,
+    pub index_count: u32,
+    pub pick_id: u32,
 }
 
 #[derive(Clone)]
@@ -149,6 +160,19 @@ fn clamp_color(color: [f32; 3]) -> [f32; 3] {
     ]
 }
 
+fn single_submesh(indices_len: usize) -> Vec<SubmeshRange> {
+    if indices_len == 0 {
+        Vec::new()
+    } else {
+        vec![SubmeshRange {
+            object_id: "mesh-0".to_string(),
+            index_start: 0,
+            index_count: indices_len as u32,
+            pick_id: 1,
+        }]
+    }
+}
+
 fn normalize_ply_color_component(value: f32, ty: &str) -> f32 {
     let is_integer = matches!(
         ty,
@@ -241,6 +265,7 @@ fn load_gltf_mesh(path: &str) -> Result<MeshData> {
     let (doc, buffers, images) = gltf::import(path).context("gltf import")?;
     let mut vertices = Vec::new();
     let mut indices = Vec::new();
+    let mut submeshes = Vec::new();
     let mut material_color = None;
     let mut metallic_factor = 0.0;
     let mut roughness_factor = 0.65;
@@ -248,7 +273,14 @@ fn load_gltf_mesh(path: &str) -> Result<MeshData> {
     let mut metallic_roughness_texture = None;
     let mut base: u32 = 0;
 
-    for mesh in doc.meshes() {
+    for (node_index, node) in doc.nodes().enumerate() {
+        let Some(mesh) = node.mesh() else {
+            continue;
+        };
+        let world = gltf_node_world_matrix(&doc, node_index);
+        let normal_world = world.inverse().transpose();
+        let index_start = indices.len() as u32;
+        let pick_id = (submeshes.len() + 1) as u32;
         for prim in mesh.primitives() {
             if prim.mode() != gltf::mesh::Mode::Triangles {
                 continue;
@@ -285,13 +317,16 @@ fn load_gltf_mesh(path: &str) -> Result<MeshData> {
                 .unwrap_or_else(|| vec![[0.0, 0.0]; positions.len()]);
 
             for (i, p) in positions.iter().enumerate() {
+                let wp = world.transform_point3(Vec3::from(*p));
                 let n = normals.get(i).copied().unwrap_or([0.0, 1.0, 0.0]);
+                let wn = normal_world.transform_vector3(Vec3::from(n)).normalize_or_zero();
                 let uv = texcoords.get(i).copied().unwrap_or([0.0, 0.0]);
                 vertices.push(Vertex {
-                    pos: *p,
-                    normal: normalize_normal_or_zero(n),
+                    pos: wp.to_array(),
+                    normal: normalize_normal_or_zero(wn.to_array()),
                     uv,
                     material_tint,
+                    pick_id: pick_id as f32,
                 });
             }
 
@@ -306,10 +341,20 @@ fn load_gltf_mesh(path: &str) -> Result<MeshData> {
             }
             base = vertices.len() as u32;
         }
+        let index_count = indices.len() as u32 - index_start;
+        if index_count > 0 {
+            submeshes.push(SubmeshRange {
+                object_id: format!("gltf-node-{}", node_index),
+                index_start,
+                index_count,
+                pick_id,
+            });
+        }
     }
     Ok(MeshData {
         vertices,
         indices,
+        submeshes,
         material_color,
         metallic_factor,
         roughness_factor,
@@ -328,6 +373,7 @@ fn append_fbx_mesh_triangles(
     indices: &mut Vec<u32>,
     mesh: &ufbx::Mesh,
     world: &ufbx::Matrix,
+    pick_id: u32,
 ) {
     let normal_world = ufbx::matrix_for_normals(world);
     let pos_el = &mesh.vertex_position;
@@ -382,6 +428,7 @@ fn append_fbx_mesh_triangles(
                     normal: normalize_vec3(vec3_f32(n)),
                     uv: [0.0, 0.0],
                     material_tint: [1.0, 1.0, 1.0],
+                    pick_id: pick_id as f32,
                 });
             }
             if tri_idx.len() == 3 {
@@ -394,7 +441,7 @@ fn append_fbx_mesh_triangles(
 /// FBX load options aligned with Blender `io_scene_fbx` defaults:
 /// - Y-up right-handed (`axis_up=Y`, `axis_forward=-Z`)
 /// - apply object + geometry transforms to vertices (not spawning Blender)
-fn fbx_load_opts_blender_style() -> ufbx::LoadOpts<'static> {
+pub(crate) fn fbx_load_opts_blender_style() -> ufbx::LoadOpts<'static> {
     ufbx::LoadOpts {
         target_axes: ufbx::CoordinateAxes::right_handed_y_up(),
         target_unit_meters: 1.0,
@@ -410,6 +457,7 @@ fn load_fbx_mesh(path: &str) -> Result<MeshData> {
         .map_err(|e| anyhow::anyhow!("fbx load: {:?}", e))?;
     let mut vertices = Vec::new();
     let mut indices = Vec::new();
+    let mut submeshes = Vec::new();
     let mut seen_instances = HashMap::<(u32, u32), ()>::new();
 
     // Blender: one evaluated mesh per object node (world matrix = geometry_to_world).
@@ -425,15 +473,226 @@ fn load_fbx_mesh(path: &str) -> Result<MeshData> {
             continue;
         }
         seen_instances.insert(key, ());
-        append_fbx_mesh_triangles(&mut vertices, &mut indices, mesh, &node.geometry_to_world);
+        let index_start = indices.len() as u32;
+        let pick_id = (submeshes.len() + 1) as u32;
+        append_fbx_mesh_triangles(
+            &mut vertices,
+            &mut indices,
+            mesh,
+            &node.geometry_to_world,
+            pick_id,
+        );
+        let index_count = indices.len() as u32 - index_start;
+        if index_count > 0 {
+            submeshes.push(SubmeshRange {
+                object_id: format!("fbx-{}", node.element.element_id),
+                index_start,
+                index_count,
+                pick_id,
+            });
+        }
     }
 
     Ok(MeshData {
         vertices,
         indices,
+        submeshes,
         material_color: None,
         metallic_factor: 0.0,
         roughness_factor: 0.65,
+        base_color_texture: None,
+        metallic_roughness_texture: None,
+    })
+}
+
+fn gltf_local_matrix(node: gltf::Node<'_>) -> Mat4 {
+    match node.transform() {
+        gltf::scene::Transform::Decomposed {
+            translation,
+            rotation,
+            scale,
+        } => {
+            let t = Vec3::from(translation);
+            let r = Quat::from_xyzw(rotation[0], rotation[1], rotation[2], rotation[3]);
+            let s = Vec3::from(scale);
+            Mat4::from_scale_rotation_translation(s, r, t)
+        }
+        gltf::scene::Transform::Matrix { matrix } => Mat4::from_cols(
+            Vec4::from(matrix[0]),
+            Vec4::from(matrix[1]),
+            Vec4::from(matrix[2]),
+            Vec4::from(matrix[3]),
+        ),
+    }
+}
+
+fn gltf_node_world_matrix(doc: &gltf::Document, node_index: usize) -> Mat4 {
+    let mut parent_of: HashMap<usize, usize> = HashMap::new();
+    for (idx, node) in doc.nodes().enumerate() {
+        for child in node.children() {
+            parent_of.insert(child.index(), idx);
+        }
+    }
+    let mut chain = vec![node_index];
+    let mut current = node_index;
+    while let Some(&parent) = parent_of.get(&current) {
+        chain.push(parent);
+        current = parent;
+    }
+    chain.reverse();
+    let mut world = Mat4::IDENTITY;
+    for idx in chain {
+        if let Some(node) = doc.nodes().nth(idx) {
+            world = world * gltf_local_matrix(node);
+        }
+    }
+    world
+}
+
+/// Single glTF node geometry for outliner pick/highlight (`gltf-node-{index}` ids).
+#[allow(dead_code)]
+pub fn load_gltf_node_mesh(path: &str, node_index: usize) -> Result<MeshData> {
+    let (doc, buffers, images) = gltf::import(path).context("gltf import")?;
+    let node = doc
+        .nodes()
+        .nth(node_index)
+        .with_context(|| format!("gltf node {} missing", node_index))?;
+    let mesh = node
+        .mesh()
+        .with_context(|| format!("gltf node {} has no mesh", node_index))?;
+    let world = gltf_node_world_matrix(&doc, node_index);
+    let normal_world = world.inverse().transpose();
+
+    let mut vertices = Vec::new();
+    let mut indices = Vec::new();
+    let mut material_color = None;
+    let mut metallic_factor = 0.0;
+    let mut roughness_factor = 0.65;
+    let mut base_color_texture = None;
+    let mut metallic_roughness_texture = None;
+    let mut base: u32 = 0;
+
+    for prim in mesh.primitives() {
+        if prim.mode() != gltf::mesh::Mode::Triangles {
+            continue;
+        }
+        let material = prim.material();
+        let pbr = material.pbr_metallic_roughness();
+        let base_color = pbr.base_color_factor();
+        let material_tint = clamp_color([base_color[0], base_color[1], base_color[2]]);
+        if material_color.is_none() {
+            material_color = Some(material_tint);
+            metallic_factor = pbr.metallic_factor().clamp(0.0, 1.0);
+            roughness_factor = pbr.roughness_factor().clamp(0.04, 1.0);
+            base_color_texture = pbr
+                .base_color_texture()
+                .and_then(|info| images.get(info.texture().source().index()))
+                .and_then(gltf_image_to_rgba);
+            metallic_roughness_texture = pbr
+                .metallic_roughness_texture()
+                .and_then(|info| images.get(info.texture().source().index()))
+                .and_then(gltf_image_to_rgba);
+        }
+        let reader = prim.reader(|buf| buffers.get(buf.index()).map(|data| data.0.as_slice()));
+        let positions: Vec<[f32; 3]> = reader
+            .read_positions()
+            .context("missing positions")?
+            .collect();
+        let normals: Vec<[f32; 3]> = reader
+            .read_normals()
+            .map(|n| n.collect())
+            .unwrap_or_else(|| vec![[0.0, 0.0, 0.0]; positions.len()]);
+        let texcoords: Vec<[f32; 2]> = reader
+            .read_tex_coords(0)
+            .map(|uv| uv.into_f32().collect())
+            .unwrap_or_else(|| vec![[0.0, 0.0]; positions.len()]);
+
+        for (i, p) in positions.iter().enumerate() {
+            let wp = world.transform_point3(Vec3::from(*p));
+            let n = normals.get(i).copied().unwrap_or([0.0, 1.0, 0.0]);
+            let wn = normal_world.transform_vector3(Vec3::from(n)).normalize_or_zero();
+            let uv = texcoords.get(i).copied().unwrap_or([0.0, 0.0]);
+            vertices.push(Vertex {
+                pos: wp.to_array(),
+                normal: normalize_normal_or_zero(wn.to_array()),
+                uv,
+                material_tint,
+                pick_id: 1.0,
+            });
+        }
+
+        if let Some(iter) = reader.read_indices() {
+            for idx in iter.into_u32() {
+                indices.push(base + idx);
+            }
+        } else {
+            for i in 0..positions.len() as u32 {
+                indices.push(base + i);
+            }
+        }
+        base = vertices.len() as u32;
+    }
+
+    if vertices.is_empty() {
+        anyhow::bail!("gltf node {} has no triangles", node_index);
+    }
+
+    let submeshes = vec![SubmeshRange {
+        object_id: format!("gltf-node-{}", node_index),
+        index_start: 0,
+        index_count: indices.len() as u32,
+        pick_id: 1,
+    }];
+    Ok(MeshData {
+        vertices,
+        indices,
+        submeshes,
+        material_color,
+        metallic_factor,
+        roughness_factor,
+        base_color_texture,
+        metallic_roughness_texture,
+    })
+}
+
+/// Single FBX node geometry for outliner selection highlight (`fbx-{element_id}` ids).
+#[allow(dead_code)]
+pub fn load_fbx_node_mesh(path: &str, element_id: u32) -> Result<MeshData> {
+    let scene = ufbx::load_file(path, fbx_load_opts_blender_style())
+        .map_err(|e| anyhow::anyhow!("fbx load: {:?}", e))?;
+    let mut vertices = Vec::new();
+    let mut indices = Vec::new();
+    let mut found = false;
+    for node in &scene.nodes {
+        if node.element.element_id != element_id {
+            continue;
+        }
+        if node.is_geometry_transform_helper || node.is_scale_helper {
+            continue;
+        }
+        let Some(mesh) = node.mesh.as_ref() else {
+            continue;
+        };
+        append_fbx_mesh_triangles(&mut vertices, &mut indices, mesh, &node.geometry_to_world, 1);
+        found = true;
+        break;
+    }
+    if !found || vertices.is_empty() {
+        anyhow::bail!("fbx node {} has no renderable mesh", element_id);
+    }
+    let submeshes = vec![SubmeshRange {
+        object_id: format!("fbx-{}", element_id),
+        index_start: 0,
+        index_count: indices.len() as u32,
+        pick_id: 1,
+    }];
+    Ok(MeshData {
+        vertices,
+        indices,
+        submeshes,
+        material_color: Some([0.42, 0.72, 1.0]),
+        metallic_factor: 0.0,
+        roughness_factor: 0.4,
         base_color_texture: None,
         metallic_roughness_texture: None,
     })
@@ -488,6 +747,7 @@ fn load_obj_mesh(path: &str) -> Result<MeshData> {
                 normal: normalize_normal_or_zero([nx, ny, nz]),
                 uv,
                 material_tint,
+                pick_id: 1.0,
             });
         }
         for idx in &mesh.indices {
@@ -495,9 +755,11 @@ fn load_obj_mesh(path: &str) -> Result<MeshData> {
         }
         base = vertices.len() as u32;
     }
+    let submeshes = single_submesh(indices.len());
     Ok(MeshData {
         vertices,
         indices,
+        submeshes,
         material_color,
         metallic_factor: 0.0,
         roughness_factor: 0.72,
@@ -549,6 +811,7 @@ fn parse_ascii_stl(bytes: &[u8]) -> Result<Option<MeshData>> {
                         normal: current_normal,
                         uv: [0.0, 0.0],
                         material_tint: [1.0, 1.0, 1.0],
+                        pick_id: 1.0,
                     });
                 }
             }
@@ -558,9 +821,11 @@ fn parse_ascii_stl(bytes: &[u8]) -> Result<Option<MeshData>> {
     if vertices.is_empty() {
         return Ok(None);
     }
+    let submeshes = single_submesh(indices.len());
     Ok(Some(MeshData {
         vertices,
         indices,
+        submeshes,
         material_color: Some([0.74, 0.76, 0.78]),
         metallic_factor: 0.0,
         roughness_factor: 0.68,
@@ -602,14 +867,17 @@ fn parse_binary_stl(bytes: &[u8]) -> Result<Option<MeshData>> {
                 normal,
                 uv: [0.0, 0.0],
                 material_tint: [1.0, 1.0, 1.0],
+                pick_id: 1.0,
             });
         }
         offset += 2;
     }
 
+    let submeshes = single_submesh(indices.len());
     Ok(Some(MeshData {
         vertices,
         indices,
+        submeshes,
         material_color: Some([0.74, 0.76, 0.78]),
         metallic_factor: 0.0,
         roughness_factor: 0.68,
@@ -828,9 +1096,11 @@ fn finish_ply_mesh(vertices: Vec<Vertex>, indices: Vec<u32>) -> Result<MeshData>
     if vertices.is_empty() || indices.is_empty() {
         anyhow::bail!("PLY has no renderable triangles");
     }
+    let submeshes = single_submesh(indices.len());
     Ok(MeshData {
         vertices,
         indices,
+        submeshes,
         material_color: Some([0.72, 0.74, 0.78]),
         metallic_factor: 0.0,
         roughness_factor: 0.7,
@@ -937,6 +1207,7 @@ fn parse_ascii_ply(bytes: &[u8], header: &PlyHeader) -> Result<MeshData> {
             },
             uv,
             material_tint: clamp_color(color),
+            pick_id: 1.0,
         });
     }
 
@@ -1025,6 +1296,7 @@ fn parse_binary_ply(bytes: &[u8], header: &PlyHeader, big_endian: bool) -> Resul
             },
             uv,
             material_tint: clamp_color(color),
+            pick_id: 1.0,
         });
     }
 

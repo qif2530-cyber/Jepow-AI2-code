@@ -73,6 +73,7 @@ export const jepowNativeViewportEngine: ViewportEngine = {
       cameraFov: cam?.fov,
       panX: cam?.panX,
       panY: cam?.panY,
+      panZ: cam?.panZ,
       lightYaw: lit?.yaw,
       lightPitch: lit?.pitch,
       lightAmbient: lit?.ambient,
@@ -96,6 +97,16 @@ export const jepowNativeViewportEngine: ViewportEngine = {
       shading: opts.shading,
       liveRender: opts.liveRender,
       previewQuality: opts.previewQuality,
+      highlightSceneObjectId: opts.highlightSceneObjectId || undefined,
+      highlightSubmeshMaterialTint: opts.highlightSubmeshMaterialTint,
+      highlightSubmeshMaterialRoughness: opts.highlightSubmeshMaterialRoughness,
+      highlightSubmeshMaterialMetalness: opts.highlightSubmeshMaterialMetalness,
+      highlightSubmeshMaterialSpecular: opts.highlightSubmeshMaterialSpecular,
+      highlightSubmeshMaterialClearcoat: opts.highlightSubmeshMaterialClearcoat,
+      highlightSubmeshMaterialTransmission: opts.highlightSubmeshMaterialTransmission,
+      highlightSubmeshMaterialEmissionStrength:
+        opts.highlightSubmeshMaterialEmissionStrength,
+      assignedSubmeshMaterials: opts.assignedSubmeshMaterials,
     }) as unknown as Promise<RenderPreviewResult>;
   },
 

@@ -1,4 +1,4 @@
-use crate::mesh_loader::{load_meshes_cached, MeshData, Vertex};
+use crate::mesh_loader::{load_meshes_cached, MeshData, SubmeshRange, Vertex};
 use anyhow::{Context, Result};
 use glam::{EulerRot, Mat4, Quat, Vec3};
 use image::{ImageBuffer, Rgba};
@@ -6,8 +6,49 @@ use std::path::Path;
 use wgpu::util::DeviceExt;
 
 use crate::render::{
-    build_uniforms, camera_mvp, Uniforms, ViewCamera, ViewLight, ViewMaterial, VIEWPORT_WGSL,
+    build_uniforms, camera_mvp, AssignedSubmeshMaterialEntry, Uniforms, ViewCamera, ViewLight,
+    ViewMaterial, VIEWPORT_WGSL,
 };
+
+#[repr(C)]
+#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+struct PickUniforms {
+    mvp: [f32; 16],
+}
+
+const PICK_WGSL: &str = r#"
+struct PickUniforms {
+  mvp: mat4x4<f32>,
+}
+@group(0) @binding(0) var<uniform> uniforms: PickUniforms;
+
+struct VertexInput {
+  @location(0) pos: vec3<f32>,
+  @location(1) pick_id: f32,
+};
+
+struct VertexOutput {
+  @builtin(position) pos: vec4<f32>,
+  @location(0) pick_id: f32,
+};
+
+@vertex
+fn vs_main(input: VertexInput) -> VertexOutput {
+  var out: VertexOutput;
+  out.pos = uniforms.mvp * vec4<f32>(input.pos, 1.0);
+  out.pick_id = input.pick_id;
+  return out;
+}
+
+@fragment
+fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
+  let id = u32(input.pick_id + 0.5);
+  let r = f32(id & 255u) / 255.0;
+  let g = f32((id >> 8u) & 255u) / 255.0;
+  let b = f32((id >> 16u) & 255u) / 255.0;
+  return vec4<f32>(r, g, b, 1.0);
+}
+"#;
 
 fn demo_mesh() -> MeshData {
     MeshData {
@@ -17,21 +58,30 @@ fn demo_mesh() -> MeshData {
                 normal: [0.2, 0.9, 0.3],
                 uv: [0.5, 0.0],
                 material_tint: [1.0, 1.0, 1.0],
+                pick_id: 1.0,
             },
             Vertex {
                 pos: [-0.55, -0.35, 0.0],
                 normal: [-0.6, 0.5, 0.2],
                 uv: [0.0, 1.0],
                 material_tint: [1.0, 1.0, 1.0],
+                pick_id: 1.0,
             },
             Vertex {
                 pos: [0.55, -0.35, 0.0],
                 normal: [0.6, 0.5, 0.2],
                 uv: [1.0, 1.0],
                 material_tint: [1.0, 1.0, 1.0],
+                pick_id: 1.0,
             },
         ],
         indices: vec![0, 1, 2],
+        submeshes: vec![SubmeshRange {
+            object_id: "mesh-0".to_string(),
+            index_start: 0,
+            index_count: 3,
+            pick_id: 1,
+        }],
         material_color: Some([0.35, 0.78, 0.62]),
         metallic_factor: 0.0,
         roughness_factor: 0.65,
@@ -57,7 +107,7 @@ pub enum ShadingMode {
     Render,
 }
 
-fn scene_fit_matrix(mesh: &MeshData) -> Mat4 {
+pub fn scene_fit_matrix(mesh: &MeshData) -> Mat4 {
     if mesh.vertices.is_empty() {
         return Mat4::IDENTITY;
     }
@@ -80,11 +130,20 @@ pub struct ViewportSession {
     device: wgpu::Device,
     queue: wgpu::Queue,
     pipeline: wgpu::RenderPipeline,
+    pick_pipeline: wgpu::RenderPipeline,
     bind_group: wgpu::BindGroup,
+    fill_bind_group: wgpu::BindGroup,
+    highlight_bind_group: wgpu::BindGroup,
+    pick_bind_group: wgpu::BindGroup,
     uniform_buffer: wgpu::Buffer,
+    fill_uniform_buffer: wgpu::Buffer,
+    highlight_uniform_buffer: wgpu::Buffer,
+    pick_uniform_buffer: wgpu::Buffer,
     vertex_buffer: wgpu::Buffer,
     index_buffer: wgpu::Buffer,
     index_count: u32,
+    submesh_ranges: Vec<SubmeshRange>,
+    pick_object_ids: Vec<String>,
     scene_path: Option<String>,
     camera: ViewCamera,
     light: ViewLight,
@@ -98,6 +157,14 @@ pub struct ViewportSession {
     color_view: wgpu::TextureView,
     depth_texture: wgpu::Texture,
     depth_view: wgpu::TextureView,
+    pick_texture: wgpu::Texture,
+    pick_view: wgpu::TextureView,
+    pick_depth_texture: wgpu::Texture,
+    pick_depth_view: wgpu::TextureView,
+    highlight_object_id: Option<String>,
+    highlight_index_range: Option<(u32, u32)>,
+    highlight_submesh_material: Option<ViewMaterial>,
+    assigned_submesh_materials: Vec<AssignedSubmeshMaterialEntry>,
 }
 
 impl ViewportSession {
@@ -135,6 +202,24 @@ impl ViewportSession {
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
+        let fill_uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("jepow-highlight-fill-uniforms"),
+            size: std::mem::size_of::<Uniforms>() as u64,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let highlight_uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("jepow-highlight-uniforms"),
+            size: std::mem::size_of::<Uniforms>() as u64,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let pick_uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("jepow-pick-uniforms"),
+            size: std::mem::size_of::<PickUniforms>() as u64,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
 
         let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("jepow-uniform-layout"),
@@ -156,6 +241,30 @@ impl ViewportSession {
             entries: &[wgpu::BindGroupEntry {
                 binding: 0,
                 resource: uniform_buffer.as_entire_binding(),
+            }],
+        });
+        let fill_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("jepow-highlight-fill-bind"),
+            layout: &bind_group_layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: fill_uniform_buffer.as_entire_binding(),
+            }],
+        });
+        let highlight_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("jepow-highlight-bind"),
+            layout: &bind_group_layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: highlight_uniform_buffer.as_entire_binding(),
+            }],
+        });
+        let pick_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("jepow-pick-uniform-bind"),
+            layout: &bind_group_layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: pick_uniform_buffer.as_entire_binding(),
             }],
         });
 
@@ -206,6 +315,59 @@ impl ViewportSession {
             depth_stencil: Some(wgpu::DepthStencilState {
                 format: wgpu::TextureFormat::Depth32Float,
                 depth_write_enabled: true,
+                depth_compare: wgpu::CompareFunction::LessEqual,
+                stencil: wgpu::StencilState::default(),
+                bias: wgpu::DepthBiasState::default(),
+            }),
+            multisample: wgpu::MultisampleState::default(),
+            multiview: None,
+            cache: None,
+        });
+        let pick_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("jepow-pick-shader"),
+            source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Borrowed(PICK_WGSL)),
+        });
+        let pick_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("jepow-pick-pipeline"),
+            layout: Some(&pipeline_layout),
+            vertex: wgpu::VertexState {
+                module: &pick_shader,
+                entry_point: Some("vs_main"),
+                buffers: &[wgpu::VertexBufferLayout {
+                    array_stride: std::mem::size_of::<Vertex>() as wgpu::BufferAddress,
+                    step_mode: wgpu::VertexStepMode::Vertex,
+                    attributes: &[
+                        wgpu::VertexAttribute {
+                            offset: 0,
+                            shader_location: 0,
+                            format: wgpu::VertexFormat::Float32x3,
+                        },
+                        wgpu::VertexAttribute {
+                            offset: 44,
+                            shader_location: 1,
+                            format: wgpu::VertexFormat::Float32,
+                        },
+                    ],
+                }],
+                compilation_options: Default::default(),
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &pick_shader,
+                entry_point: Some("fs_main"),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: wgpu::TextureFormat::Rgba8Unorm,
+                    blend: Some(wgpu::BlendState::REPLACE),
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+                compilation_options: Default::default(),
+            }),
+            primitive: wgpu::PrimitiveState {
+                cull_mode: None,
+                ..Default::default()
+            },
+            depth_stencil: Some(wgpu::DepthStencilState {
+                format: wgpu::TextureFormat::Depth32Float,
+                depth_write_enabled: true,
                 depth_compare: wgpu::CompareFunction::Less,
                 stencil: wgpu::StencilState::default(),
                 bias: wgpu::DepthBiasState::default(),
@@ -220,16 +382,27 @@ impl ViewportSession {
         let (frame_w, frame_h) = (640u32, 480u32);
         let (color_texture, color_view, depth_texture, depth_view) =
             Self::create_frame_targets(&device, frame_w, frame_h);
+        let (pick_texture, pick_view, pick_depth_texture, pick_depth_view) =
+            Self::create_pick_targets(&device, frame_w, frame_h);
 
         Ok(Self {
             device,
             queue,
             pipeline,
+            pick_pipeline,
             bind_group,
+            fill_bind_group,
+            highlight_bind_group,
+            pick_bind_group,
             uniform_buffer,
+            fill_uniform_buffer,
+            highlight_uniform_buffer,
+            pick_uniform_buffer,
             vertex_buffer,
             index_buffer,
             index_count,
+            submesh_ranges: demo_mesh().submeshes,
+            pick_object_ids: vec!["mesh-0".to_string()],
             scene_path: None,
             camera: ViewCamera::default(),
             light: ViewLight::default(),
@@ -246,7 +419,39 @@ impl ViewportSession {
             color_view,
             depth_texture,
             depth_view,
+            pick_texture,
+            pick_view,
+            pick_depth_texture,
+            pick_depth_view,
+            highlight_object_id: None,
+            highlight_index_range: None,
+            highlight_submesh_material: None,
+            assigned_submesh_materials: Vec::new(),
         })
+    }
+
+    pub fn set_assigned_submesh_materials(&mut self, materials: Vec<AssignedSubmeshMaterialEntry>) {
+        self.assigned_submesh_materials = materials;
+    }
+
+    pub fn set_highlight_submesh_material(&mut self, material: Option<ViewMaterial>) {
+        self.highlight_submesh_material = material;
+    }
+
+    pub fn set_highlight_object_id(&mut self, object_id: Option<&str>) {
+        let next_id = object_id.map(|s| s.trim()).filter(|s| !s.is_empty());
+        if next_id == self.highlight_object_id.as_deref() {
+            return;
+        }
+        self.highlight_object_id = next_id.map(|s| s.to_string());
+        self.highlight_index_range = None;
+
+        let Some(oid) = self.highlight_object_id.as_deref() else {
+            return;
+        };
+        self.highlight_index_range = self
+            .find_submesh_range(oid)
+            .map(|range| (range.index_start, range.index_count));
     }
 
     fn upload_mesh(
@@ -309,12 +514,57 @@ impl ViewportSession {
         (color_texture, color_view, depth_texture, depth_view)
     }
 
+    fn create_pick_targets(
+        device: &wgpu::Device,
+        width: u32,
+        height: u32,
+    ) -> (
+        wgpu::Texture,
+        wgpu::TextureView,
+        wgpu::Texture,
+        wgpu::TextureView,
+    ) {
+        let pick_texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("jepow-pick-id"),
+            size: wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8Unorm,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+            view_formats: &[],
+        });
+        let pick_view = pick_texture.create_view(&Default::default());
+        let pick_depth_texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("jepow-pick-depth"),
+            size: wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Depth32Float,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+            view_formats: &[],
+        });
+        let pick_depth_view = pick_depth_texture.create_view(&Default::default());
+        (pick_texture, pick_view, pick_depth_texture, pick_depth_view)
+    }
+
     pub fn load_scene(&mut self, path: &str) -> Result<serde_json::Value> {
         let mesh = load_meshes_cached(path)?;
         let (vb, ib, count) = Self::upload_mesh(&self.device, mesh.as_ref())?;
         self.vertex_buffer = vb;
         self.index_buffer = ib;
         self.index_count = count;
+        self.submesh_ranges = mesh.submeshes.clone();
+        self.pick_object_ids = Self::pick_object_ids(&mesh.submeshes);
         self.scene_fit = scene_fit_matrix(mesh.as_ref());
         self.scene_path = Some(path.to_string());
         Ok(serde_json::json!({
@@ -323,6 +573,22 @@ impl ViewportSession {
             "vertexCount": mesh.vertices.len(),
             "session": true,
         }))
+    }
+
+    fn pick_object_ids(submeshes: &[SubmeshRange]) -> Vec<String> {
+        let mut ids = Vec::new();
+        for submesh in submeshes {
+            if submesh.pick_id == 0 || submesh.index_count == 0 {
+                continue;
+            }
+            let _range = submesh.index_start..submesh.index_start + submesh.index_count;
+            let index = (submesh.pick_id - 1) as usize;
+            if ids.len() <= index {
+                ids.resize(index + 1, String::new());
+            }
+            ids[index] = submesh.object_id.clone();
+        }
+        ids
     }
 
     pub fn set_camera(&mut self, camera: ViewCamera) {
@@ -372,10 +638,61 @@ impl ViewportSession {
     }
 
     fn effective_material(&self) -> ViewMaterial {
+        if !self.assigned_submesh_materials.is_empty() {
+            return ViewMaterial::default();
+        }
         match self.shading {
             ShadingMode::Clay => ViewMaterial::default(),
             ShadingMode::Render => self.material,
         }
+    }
+
+    fn draw_submesh_fill(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        mvp: Mat4,
+        index_range: std::ops::Range<u32>,
+        material: ViewMaterial,
+    ) {
+        if index_range.is_empty() {
+            return;
+        }
+        let fill_uniforms = build_uniforms(mvp, self.effective_light(), material);
+        self.queue.write_buffer(
+            &self.fill_uniform_buffer,
+            0,
+            bytemuck::bytes_of(&fill_uniforms),
+        );
+        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("jepow-submesh-fill-pass"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view: &self.color_view,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Load,
+                    store: wgpu::StoreOp::Store,
+                },
+            })],
+            depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                view: &self.depth_view,
+                depth_ops: Some(wgpu::Operations {
+                    load: wgpu::LoadOp::Load,
+                    store: wgpu::StoreOp::Store,
+                }),
+                stencil_ops: None,
+            }),
+            occlusion_query_set: None,
+            timestamp_writes: None,
+        });
+        pass.set_pipeline(&self.pipeline);
+        pass.set_bind_group(0, &self.fill_bind_group, &[]);
+        pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
+        pass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+        pass.draw_indexed(index_range, 0, 0..1);
+    }
+
+    fn find_submesh_range(&self, object_id: &str) -> Option<&SubmeshRange> {
+        crate::render::find_submesh_index_range(&self.submesh_ranges, object_id)
     }
 
     fn ensure_frame_size(&mut self, width: u32, height: u32) {
@@ -389,6 +706,87 @@ impl ViewportSession {
         self.color_view = cv;
         self.depth_texture = d;
         self.depth_view = dv;
+        let (p, pv, pd, pdv) = Self::create_pick_targets(&self.device, width, height);
+        self.pick_texture = p;
+        self.pick_view = pv;
+        self.pick_depth_texture = pd;
+        self.pick_depth_view = pdv;
+    }
+
+    fn render_pick_ids(&mut self, width: u32, height: u32) {
+        self.ensure_frame_size(width, height);
+        let mvp = camera_mvp(width, height, self.camera) * self.model_matrix();
+        let uniforms = PickUniforms {
+            mvp: mvp.to_cols_array(),
+        };
+        self.queue
+            .write_buffer(&self.pick_uniform_buffer, 0, bytemuck::bytes_of(&uniforms));
+
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("jepow-pick-encoder"),
+            });
+        {
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("jepow-pick-pass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &self.pick_view,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                    view: &self.pick_depth_view,
+                    depth_ops: Some(wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(1.0),
+                        store: wgpu::StoreOp::Store,
+                    }),
+                    stencil_ops: None,
+                }),
+                occlusion_query_set: None,
+                timestamp_writes: None,
+            });
+            pass.set_pipeline(&self.pick_pipeline);
+            pass.set_bind_group(0, &self.pick_bind_group, &[]);
+            pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
+            pass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+            pass.draw_indexed(0..self.index_count, 0, 0..1);
+        }
+        self.queue.submit(Some(encoder.finish()));
+    }
+
+    pub fn pick_scene_object(
+        &mut self,
+        cursor_x: f32,
+        cursor_y: f32,
+        width: u32,
+        height: u32,
+    ) -> Result<Option<String>> {
+        let width = width.clamp(1, 4096);
+        let height = height.clamp(1, 4096);
+        self.render_pick_ids(width, height);
+        let x = cursor_x.floor().clamp(0.0, (width - 1) as f32) as u32;
+        let y = cursor_y.floor().clamp(0.0, (height - 1) as f32) as u32;
+        let id = readback_pick_id(
+            &self.device,
+            &self.queue,
+            &self.pick_texture,
+            x,
+            y,
+            width,
+            height,
+            8,
+        )?;
+        if id == 0 {
+            return Ok(None);
+        }
+        Ok(self
+            .pick_object_ids
+            .get((id - 1) as usize)
+            .and_then(|s| (!s.is_empty()).then(|| s.clone())))
     }
 
     pub fn draw_frame(&mut self, output_path: &str, width: u32, height: u32) -> Result<u64> {
@@ -441,6 +839,82 @@ impl ViewportSession {
             pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
             pass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
             pass.draw_indexed(0..self.index_count, 0, 0..1);
+        }
+
+        for assigned in &self.assigned_submesh_materials {
+            let Some(range) = self.find_submesh_range(&assigned.object_id) else {
+                continue;
+            };
+            if range.index_count == 0 {
+                continue;
+            }
+            let index_range = range.index_start..range.index_start + range.index_count;
+            self.draw_submesh_fill(
+                &mut encoder,
+                mvp,
+                index_range,
+                assigned.material,
+            );
+        }
+
+        if let Some((start, count)) = self.highlight_index_range {
+            if count > 0 {
+                let range = start..start + count;
+                let selected_id = self.highlight_object_id.as_deref().unwrap_or("");
+                let selection_already_assigned = self
+                    .assigned_submesh_materials
+                    .iter()
+                    .any(|entry| entry.object_id == selected_id);
+                if selection_already_assigned {
+                    // Painted in assigned_submesh_materials loop above.
+                } else if let Some(fill_mat) = self.highlight_submesh_material {
+                    self.draw_submesh_fill(&mut encoder, mvp, range.clone(), fill_mat);
+                } else {
+                    let highlight_material = ViewMaterial {
+                        base_color: [0.42, 0.82, 1.0],
+                        roughness: 0.42,
+                        metalness: 0.02,
+                        specular: 0.55,
+                        clearcoat: 0.15,
+                        transmission: 0.35,
+                        emission_strength: 0.65,
+                    };
+                    let highlight_uniforms =
+                        build_uniforms(mvp, self.effective_light(), highlight_material);
+                    self.queue.write_buffer(
+                        &self.highlight_uniform_buffer,
+                        0,
+                        bytemuck::bytes_of(&highlight_uniforms),
+                    );
+                    let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                        label: Some("jepow-highlight-pass"),
+                        color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                            view: &self.color_view,
+                            resolve_target: None,
+                            ops: wgpu::Operations {
+                                load: wgpu::LoadOp::Load,
+                                store: wgpu::StoreOp::Store,
+                            },
+                        })],
+                        depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                            view: &self.depth_view,
+                            depth_ops: Some(wgpu::Operations {
+                                load: wgpu::LoadOp::Load,
+                                store: wgpu::StoreOp::Store,
+                            }),
+                            stencil_ops: None,
+                        }),
+                        occlusion_query_set: None,
+                        timestamp_writes: None,
+                    });
+                    pass.set_pipeline(&self.pipeline);
+                    pass.set_bind_group(0, &self.highlight_bind_group, &[]);
+                    pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
+                    pass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+                    pass.draw_indexed(range, 0, 0..1);
+                    drop(pass);
+                }
+            }
         }
 
         self.queue.submit(Some(encoder.finish()));
@@ -514,6 +988,89 @@ fn readback_png(
         ImageBuffer::from_raw(width, height, pixels).ok_or_else(|| anyhow::anyhow!("bad frame"))?;
     img.save(output_path)?;
     Ok(())
+}
+
+fn readback_pick_id(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    texture: &wgpu::Texture,
+    x: u32,
+    y: u32,
+    texture_width: u32,
+    texture_height: u32,
+    radius: u32,
+) -> Result<u32> {
+    let min_x = x.saturating_sub(radius);
+    let min_y = y.saturating_sub(radius);
+    let max_x = (x + radius).min(texture_width.saturating_sub(1));
+    let max_y = (y + radius).min(texture_height.saturating_sub(1));
+    let sample_w = (max_x - min_x + 1).max(1);
+    let sample_h = (max_y - min_y + 1).max(1);
+    let bytes_per_row = (sample_w * 4).div_ceil(256) * 256;
+    let readback = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("jepow-pick-region-readback"),
+        size: bytes_per_row as u64 * sample_h as u64,
+        usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+        mapped_at_creation: false,
+    });
+    let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+        label: Some("jepow-pick-readback-encoder"),
+    });
+    encoder.copy_texture_to_buffer(
+        wgpu::ImageCopyTexture {
+            texture,
+            mip_level: 0,
+            origin: wgpu::Origin3d {
+                x: min_x,
+                y: min_y,
+                z: 0,
+            },
+            aspect: wgpu::TextureAspect::All,
+        },
+        wgpu::ImageCopyBuffer {
+            buffer: &readback,
+            layout: wgpu::ImageDataLayout {
+                offset: 0,
+                bytes_per_row: Some(bytes_per_row),
+                rows_per_image: Some(sample_h),
+            },
+        },
+        wgpu::Extent3d {
+            width: sample_w,
+            height: sample_h,
+            depth_or_array_layers: 1,
+        },
+    );
+    queue.submit(Some(encoder.finish()));
+    let slice = readback.slice(..);
+    slice.map_async(wgpu::MapMode::Read, |_| {});
+    device.poll(wgpu::Maintain::Wait);
+    let data = slice.get_mapped_range();
+    let center_x = x - min_x;
+    let center_y = y - min_y;
+    let mut best: Option<(u32, u32)> = None;
+    for sy in 0..sample_h {
+        let row_start = (sy * bytes_per_row) as usize;
+        for sx in 0..sample_w {
+            let offset = row_start + (sx * 4) as usize;
+            let id = data[offset] as u32
+                | ((data[offset + 1] as u32) << 8)
+                | ((data[offset + 2] as u32) << 16);
+            if id == 0 {
+                continue;
+            }
+            let dx = sx.abs_diff(center_x);
+            let dy = sy.abs_diff(center_y);
+            let dist2 = dx * dx + dy * dy;
+            if best.map(|(_, best_dist)| dist2 < best_dist).unwrap_or(true) {
+                best = Some((id, dist2));
+            }
+        }
+    }
+    let id = best.map(|(id, _)| id).unwrap_or(0);
+    drop(data);
+    readback.unmap();
+    Ok(id)
 }
 
 pub fn parse_object_transform(payload: &serde_json::Value) -> ObjectTransform {
