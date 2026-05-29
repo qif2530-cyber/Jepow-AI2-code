@@ -1392,6 +1392,9 @@ async function updateSession(sessionId, patch = {}) {
     };
   }
 
+  await runDaemonCommand('stop_render', { sessionId: session.id }, 1200).catch(() => {});
+  session.status = 'navigating';
+  session.updatedAt = Date.now();
   const beforeStatus = await runDaemonCommand('status', { sessionId: session.id }, 1200);
   const beforeDaemonFrameVersion = Number(beforeStatus.frameVersion) || 0;
   const res = await updateResidentCamera(session.id, session.opts, width, height, samples);

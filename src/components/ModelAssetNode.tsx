@@ -30,6 +30,10 @@ import { scenePathToNodePatch } from "../lib/desktop-scene-path";
 import { getLocalUserId } from "../lib/local-user-id";
 import { getCurrentProjectId } from "../lib/current-project";
 import type { ViewportCamera } from "../lib/viewport-engine/types";
+import {
+  fetchSceneObjectList,
+  type SceneObjectEntry,
+} from "../lib/scene-object-list";
 
 interface ModelAssetNodeProps {
   id: string;
@@ -46,6 +50,8 @@ interface ModelAssetNodeProps {
     blendSourcePath?: string;
     previewMode?: "webgl" | "native";
     previewCamera?: ViewportCamera;
+    /** 场景文件内对象/网格层级（桌面原生解析） */
+    sceneObjects?: SceneObjectEntry[];
   };
   selected?: boolean;
 }
@@ -253,6 +259,20 @@ export function ModelAssetNode({ id, data, selected }: ModelAssetNodeProps) {
     updateNodeData,
   ]);
 
+  useEffect(() => {
+    if (!desktop3d || !scenePathForNative) return;
+    const existing = data.sceneObjects;
+    if (existing && existing.length > 0) return;
+    let cancelled = false;
+    void fetchSceneObjectList(scenePathForNative).then((objects) => {
+      if (cancelled || objects.length === 0) return;
+      updateNodeData(id, { sceneObjects: objects });
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [desktop3d, scenePathForNative, id, data.sceneObjects, updateNodeData]);
+
   /** 桌面端：jepow-engine 视口（显示用导出的 GLB/FBX，.blend 仅作工程源文件） */
   const useDesktopNativeRenderer =
     desktop3d && !!scenePathForNative && !scenePathResolving;
@@ -312,6 +332,7 @@ export function ModelAssetNode({ id, data, selected }: ModelAssetNodeProps) {
       }
     }
     const ref = assetRef || toLocalAssetRef(localPath);
+    const objects = await fetchSceneObjectList(localPath);
     updateNodeData(id, {
       nativeScenePath: localPath,
       localAssetPath: localPath,
@@ -319,9 +340,14 @@ export function ModelAssetNode({ id, data, selected }: ModelAssetNodeProps) {
       modelName: fileName,
       viewportBackend: "jepow-native",
       localPreviewUrl: "",
+      sceneObjects: objects,
     });
     setLoadError(null);
-    toast.success("已导入本地场景，由 Jepow 自研引擎加载");
+    toast.success(
+      objects.length > 0
+        ? `已导入本地场景（${objects.length} 个对象）`
+        : "已导入本地场景，由 Jepow 自研引擎加载",
+    );
   };
 
   const handleImportBlendProject = async (file?: File) => {
@@ -429,6 +455,7 @@ export function ModelAssetNode({ id, data, selected }: ModelAssetNodeProps) {
         const ref =
           (saved as { assetRef?: string }).assetRef ||
           toLocalAssetRef(saved.localPath);
+        const objects = await fetchSceneObjectList(saved.localPath);
         updateNodeData(id, {
           glbUrl: ref,
           localAssetPath: saved.localPath,
@@ -436,6 +463,7 @@ export function ModelAssetNode({ id, data, selected }: ModelAssetNodeProps) {
           modelName: file.name,
           viewportBackend: "jepow-native",
           localPreviewUrl: "",
+          sceneObjects: objects,
         });
         setLoadError(null);
         toast.success(

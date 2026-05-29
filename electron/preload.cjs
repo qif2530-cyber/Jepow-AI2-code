@@ -46,6 +46,7 @@ contextBridge.exposeInMainWorld('jepowDesktop', {
     pickSceneFile: () => ipcRenderer.invoke('viewport:pickSceneFile'),
     openScene: (scenePath) => ipcRenderer.invoke('viewport:openScene', scenePath),
     sceneInfo: (scenePath) => ipcRenderer.invoke('viewport:sceneInfo', scenePath),
+    listSceneObjects: (scenePath) => ipcRenderer.invoke('viewport:listSceneObjects', scenePath),
     renderPreview: (opts) => ipcRenderer.invoke('viewport:renderPreview', opts),
     renderCyclesFrame: (opts) => ipcRenderer.invoke('viewport:renderCyclesFrame', opts),
     startCyclesSession: (opts) => ipcRenderer.invoke('viewport:startCyclesSession', opts),

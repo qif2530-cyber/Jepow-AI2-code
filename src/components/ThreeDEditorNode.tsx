@@ -664,6 +664,7 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
   const persistCameraTimerRef = useRef<number | null>(null);
   const sceneCameraFramedRef = useRef(false);
   const cyclesPatchInFlightRef = useRef(false);
+  const cyclesCameraPatchEpochRef = useRef(0);
   const cyclesPatchQueuedRef = useRef(false);
   const pendingCameraRenderRef = useRef(false);
   const cyclesInteractLoopRef = useRef<number | null>(null);
@@ -804,6 +805,7 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
       pendingCameraRenderRef.current = true;
       return;
     }
+    const patchEpoch = cyclesCameraPatchEpochRef.current;
     if (cyclesPatchInFlightRef.current) {
       cyclesPatchQueuedRef.current = true;
       pendingCameraRenderRef.current = true;
@@ -832,6 +834,7 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
     cyclesPatchInFlightRef.current = true;
     const sentCameraVersion = cameraVersionRef.current;
     try {
+      if (patchEpoch !== cyclesCameraPatchEpochRef.current) return;
       const engine = getViewportEngine();
       const update = (await engine.updateCyclesSession?.(sessionId, {
         camera: cam,
@@ -849,6 +852,7 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
         };
         frameCaptured?: boolean;
       };
+      if (patchEpoch !== cyclesCameraPatchEpochRef.current) return;
       const patchFrame = update?.frame;
       if (
         patchFrame &&
@@ -857,6 +861,7 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
       ) {
         return;
       }
+      if (patchEpoch !== cyclesCameraPatchEpochRef.current) return;
       const state = (await engine.readCyclesSession?.(sessionId)) as {
         frame?: {
           previewDataUrl?: string;
@@ -926,9 +931,18 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
       lastCameraChangeAtRef.current = Date.now();
       persistCyclesViewportCamera(next);
       if (viewportMode === "render") {
+        cyclesCameraPatchEpochRef.current += 1;
         pendingCameraRenderRef.current = true;
         lastCyclesSessionPatchKeyRef.current = "";
-        scheduleCyclesCameraPatch("interactive", 16);
+        setCyclesFrame((prev) => ({
+          ...prev,
+          status: "rendering",
+          previewDataUrl: undefined,
+          cameraVersion: nextCameraVersion,
+          error: undefined,
+          detail: "正在同步视角…",
+        }));
+        scheduleCyclesCameraPatch("interactive", 0);
         if (cyclesCameraSettleTimerRef.current != null) {
           window.clearTimeout(cyclesCameraSettleTimerRef.current);
         }
@@ -977,7 +991,7 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
     cyclesInteractLoopRef.current = window.setInterval(() => {
       lastCyclesSessionPatchKeyRef.current = "";
       void flushCyclesCameraPatch("interactive");
-    }, 160);
+    }, 90);
     return () => {
       if (cyclesInteractLoopRef.current != null) {
         window.clearInterval(cyclesInteractLoopRef.current);
@@ -1418,6 +1432,11 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
     (cyclesFrame.cameraVersion == null ||
       cyclesFrame.cameraVersion === cameraVersion);
 
+  const cyclesShowLiveNativeOverlay =
+    viewportMode === "render" &&
+    renderActive &&
+    (viewportInteracting || !cyclesFrameMatchesCamera);
+
   const zoom = useStore((s) => s.transform[2]);
   const isOnlySelected = useStore(
     (s) =>
@@ -1575,7 +1594,9 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
           </div>
         ) : showLiveViewport ? (
           <div
-            className={`absolute inset-0 ${viewportMode === "render" ? "z-[10]" : "z-0"}`}
+            className={`absolute inset-0 ${
+              cyclesShowLiveNativeOverlay ? "z-[14]" : viewportMode === "render" ? "z-[10]" : "z-0"
+            }`}
             onMouseDown={(e) => e.stopPropagation()}
             onTouchStart={(e) => e.stopPropagation()}
           >
@@ -1586,8 +1607,8 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
               liveRender
               lockRenderSize
               highPerformanceMode={highPerfDynamic}
-              shading={previewUsesNativeMaterial ? "render" : "clay"}
-              ghostOverlay={false}
+              shading="clay"
+              ghostOverlay={viewportMode === "render"}
               transform={{
                 x: transform.x,
                 y: transform.y,

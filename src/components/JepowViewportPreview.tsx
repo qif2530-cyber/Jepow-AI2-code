@@ -708,8 +708,8 @@ export function JepowViewportPreview({
         <img
           src={previewSrc}
           alt="Jepow native viewport"
-          className={`w-full h-full pointer-events-none select-none object-contain transition-opacity duration-150 ${
-            ghostOverlay ? "opacity-0 bg-transparent" : "opacity-100 bg-[#1a1b1e]"
+          className={`w-full h-full pointer-events-none select-none object-cover transition-opacity duration-75 ${
+            ghostOverlay ? "opacity-100 bg-[#1a1b1e]" : "opacity-100 bg-[#1a1b1e]"
           }`}
           style={{ imageRendering: "auto" }}
           draggable={false}

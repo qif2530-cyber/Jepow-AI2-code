@@ -263,6 +263,10 @@ function registerViewportIpc(ipcMain) {
     return nativeEngine.openScene(normalizeScenePath(scenePath));
   });
 
+  ipcMain.handle('viewport:listSceneObjects', async (_e, scenePath) => {
+    return nativeEngine.listSceneObjects(normalizeScenePath(scenePath));
+  });
+
   ipcMain.handle('viewport:renderPreview', async (_e, opts) => {
     const o = opts || {};
     const p = normalizeScenePath(o.scenePath);

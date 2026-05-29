@@ -572,6 +572,12 @@ async function openScene(scenePath) {
   }
 }
 
+async function listSceneObjects(scenePath) {
+  const p = normalizeScenePath(scenePath);
+  if (!p) return { ok: false, error: 'scenePath required' };
+  return runEngineCommand('list_scene_objects', { scenePath: p }, 120000);
+}
+
 async function renderPreview(opts = {}) {
   const {
     scenePath,
@@ -755,6 +761,7 @@ module.exports = {
   runEngineCommand,
   getStatus,
   openScene,
+  listSceneObjects,
   renderPreview,
   meshForCycles,
   runArchitectureSelfTest,

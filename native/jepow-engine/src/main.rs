@@ -53,6 +53,7 @@ fn main() {
         "physics_create_world" => cmd_physics_create_world(&payload),
         "physics_step_world" => cmd_physics_step_world(&payload),
         "open_scene" | "scene_info" => cmd_open_scene(&payload),
+        "list_scene_objects" => cmd_list_scene_objects(&payload),
         "render_frame" => cmd_render_frame(&payload),
         "mesh_stats" => cmd_mesh_stats(&payload),
         "mesh_for_cycles" => cmd_mesh_for_cycles(&payload),
@@ -188,6 +189,21 @@ fn cmd_open_scene(payload: &serde_json::Value) {
             "materialCount": stats.material_count,
             "triangleCount": stats.triangle_count,
             "cpuJobs": jobs::parallel_job_count(),
+        })),
+        Err(e) => emit_err(e),
+    }
+}
+
+fn cmd_list_scene_objects(payload: &serde_json::Value) {
+    let scene_path = match payload.get("scenePath").and_then(|v| v.as_str()) {
+        Some(p) => p,
+        None => return emit_err("scenePath required"),
+    };
+    match scene::list_scene_objects(scene_path) {
+        Ok(objects) => emit(serde_json::json!({
+            "scenePath": scene_path,
+            "objects": objects,
+            "objectCount": objects.len(),
         })),
         Err(e) => emit_err(e),
     }

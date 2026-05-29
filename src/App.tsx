@@ -141,6 +141,11 @@ import { createCyclesMaterial } from "./lib/cycles-material";
 import { MaterialReplaceNode } from "./components/MaterialReplaceNode";
 import { ThreeDEditorNode } from "./components/ThreeDEditorNode";
 import { ModelAssetNode } from "./components/ModelAssetNode";
+import {
+  sceneObjectForest,
+  type SceneObjectEntry,
+  type SceneObjectTreeNode,
+} from "./lib/scene-object-list";
 import { ThreeDRenderNode } from "./components/ThreeDRenderNode";
 import { CyclesLightNode } from "./components/CyclesLightNode";
 import { CyclesCameraNode } from "./components/CyclesCameraNode";
@@ -7268,8 +7273,57 @@ export default function App() {
       return !nodes.some((parent) => parent.id === node.parentId);
     });
   }, [desktopStartupLocked, nodes]);
+  const renderSceneObjectTree = (
+    canvasNodeId: string,
+    entry: SceneObjectTreeNode,
+    depth: number,
+  ): React.ReactNode => (
+    <React.Fragment key={`${canvasNodeId}:obj:${entry.id}`}>
+      <div
+        role="button"
+        tabIndex={0}
+        onClick={() => {
+          const canvasNode = nodes.find((n) => n.id === canvasNodeId);
+          if (!canvasNode) return;
+          setSelectedNodes([canvasNode]);
+          setNodes((currentNodes) =>
+            currentNodes.map((item) => ({
+              ...item,
+              selected: item.id === canvasNodeId,
+            })),
+          );
+          focusCanvasNode(canvasNode);
+        }}
+        className="flex h-6 w-full items-center gap-1 px-2 text-left text-[10px] text-neutral-500 transition-colors hover:bg-white/[0.04] hover:text-neutral-300"
+        style={{ paddingLeft: 8 + depth * 12 }}
+      >
+        <span className="h-4 w-4 shrink-0" />
+        <Box
+          className={`h-3 w-3 shrink-0 ${
+            entry.kind === "mesh" ? "text-emerald-400/90" : "text-neutral-600"
+          }`}
+        />
+        <span className="min-w-0 flex-1 truncate">{entry.name}</span>
+        {entry.triangleCount != null && entry.triangleCount > 0 ? (
+          <span className="shrink-0 font-mono text-[8px] text-neutral-600">
+            {entry.triangleCount.toLocaleString()}△
+          </span>
+        ) : null}
+      </div>
+      {entry.children.map((child) =>
+        renderSceneObjectTree(canvasNodeId, child, depth + 1),
+      )}
+    </React.Fragment>
+  );
+
   const renderSceneTreeNode = (node: Node, depth = 0): React.ReactNode => {
     const children = sceneChildrenByParentId.get(node.id) || [];
+    const sceneObjects =
+      node.type === "modelAssetNode"
+        ? ((node.data as { sceneObjects?: SceneObjectEntry[] })?.sceneObjects ?? [])
+        : [];
+    const sceneObjectTree =
+      sceneObjects.length > 0 ? sceneObjectForest(sceneObjects) : [];
     const isGroup = node.type === "groupNode";
     const isCollapsed = collapsedSceneGroupIds.has(node.id);
     const isSelected =
@@ -7377,6 +7431,10 @@ export default function App() {
         </div>
         {!isCollapsed &&
           children.map((child) => renderSceneTreeNode(child, depth + 1))}
+        {!isCollapsed &&
+          sceneObjectTree.map((obj) =>
+            renderSceneObjectTree(node.id, obj, depth + 1),
+          )}
       </React.Fragment>
     );
   };
