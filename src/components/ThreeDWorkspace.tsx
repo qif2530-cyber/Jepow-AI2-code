@@ -148,6 +148,9 @@ const displayToHost: Record<string, string> = {
   CL: "cl",
 };
 const displayModes = ["线框", "实体", "材质", "CL"];
+const objectModes = ["对象", "编辑", "雕刻", "姿态"] as const;
+const transformOrientations = ["全局", "局部", "视图"] as const;
+const pivotPoints = ["中点", "原点", "游标"] as const;
 
 const viewPresets: Record<
   string,
@@ -217,6 +220,7 @@ const actionIcons: Record<string, string> = {
   诊断层: "◈",
   弹出原生: "▤",
   收回原生: "▥",
+  开发工具: "⚙",
   架构自检: "✓",
   导入管线: "⇣",
   物理世界: "⬡",
@@ -233,6 +237,12 @@ const displayIcons: Record<string, string> = {
   材质: "◐",
   CL: "CL",
 };
+
+const navigationGizmoAxes = [
+  { axis: "X", label: "右", className: "right-1 top-1/2 -translate-y-1/2 text-red-300" },
+  { axis: "Y", label: "前", className: "left-1/2 bottom-1 -translate-x-1/2 text-green-300" },
+  { axis: "Z", label: "顶", className: "left-1/2 top-1 -translate-x-1/2 text-blue-300" },
+] as const;
 
 const toHostObjects = (objects: ThreeDObject[]) =>
   objects.map((object) => ({
@@ -381,6 +391,10 @@ export function ThreeDWorkspace({
   const objectsRef = useRef(objects);
   const [activeTool, setActiveTool] = useState("选择");
   const [displayMode, setDisplayMode] = useState("CL");
+  const [objectMode, setObjectMode] = useState<(typeof objectModes)[number]>("对象");
+  const [transformOrientation, setTransformOrientation] =
+    useState<(typeof transformOrientations)[number]>("全局");
+  const [pivotPoint, setPivotPoint] = useState<(typeof pivotPoints)[number]>("中点");
   const [snapEnabled, setSnapEnabled] = useState(false);
   const [snapStep, setSnapStep] = useState(0.5);
   const [cameraProjection, setCameraProjection] = useState<"perspective" | "orthographic">(
@@ -396,6 +410,7 @@ export function ThreeDWorkspace({
   const [hostError, setHostError] = useState<string | null>(null);
   const [nativeViewportPopout, setNativeViewportPopout] = useState(false);
   const [showRuntimeOverlay, setShowRuntimeOverlay] = useState(false);
+  const [showDeveloperTools, setShowDeveloperTools] = useState(false);
   const [dockedCamera, setDockedCamera] = useState({
     yaw: -38,
     pitch: 58,
@@ -1341,8 +1356,21 @@ export function ThreeDWorkspace({
       </div>
 
       <div className="flex min-w-0 flex-1 flex-col">
-        <div className="flex h-7 shrink-0 items-center justify-between border-b border-[#25272b] bg-[#303236] px-2 text-[11px]">
-          <div className="flex items-center gap-1">
+        <div className="flex h-7 shrink-0 items-center justify-between gap-2 border-b border-[#25272b] bg-[#303236] px-2 text-[11px]">
+          <div className="flex min-w-0 items-center gap-1 overflow-hidden">
+            <select
+              value={objectMode}
+              onChange={(event) => setObjectMode(event.target.value as (typeof objectModes)[number])}
+              className="h-5 rounded-[3px] border border-[#3a3c40] bg-[#1f2023] px-1 text-[10px] text-neutral-300 outline-none"
+              title="Blender-style 模式切换"
+            >
+              {objectModes.map((mode) => (
+                <option key={mode} value={mode}>
+                  {mode}
+                </option>
+              ))}
+            </select>
+            <span className="mx-1 h-4 w-px shrink-0 bg-white/10" />
             {(["前", "后", "右", "左", "顶", "底", "透"] as const).map((item) => (
               <button
                 key={item}
@@ -1366,6 +1394,7 @@ export function ThreeDWorkspace({
             >
               ⊥
             </button>
+            <span className="mx-1 h-4 w-px shrink-0 bg-white/10" />
             {[
               { label: "网格", action: () => onAddObject?.("网格") },
               { label: "相机", action: () => onAddObject?.("相机") },
@@ -1403,6 +1432,21 @@ export function ThreeDWorkspace({
             >
               {actionIcons["重做"]}
             </button>
+            <span className="mx-1 h-4 w-px shrink-0 bg-white/10" />
+            <button
+              type="button"
+              onClick={() => setShowDeveloperTools((current) => !current)}
+              className={`grid h-5 min-w-5 place-items-center rounded-[3px] px-1.5 font-mono text-[10px] ${
+                showDeveloperTools
+                  ? "bg-emerald-500/25 text-white"
+                  : "text-neutral-300 hover:bg-white/[0.08] hover:text-white"
+              }`}
+              title="开发/诊断工具"
+            >
+              {actionIcons["开发工具"]}
+            </button>
+            {showDeveloperTools && (
+              <>
             <button
               type="button"
               onClick={runArchitectureDiagnostics}
@@ -1454,6 +1498,9 @@ export function ThreeDWorkspace({
             >
               {actionIcons["导入管线"]}
             </button>
+              </>
+            )}
+            <span className="mx-1 h-4 w-px shrink-0 bg-white/10" />
             <button
               type="button"
               onClick={probePhysicsWorld}
@@ -1496,6 +1543,32 @@ export function ThreeDWorkspace({
             </button>
           </div>
           <div className="flex items-center gap-1 rounded-[3px] bg-[#252629] p-0.5">
+            <select
+              value={transformOrientation}
+              onChange={(event) =>
+                setTransformOrientation(event.target.value as (typeof transformOrientations)[number])
+              }
+              className="h-5 rounded-[3px] border border-[#3a3c40] bg-[#1f2023] px-1 text-[10px] text-neutral-300 outline-none"
+              title="变换坐标系"
+            >
+              {transformOrientations.map((orientation) => (
+                <option key={orientation} value={orientation}>
+                  {orientation}
+                </option>
+              ))}
+            </select>
+            <select
+              value={pivotPoint}
+              onChange={(event) => setPivotPoint(event.target.value as (typeof pivotPoints)[number])}
+              className="h-5 rounded-[3px] border border-[#3a3c40] bg-[#1f2023] px-1 text-[10px] text-neutral-300 outline-none"
+              title="枢轴点"
+            >
+              {pivotPoints.map((pivot) => (
+                <option key={pivot} value={pivot}>
+                  {pivot}
+                </option>
+              ))}
+            </select>
             <button
               type="button"
               onClick={() => setSnapEnabled((current) => !current)}
@@ -1554,40 +1627,90 @@ export function ThreeDWorkspace({
               backgroundSize: "28px 28px",
             }}
           />
-          <div className="pointer-events-none absolute right-3 top-3 grid h-20 w-20 place-items-center rounded-full border border-white/10 bg-black/20 text-[10px] text-neutral-300 backdrop-blur">
-            <span className="absolute top-1 text-blue-300">Z</span>
-            <span className="absolute right-2 text-green-300">Y</span>
-            <span className="absolute left-2 text-red-300">X</span>
-            <span className="rounded-full bg-white/10 px-1.5 py-0.5">视图</span>
+          <div className="absolute right-3 top-3 h-24 w-24 rounded-full border border-white/10 bg-black/20 text-[10px] text-neutral-300 backdrop-blur">
+            <button
+              type="button"
+              onClick={(event) => {
+                event.stopPropagation();
+                resetDockedView();
+              }}
+              className="absolute left-1/2 top-1/2 grid h-8 w-8 -translate-x-1/2 -translate-y-1/2 place-items-center rounded-full bg-white/10 text-[9px] text-neutral-200 hover:bg-white/20"
+              title="重置停靠视图"
+            >
+              视图
+            </button>
+            {navigationGizmoAxes.map((item) => (
+              <button
+                key={item.axis}
+                type="button"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  applyViewPreset(item.label);
+                }}
+                className={`absolute grid h-6 w-6 place-items-center rounded-full bg-black/25 font-bold hover:bg-white/15 ${item.className}`}
+                title={`${item.axis} 轴 · 切到${item.label}视图`}
+              >
+                {item.axis}
+              </button>
+            ))}
           </div>
           {!nativeViewportPopout && (
-            <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
+            <div className="pointer-events-none absolute inset-0 flex items-center justify-center [perspective:900px]">
               <div
-                className="relative h-32 w-32 [transform-style:preserve-3d]"
+                className="relative h-[520px] w-[520px] [transform-style:preserve-3d]"
                 style={{
                   transform: `translate3d(${dockedCamera.panX}px, ${dockedCamera.panY}px, 0) scale(${dockedCamera.zoom}) rotateX(${dockedCamera.pitch}deg) rotateZ(${dockedCamera.yaw}deg)`,
                 }}
               >
+                <div
+                  className="absolute left-1/2 top-1/2 h-[760px] w-[760px] -translate-x-1/2 -translate-y-1/2 border border-white/5 opacity-80"
+                  style={{
+                    backgroundImage:
+                      "linear-gradient(rgba(180,205,240,0.18) 1px, transparent 1px), linear-gradient(90deg, rgba(180,205,240,0.18) 1px, transparent 1px), linear-gradient(rgba(255,80,80,0.22) 2px, transparent 2px), linear-gradient(90deg, rgba(90,255,130,0.18) 2px, transparent 2px)",
+                    backgroundSize: "32px 32px, 32px 32px, 760px 380px, 380px 760px",
+                    transform: "translateZ(-36px)",
+                  }}
+                />
                 {selectedObject?.type === "网格" ? (
-                  <>
-                    <div className="absolute inset-0 border border-orange-300/80 bg-[#9ebeed]/90 shadow-2xl shadow-black/30" />
-                    <div className="absolute inset-y-0 left-full w-10 origin-left border border-orange-300/60 bg-[#6f8db9]/85 [transform:skewY(-35deg)]" />
-                    <div className="absolute bottom-full left-0 h-10 w-full origin-bottom border border-orange-300/60 bg-[#b8d4ff]/90 [transform:skewX(-55deg)]" />
-                  </>
+                  <div className="absolute left-1/2 top-1/2 h-28 w-28 -translate-x-1/2 -translate-y-1/2 [transform-style:preserve-3d]">
+                    <div className="absolute -inset-2 border-2 border-orange-300/95 [transform:translateZ(79px)]" />
+                    <div className="absolute inset-0 border border-orange-300/80 bg-[#9ebeed]/95 [transform:translateZ(56px)]" />
+                    <div className="absolute inset-0 border border-orange-300/50 bg-[#58749e]/95 [transform:rotateY(180deg)_translateZ(56px)]" />
+                    <div className="absolute inset-0 border border-orange-300/60 bg-[#6f8db9]/95 [transform:rotateY(90deg)_translateZ(56px)]" />
+                    <div className="absolute inset-0 border border-orange-300/60 bg-[#6f8db9]/90 [transform:rotateY(-90deg)_translateZ(56px)]" />
+                    <div className="absolute inset-0 border border-orange-300/70 bg-[#b8d4ff]/95 [transform:rotateX(90deg)_translateZ(56px)]" />
+                    <div className="absolute inset-0 border border-orange-300/40 bg-[#3e536f]/95 [transform:rotateX(-90deg)_translateZ(56px)]" />
+                    <div className="absolute left-1/2 top-1/2 h-1 w-36 -translate-y-1/2 bg-red-400/80 [transform:translateZ(74px)]" />
+                    <div className="absolute left-1/2 top-1/2 h-36 w-1 -translate-x-1/2 bg-green-400/80 [transform:translateZ(76px)]" />
+                    <div className="absolute left-1/2 top-1/2 h-1 w-28 -translate-x-1/2 bg-blue-400/80 [transform:rotateY(90deg)_translateZ(76px)]" />
+                    <div className="absolute left-1/2 top-1/2 h-3 w-3 -translate-x-1/2 -translate-y-1/2 rounded-full border border-white/80 bg-orange-300 [transform:translateZ(82px)]" />
+                  </div>
                 ) : selectedObject?.type === "相机" ? (
-                  <div className="grid h-28 w-36 place-items-center border border-orange-300/80 bg-black/20 text-[11px] text-orange-100">
-                    Camera
+                  <div className="absolute left-1/2 top-1/2 h-28 w-36 -translate-x-1/2 -translate-y-1/2 border-2 border-orange-300/90 bg-black/10 text-[11px] text-orange-100 [transform-style:preserve-3d]">
+                    <div className="absolute inset-2 border border-orange-200/60" />
+                    <div className="absolute -left-8 top-1/2 h-px w-8 bg-orange-200/70" />
+                    <div className="absolute -right-8 top-1/2 h-px w-8 bg-orange-200/70" />
+                    <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2">Camera</div>
                   </div>
                 ) : (
-                  <div className="grid h-24 w-24 place-items-center rounded-full border border-yellow-200/80 bg-yellow-300/20 text-[11px] text-yellow-100">
-                    Light
+                  <div className="absolute left-1/2 top-1/2 grid h-24 w-24 -translate-x-1/2 -translate-y-1/2 place-items-center rounded-full border-2 border-orange-300/90 bg-yellow-300/20 text-[11px] text-yellow-100">
+                    <div className="absolute h-32 w-px bg-yellow-200/50" />
+                    <div className="absolute h-px w-32 bg-yellow-200/50" />
+                    <span className="rounded-full bg-yellow-300/20 px-2 py-1">Light</span>
                   </div>
                 )}
               </div>
             </div>
           )}
           <div className="pointer-events-none absolute left-3 top-3 rounded bg-black/35 px-2 py-1 text-[10px] text-neutral-300">
-            {nativeViewportPopout ? "原生弹出" : "停靠预览"} · Collection | {selectedObject?.name || "对象"} · {activeTool}
+            <div className="font-bold text-neutral-100">
+              {nativeViewportPopout ? "原生弹出" : "停靠视图"} · {cameraProjection === "orthographic" ? "正交" : "透视"} · {displayMode}
+            </div>
+            <div className="mt-0.5 text-neutral-400">
+              {objectMode}模式 · Collection / {selectedObject?.name || "对象"} · 工具 {activeTool} ·{" "}
+              {transformOrientation} / {pivotPoint} · {selectedObject?.locked ? "锁定" : "可编辑"} ·{" "}
+              {snapEnabled ? `吸附 ${snapStep}` : "自由"} · 已选 {selectedObject ? 1 : 0}/{objects.length}
+            </div>
           </div>
           {showRuntimeOverlay && nativeStatus?.architecture && (
             <div className="pointer-events-none absolute left-3 top-10 max-h-[34vh] max-w-[560px] overflow-hidden rounded bg-black/35 px-2 py-1 text-[10px] text-neutral-300 backdrop-blur">
@@ -1858,7 +1981,7 @@ export function ThreeDWorkspace({
             </div>
           )}
           <div className="pointer-events-none absolute bottom-3 left-3 max-w-[calc(100%-24px)] rounded bg-black/35 px-2 py-1 text-[10px] leading-4 text-neutral-300 backdrop-blur">
-            Ctrl+L 锁定 · 方向键微移 · Alt+方向旋转 · [/] 缩放 · Shift+A/C/L 添加 · Tab 切对象 ·
+            LMB 旋转视图 · MMB/RMB/Alt 平移 · Wheel 缩放 · G/R/S 工具 · Shift+A/C/L 添加 · Tab 切对象 ·
             Z/Alt+Z 显示 · H/Alt+H 显隐 · / 隔离
           </div>
           {nativeViewportPopout && !hostReady && (

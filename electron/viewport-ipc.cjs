@@ -40,6 +40,14 @@ const UI_RUNTIME_CAPABILITIES = Object.freeze([
   'manual-runtime-diagnostics-overlay',
   'interactive-docked-viewport-controls',
   'icon-first-editor-toolbar',
+  'blender-style-toolbar-groups',
+  'perspective-docked-scene-preview',
+  'viewport-navigation-gizmo',
+  'viewport-tool-status-strip',
+  'transform-axis-hints',
+  'object-mode-orientation-pivot-controls',
+  'selection-outline-origin-markers',
+  'camera-light-viewport-glyphs',
 ]);
 
 const VIEWPORT_RUNTIME_CAPABILITIES = Object.freeze([

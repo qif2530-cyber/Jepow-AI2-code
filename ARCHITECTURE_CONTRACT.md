@@ -25,7 +25,13 @@ This is not a temporary implementation detail. Future changes must optimize with
 - Native viewport UI integration must use bounds-first startup and normal window level by default so the wgpu host does not flash at fallback size or cover React panels as an always-on-top window.
 - Commercial 3D workspace default must be a docked editor view; native Rust/wgpu popout windows are debug/inspection mode only and must be explicitly enabled by the user.
 - Docked 3D viewport must be interactive by default, supporting mouse orbit, pan, and zoom even before native embedding is fully productionized.
+- Docked 3D viewport must render a perspective scene preview where grid and objects share the same camera transform; selected mesh proxies must not collapse into flat 2D cards.
+- Docked 3D viewport must include a Blender-style navigation gizmo, quick axis view switching, and visible transform axis hints for selected objects.
+- Docked 3D viewport must expose a compact status strip for current projection/display mode, selected object, active tool, lock state, and snap state so icon-only controls remain understandable.
+- Docked 3D viewport header must expose object mode, transform orientation, and pivot controls so editing context matches common Blender-style 3D workflows.
+- Docked 3D viewport must show selection outlines, object origin markers, and distinguishable camera/light glyphs so scene elements are recognizable without relying on text labels alone.
 - Editor toolbars should be icon-first with text relegated to tooltips/status labels, following Blender-style dense 3D editor ergonomics instead of large text-only controls.
+- Normal modeling tools, viewport controls, developer diagnostics, physics controls, and display/snap controls must be visually grouped instead of being stacked into one undifferentiated toolbar.
 - Architecture/runtime diagnostics overlays must be user-toggleable instead of permanently covering the viewport during normal editing.
 - Runtime HUD overlays must stay compact and bounded so physics/architecture diagnostics do not obscure editing controls during normal 3D workspace use.
 - The 3D workspace must keep UI probes for import pipeline, physics world creation, and physics stepping until those controls are replaced by full production panels.
