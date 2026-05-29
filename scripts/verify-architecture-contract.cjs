@@ -85,7 +85,7 @@ for (const expected of ['material_color', 'material_tint', 'metallic_factor', 'r
 }
 
 const physicsPipeline = read('native/jepow-engine/src/physics_pipeline.rs');
-for (const expected of ['Jolt Physics', 'Bullet Physics', 'architecture_wired', 'create_world', 'step_world']) {
+for (const expected of ['Jolt Physics', 'Bullet Physics', 'architecture_wired', 'create_world', 'step_world', 'native-minimal-runtime', 'worldSnapshot', 'step_body', 'resolve_body_collisions', 'aabb_overlap', 'contactCount', 'substeps', 'damping']) {
   assert(physicsPipeline.includes(expected), `physics_pipeline missing required contract text: ${expected}`);
 }
 
@@ -141,6 +141,19 @@ for (const expected of [
   'probeArchitectureSelfTest',
   'probePhysicsWorld',
   'probePhysicsStep',
+  'physicsWorldRef',
+  'physicsPlaying',
+  'physicsStats',
+  'contactCount',
+  'physicsHalfExtents',
+  'Math.log10(triangles) * 0.22 + 1.45',
+  'resetPhysicsWorld',
+  'togglePhysicsPlayback',
+  'toPhysicsBodies',
+  'applyPhysicsSnapshotToScene',
+  '物理播放',
+  '物理重置',
+  '物理 runtime',
   '架构管线控制台',
   '架构诊断报告',
   '架构自检',
@@ -149,7 +162,7 @@ for (const expected of [
 }
 
 const app = read('src/App.tsx');
-for (const expected of ['importThreeDObject', 'onImportObject', '导入资产', 'assetPath', 'triangleCount', 'boundsSize']) {
+for (const expected of ['importThreeDObject', 'onImportObject', 'onApplyPhysicsObjects', 'applyPhysicsThreeDObjects', '导入资产', 'assetPath', 'triangleCount', 'boundsSize']) {
   assert(app.includes(expected), `App missing imported object scene integration: ${expected}`);
 }
 
@@ -168,6 +181,13 @@ for (const expected of [
   'ImportedHostVertex',
   'imported_meshes',
   'imported_mesh_for',
+  'source_stamp',
+  'imported_asset_source_stamp',
+  'imported_mesh_edges',
+  'ray_object_hit',
+  'ray_aabb_hit',
+  'object_display_radius',
+  'edge_vertex_buffer',
   'imported_pipeline',
   'base_color_texture',
   'metallic_roughness_texture',

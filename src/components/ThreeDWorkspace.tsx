@@ -59,6 +59,13 @@ type PipelineProbe = {
   timestamp: number;
 };
 
+type PhysicsStats = {
+  time: number;
+  stepCount: number;
+  bodyCount: number;
+  contactCount: number;
+};
+
 type ArchitectureDiagnostics = {
   ok?: boolean;
   generatedAt?: string;
@@ -81,6 +88,7 @@ interface ThreeDWorkspaceProps {
   onSelectObject: (id: string) => void;
   onUpdateObject: (id: string, patch: Partial<ThreeDObject>) => void;
   onSyncObjects?: (objects: ThreeDObject[], selectedObjectId?: string) => void;
+  onApplyPhysicsObjects?: (objects: ThreeDObject[], selectedObjectId?: string) => void;
   onAddObject?: (type: ThreeDObject["type"]) => void;
   onImportObject?: (object: ThreeDObject) => void;
   onDuplicateObject?: () => void;
@@ -172,12 +180,52 @@ const toVec3 = (value: unknown, fallback: [number, number, number]) => {
   ];
 };
 
+const physicsHalfExtents = (object: ThreeDObject): [number, number, number] => {
+  const bounds = object.boundsSize || [1, 1, 1];
+  const raw = bounds.map((value) => Math.abs(value)) as [number, number, number];
+  const maxExtent = Math.max(raw[0], raw[1], raw[2]);
+  if (object.assetPath && maxExtent > 1e-5) {
+    const triangles = Math.max(1, object.triangleCount || 0);
+    const target = Math.min(4.5, Math.max(1.35, Math.log10(triangles) * 0.22 + 1.45));
+    const normalized = raw.map((value) => value / maxExtent) as [number, number, number];
+    return [
+      Math.max(0.05, normalized[0] * Math.abs(object.scale[0]) * target * 0.5),
+      Math.max(0.05, normalized[1] * Math.abs(object.scale[1]) * target * 0.5),
+      Math.max(0.05, normalized[2] * Math.abs(object.scale[2]) * target * 0.5),
+    ];
+  }
+  return [
+    Math.max(0.05, Math.abs(bounds[0] * object.scale[0]) * 0.5),
+    Math.max(0.05, Math.abs(bounds[1] * object.scale[1]) * 0.5),
+    Math.max(0.05, Math.abs(bounds[2] * object.scale[2]) * 0.5),
+  ];
+};
+
+const toPhysicsBodies = (objects: ThreeDObject[]) =>
+  objects
+    .filter((object) => object.type === "网格" && object.visible !== false)
+    .map((object) => ({
+      id: object.id,
+      label: object.name,
+      dynamic: object.locked !== true,
+      position: object.position,
+      velocity: [0, 0, 0],
+      halfExtents: physicsHalfExtents(object),
+      mass: 1,
+    }));
+
+const physicsBodiesFromSnapshot = (snapshot: Record<string, unknown> | null) => {
+  const bodies = snapshot?.bodies;
+  return Array.isArray(bodies) ? bodies : [];
+};
+
 export function ThreeDWorkspace({
   objects,
   selectedObjectId,
   onSelectObject,
   onUpdateObject,
   onSyncObjects,
+  onApplyPhysicsObjects,
   onAddObject,
   onImportObject,
   onDuplicateObject,
@@ -189,6 +237,8 @@ export function ThreeDWorkspace({
   canRedo,
 }: ThreeDWorkspaceProps) {
   const mountRef = useRef<HTMLDivElement>(null);
+  const physicsWorldRef = useRef<Record<string, unknown> | null>(null);
+  const objectsRef = useRef(objects);
   const [activeTool, setActiveTool] = useState("选择");
   const [displayMode, setDisplayMode] = useState("CL");
   const [snapEnabled, setSnapEnabled] = useState(false);
@@ -200,12 +250,17 @@ export function ThreeDWorkspace({
   const [pipelineProbe, setPipelineProbe] = useState<PipelineProbe | null>(null);
   const [diagnostics, setDiagnostics] = useState<ArchitectureDiagnostics | null>(null);
   const [pipelineBusy, setPipelineBusy] = useState<string | null>(null);
+  const [physicsPlaying, setPhysicsPlaying] = useState(false);
+  const [physicsStats, setPhysicsStats] = useState<PhysicsStats | null>(null);
   const [hostReady, setHostReady] = useState(false);
   const [hostError, setHostError] = useState<string | null>(null);
   const selectedObject = useMemo(
     () => objects.find((object) => object.id === selectedObjectId) || objects[0],
     [objects, selectedObjectId],
   );
+  useEffect(() => {
+    objectsRef.current = objects;
+  }, [objects]);
   const applyViewPreset = (preset: keyof typeof viewPresets) => {
     const nextProjection = viewPresets[preset].projection;
     setCameraProjection(nextProjection);
@@ -244,10 +299,12 @@ export function ThreeDWorkspace({
       });
       return;
     }
+    const contactCount = Number(result.contactCount);
+    const contactSuffix = Number.isFinite(contactCount) ? ` · contacts ${contactCount}` : "";
     setPipelineProbe({
       title,
       ok: result.ok !== false,
-      message: String(result.message || result.status || "管线接口已返回。"),
+      message: `${String(result.message || result.status || "管线接口已返回。")}${contactSuffix}`,
       backend: String(result.plannedBackend || result.backend || result.active_backend || ""),
       command: typeof result.command === "string" ? result.command : undefined,
       timestamp: Date.now(),
@@ -351,20 +408,112 @@ export function ThreeDWorkspace({
       timestamp: Date.now(),
     });
   };
+  const applyPhysicsSnapshotToScene = (
+    snapshot: Record<string, unknown> | null,
+    sourceObjects = objectsRef.current,
+  ) => {
+    const positions = new Map<string, [number, number, number]>();
+    for (const rawBody of physicsBodiesFromSnapshot(snapshot)) {
+      if (!rawBody || typeof rawBody !== "object") continue;
+      const body = rawBody as Record<string, unknown>;
+      const id = typeof body.id === "string" ? body.id : "";
+      if (!id) continue;
+      positions.set(id, toVec3(body.position, [0, 0, 0]));
+    }
+    if (!positions.size) return;
+    const nextObjects = sourceObjects.map((object) => {
+      const position = positions.get(object.id);
+      return position ? { ...object, position } : object;
+    });
+    const applyObjects = onApplyPhysicsObjects || onSyncObjects;
+    if (applyObjects) {
+      applyObjects(nextObjects, selectedObjectId);
+      return;
+    }
+    for (const [id, position] of positions) {
+      if (sourceObjects.some((object) => object.id === id)) {
+        onUpdateObject(id, { position });
+      }
+    }
+  };
+  const updatePhysicsStats = (
+    snapshot: Record<string, unknown> | null,
+    contactCount = physicsStats?.contactCount ?? 0,
+  ) => {
+    const bodyCount = physicsBodiesFromSnapshot(snapshot).length;
+    setPhysicsStats({
+      time: Number(snapshot?.time) || 0,
+      stepCount: Number(snapshot?.stepCount) || 0,
+      bodyCount,
+      contactCount,
+    });
+  };
+  const ensurePhysicsWorld = async (sourceObjects = objectsRef.current) => {
+    if (physicsWorldRef.current) return physicsWorldRef.current;
+    const created = await window.jepowDesktop?.viewport?.createPhysicsWorld?.({
+      backend: "jolt",
+      gravity: [0, -9.81, 0],
+      bodies: toPhysicsBodies(sourceObjects),
+    });
+    if (created?.worldSnapshot && typeof created.worldSnapshot === "object") {
+      physicsWorldRef.current = created.worldSnapshot as Record<string, unknown>;
+      updatePhysicsStats(physicsWorldRef.current);
+    }
+    return physicsWorldRef.current;
+  };
+  const stepPhysicsOnce = async (sourceObjects = objectsRef.current) => {
+    const world = await ensurePhysicsWorld(sourceObjects);
+    const stepped = await window.jepowDesktop?.viewport?.stepPhysicsWorld?.({
+      backend: "native-minimal",
+      worldId: String(world?.worldId || "physics-world-native-minimal"),
+      deltaTime: 1 / 60,
+      substeps: 4,
+      worldSnapshot: world || undefined,
+    });
+    if (stepped?.worldSnapshot && typeof stepped.worldSnapshot === "object") {
+      physicsWorldRef.current = stepped.worldSnapshot as Record<string, unknown>;
+      updatePhysicsStats(physicsWorldRef.current, Number(stepped.contactCount) || 0);
+      applyPhysicsSnapshotToScene(physicsWorldRef.current, sourceObjects);
+    }
+    return stepped;
+  };
   const probePhysicsWorld = () =>
-    runPipelineProbe("physics-world", "Bullet/Jolt World", () =>
-      window.jepowDesktop?.viewport?.createPhysicsWorld?.({
+    runPipelineProbe("physics-world", "Bullet/Jolt World", async () => {
+      const created = await window.jepowDesktop?.viewport?.createPhysicsWorld?.({
         backend: "jolt",
         gravity: [0, -9.81, 0],
-      }),
-    );
+        bodies: toPhysicsBodies(objects),
+      });
+      if (created?.worldSnapshot && typeof created.worldSnapshot === "object") {
+        physicsWorldRef.current = created.worldSnapshot as Record<string, unknown>;
+        updatePhysicsStats(physicsWorldRef.current);
+      }
+      return created;
+    });
   const probePhysicsStep = () =>
-    runPipelineProbe("physics-step", "Bullet/Jolt Step", () =>
-      window.jepowDesktop?.viewport?.stepPhysicsWorld?.({
-        worldId: "physics-world-placeholder",
-        deltaTime: 1 / 60,
-      }),
-    );
+    runPipelineProbe("physics-step", "Bullet/Jolt Step", async () => {
+      return stepPhysicsOnce();
+    });
+  const togglePhysicsPlayback = () => {
+    setPhysicsPlaying((playing) => !playing);
+  };
+  const resetPhysicsWorld = () =>
+    runPipelineProbe("physics-reset", "Bullet/Jolt Reset", async () => {
+      setPhysicsPlaying(false);
+      physicsWorldRef.current = null;
+      const created = await window.jepowDesktop?.viewport?.createPhysicsWorld?.({
+        backend: "jolt",
+        gravity: [0, -9.81, 0],
+        bodies: toPhysicsBodies(objectsRef.current),
+      });
+      if (created?.worldSnapshot && typeof created.worldSnapshot === "object") {
+        physicsWorldRef.current = created.worldSnapshot as Record<string, unknown>;
+        updatePhysicsStats(physicsWorldRef.current, 0);
+      } else {
+        setPhysicsStats(null);
+      }
+      return created;
+    });
 
   useEffect(() => {
     let stopped = false;
@@ -381,6 +530,24 @@ export function ThreeDWorkspace({
       window.clearInterval(timer);
     };
   }, []);
+
+  useEffect(() => {
+    if (!physicsPlaying) return;
+    let stopped = false;
+    let stepping = false;
+    const timer = window.setInterval(async () => {
+      if (stopped || stepping) return;
+      stepping = true;
+      await stepPhysicsOnce(objectsRef.current).catch(() => {
+        setPhysicsPlaying(false);
+      });
+      stepping = false;
+    }, 1000 / 30);
+    return () => {
+      stopped = true;
+      window.clearInterval(timer);
+    };
+  }, [physicsPlaying]);
 
   useEffect(() => {
     const host = window.jepowDesktop?.viewportHost;
@@ -684,6 +851,28 @@ export function ThreeDWorkspace({
             >
               物理步进
             </button>
+            <button
+              type="button"
+              onClick={togglePhysicsPlayback}
+              disabled={pipelineBusy !== null}
+              className={`rounded-[3px] px-2 py-0.5 ${
+                physicsPlaying
+                  ? "bg-blue-500/25 text-white"
+                  : "text-blue-200 hover:bg-blue-400/10 hover:text-white"
+              } disabled:cursor-wait disabled:opacity-50`}
+              title="连续播放/暂停 native 物理模拟"
+            >
+              {physicsPlaying ? "物理暂停" : "物理播放"}
+            </button>
+            <button
+              type="button"
+              onClick={resetPhysicsWorld}
+              disabled={pipelineBusy !== null}
+              className="rounded-[3px] px-2 py-0.5 text-blue-200 hover:bg-blue-400/10 hover:text-white disabled:cursor-wait disabled:opacity-50"
+              title="从当前场景对象重新生成 native 物理世界"
+            >
+              物理重置
+            </button>
           </div>
           <div className="flex items-center gap-1 rounded-[3px] bg-[#252629] p-0.5">
             <button
@@ -816,6 +1005,13 @@ export function ThreeDWorkspace({
                   {pipelineProbe?.message}
                 </div>
               )}
+            </div>
+          )}
+          {(physicsStats || physicsPlaying) && (
+            <div className="pointer-events-none absolute left-3 top-[158px] rounded border border-sky-400/20 bg-black/45 px-2 py-1 text-[10px] text-sky-100 backdrop-blur">
+              物理 runtime · {physicsPlaying ? "播放中" : "暂停"} · bodies{" "}
+              {physicsStats?.bodyCount ?? 0} · step {physicsStats?.stepCount ?? 0} · t{" "}
+              {(physicsStats?.time ?? 0).toFixed(2)}s · contacts {physicsStats?.contactCount ?? 0}
             </div>
           )}
           {diagnostics?.checks && (

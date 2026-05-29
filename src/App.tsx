@@ -7474,6 +7474,12 @@ export default function App() {
     },
     [commitThreeDScene],
   );
+  const applyPhysicsThreeDObjects = useCallback(
+    (objects: ThreeDObject[], selectedObjectId?: string) => {
+      commitThreeDScene(objects, selectedObjectId, { record: false });
+    },
+    [commitThreeDScene],
+  );
   const updateThreeDObject = useCallback(
     (id: string, patch: Partial<ThreeDObject>) => {
       commitThreeDScene((objects) =>
@@ -8285,6 +8291,7 @@ export default function App() {
                   selectedObjectId={selectedThreeDObjectId}
                   onSelectObject={setSelectedThreeDObjectId}
                   onSyncObjects={syncThreeDObjectsFromHost}
+                  onApplyPhysicsObjects={applyPhysicsThreeDObjects}
                   onAddObject={addThreeDObject}
                   onImportObject={importThreeDObject}
                   onDuplicateObject={duplicateThreeDObject}

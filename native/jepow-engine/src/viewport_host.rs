@@ -40,9 +40,12 @@ struct HostUniforms {
 }
 
 struct ImportedGpuMesh {
+    source_stamp: String,
     vertex_buffer: wgpu::Buffer,
     index_buffer: wgpu::Buffer,
     index_count: u32,
+    edge_vertex_buffer: wgpu::Buffer,
+    edge_vertex_count: u32,
     material_color: Option<[f32; 3]>,
     metallic_factor: f32,
     roughness_factor: f32,
@@ -654,7 +657,12 @@ impl GpuState {
     }
 
     fn imported_mesh_for(&mut self, asset_path: &str) -> Option<&ImportedGpuMesh> {
-        if !self.imported_meshes.contains_key(asset_path) {
+        let source_stamp = imported_asset_source_stamp(asset_path);
+        let should_reload = self
+            .imported_meshes
+            .get(asset_path)
+            .is_none_or(|mesh| mesh.source_stamp != source_stamp);
+        if should_reload {
             let mesh = crate::mesh_loader::load_meshes(asset_path).ok()?;
             if mesh.indices.len() > u32::MAX as usize {
                 return None;
@@ -669,6 +677,7 @@ impl GpuState {
                     material_tint: vertex.material_tint,
                 })
                 .collect();
+            let edge_vertices = imported_mesh_edges(&mesh);
             let texture_resources = if mesh.base_color_texture.is_some()
                 || mesh.metallic_roughness_texture.is_some()
             {
@@ -711,12 +720,22 @@ impl GpuState {
                 contents: bytemuck::cast_slice(&vertices),
                 usage: wgpu::BufferUsages::VERTEX,
             });
+            let edge_vertex_buffer =
+                self.device
+                    .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                        label: Some("jepow-host-imported-mesh-edges-vb"),
+                        contents: bytemuck::cast_slice(&edge_vertices),
+                        usage: wgpu::BufferUsages::VERTEX,
+                    });
             self.imported_meshes.insert(
                 asset_path.to_string(),
                 ImportedGpuMesh {
+                    source_stamp,
                     vertex_buffer,
                     index_buffer,
                     index_count: mesh.indices.len() as u32,
+                    edge_vertex_buffer,
+                    edge_vertex_count: edge_vertices.len() as u32,
                     material_color: mesh.material_color,
                     metallic_factor: mesh.metallic_factor,
                     roughness_factor: mesh.roughness_factor,
@@ -1160,8 +1179,18 @@ impl HostApp {
                     .write_buffer(&gpu.uniform_buffer, 0, bytemuck::bytes_of(&uniforms));
                 if matches!(display_mode, HostDisplayMode::Wireframe) {
                     pass.set_pipeline(&gpu.line_pipeline);
-                    pass.set_vertex_buffer(0, gpu.edge_vertex_buffer.slice(..));
-                    pass.draw(0..gpu.edge_vertex_count, 0..1);
+                    if loaded_imported_mesh {
+                        if let Some(asset_path) = object.asset_path.as_deref() {
+                            let imported_mesh = gpu
+                                .imported_mesh_for(asset_path)
+                                .expect("imported mesh was loaded before uniforms");
+                            pass.set_vertex_buffer(0, imported_mesh.edge_vertex_buffer.slice(..));
+                            pass.draw(0..imported_mesh.edge_vertex_count, 0..1);
+                        }
+                    } else {
+                        pass.set_vertex_buffer(0, gpu.edge_vertex_buffer.slice(..));
+                        pass.draw(0..gpu.edge_vertex_count, 0..1);
+                    }
                 } else if let Some(asset_path) = object.asset_path.as_deref() {
                     if loaded_imported_mesh {
                         pass.set_pipeline(&gpu.imported_pipeline);
@@ -1250,12 +1279,7 @@ impl HostApp {
                 object.transform.position[0],
                 object.transform.position[1],
             ];
-            let max_scale = object
-                .transform
-                .scale
-                .iter()
-                .fold(1.0_f32, |acc, value| acc.max(value.abs()));
-            self.camera_distance = (4.5 + max_scale * 2.2).clamp(2.0, 80.0);
+            self.camera_distance = (3.4 + object_display_radius(object) * 2.4).clamp(2.0, 80.0);
         }
     }
 
@@ -1281,10 +1305,8 @@ impl HostApp {
             .iter()
             .filter(|object| object.visible && !object.locked)
             .filter_map(|object| {
-                let inv_model = object_model_matrix(object).inverse();
-                let local_origin = inv_model.transform_point3(Vec3::from_array(ray_origin));
-                let local_dir = inv_model.transform_vector3(ray_dir).normalize_or_zero();
-                ray_unit_box_hit(local_origin, local_dir).map(|t| (t, object.id.clone()))
+                ray_object_hit(object, Vec3::from_array(ray_origin), ray_dir)
+                    .map(|t| (t, object.id.clone()))
             })
             .min_by(|(a, _), (b, _)| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
             .map(|(_, id)| id)
@@ -1684,6 +1706,44 @@ fn create_imported_texture_bind_group(
     (base_texture, mr_texture, bind_group)
 }
 
+fn imported_mesh_edges(mesh: &crate::mesh_loader::MeshData) -> Vec<HostVertex> {
+    let mut edges = Vec::with_capacity(mesh.indices.len().saturating_mul(2));
+    for tri in mesh.indices.chunks(3) {
+        if tri.len() != 3 {
+            continue;
+        }
+        for (a, b) in [(tri[0], tri[1]), (tri[1], tri[2]), (tri[2], tri[0])] {
+            let Some(a) = mesh.vertices.get(a as usize) else {
+                continue;
+            };
+            let Some(b) = mesh.vertices.get(b as usize) else {
+                continue;
+            };
+            edges.push(HostVertex {
+                pos: a.pos,
+                normal: a.normal,
+            });
+            edges.push(HostVertex {
+                pos: b.pos,
+                normal: b.normal,
+            });
+        }
+    }
+    edges
+}
+
+fn imported_asset_source_stamp(asset_path: &str) -> String {
+    let metadata = std::fs::metadata(asset_path).ok();
+    let modified = metadata
+        .as_ref()
+        .and_then(|value| value.modified().ok())
+        .and_then(|value| value.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|value| value.as_millis())
+        .unwrap_or(0);
+    let size = metadata.map(|value| value.len()).unwrap_or(0);
+    format!("{modified}:{size}")
+}
+
 fn is_imported_asset(object: &HostObject) -> bool {
     object.asset_path.as_deref().is_some_and(|path| !path.is_empty())
 }
@@ -1716,6 +1776,23 @@ fn imported_asset_proxy_scale(object: &HostObject) -> Vec3 {
     let triangles = object.triangle_count.unwrap_or(0).max(1) as f32;
     let footprint = (triangles.log10() * 0.34 + 1.15).clamp(1.35, 4.2);
     Vec3::new(footprint, (footprint * 0.62).max(0.85), footprint)
+}
+
+fn imported_mesh_target_size(object: &HostObject) -> f32 {
+    let triangles = object.triangle_count.unwrap_or(0).max(1) as f32;
+    (triangles.log10() * 0.22 + 1.45).clamp(1.35, 4.5)
+}
+
+fn object_display_radius(object: &HostObject) -> f32 {
+    let user_scale = object
+        .transform
+        .scale
+        .iter()
+        .fold(1.0_f32, |acc, value| acc.max(value.abs()));
+    if is_imported_asset(object) && object.bounds_min.is_some() && object.bounds_max.is_some() {
+        return imported_mesh_target_size(object) * user_scale.max(0.01) * 0.75;
+    }
+    object_kind_scale(object).max_element() * user_scale.max(0.01)
 }
 
 fn object_kind_color(kind: &str) -> [f32; 3] {
@@ -1863,8 +1940,7 @@ fn imported_mesh_model_matrix(object: &HostObject) -> Mat4 {
     if max_extent <= 1e-5 {
         return object_model_matrix(object);
     }
-    let triangles = object.triangle_count.unwrap_or(0).max(1) as f32;
-    let target = (triangles.log10() * 0.22 + 1.45).clamp(1.35, 4.5);
+    let target = imported_mesh_target_size(object);
     let normalize = target / max_extent;
     Mat4::from_translation(Vec3::from_array(transform.position))
         * Mat4::from_quat(rot)
@@ -1947,8 +2023,25 @@ fn distance_to_screen_segment(point: (f32, f32), a: (f32, f32), b: (f32, f32)) -
 }
 
 fn ray_unit_box_hit(origin: Vec3, direction: Vec3) -> Option<f32> {
-    let min = Vec3::splat(-0.5);
-    let max = Vec3::splat(0.5);
+    ray_aabb_hit(origin, direction, Vec3::splat(-0.5), Vec3::splat(0.5))
+}
+
+fn ray_object_hit(object: &HostObject, ray_origin: Vec3, ray_dir: Vec3) -> Option<f32> {
+    if is_imported_asset(object) {
+        if let (Some(min), Some(max)) = (object.bounds_min, object.bounds_max) {
+            let inv_model = imported_mesh_model_matrix(object).inverse();
+            let local_origin = inv_model.transform_point3(ray_origin);
+            let local_dir = inv_model.transform_vector3(ray_dir).normalize_or_zero();
+            return ray_aabb_hit(local_origin, local_dir, Vec3::from_array(min), Vec3::from_array(max));
+        }
+    }
+    let inv_model = object_model_matrix(object).inverse();
+    let local_origin = inv_model.transform_point3(ray_origin);
+    let local_dir = inv_model.transform_vector3(ray_dir).normalize_or_zero();
+    ray_unit_box_hit(local_origin, local_dir)
+}
+
+fn ray_aabb_hit(origin: Vec3, direction: Vec3, min: Vec3, max: Vec3) -> Option<f32> {
     let mut t_min = 0.0_f32;
     let mut t_max = f32::MAX;
 

@@ -32,6 +32,17 @@ This is not a temporary implementation detail. Future changes must optimize with
 - Native import runtime must surface glTF metallic/roughness (`metallicFactor`, `roughnessFactor`) and connect those PBR parameters to native viewport imported mesh shading.
 - Native import runtime must preserve glTF metallic-roughness texture availability (`hasMetallicRoughnessTexture`) and sample it in native viewport imported mesh shading.
 - Native import runtime must preserve per-primitive/model material tint so multi-material glTF/OBJ assets do not collapse to a single viewport color.
+- Native viewport wireframe mode must draw real imported mesh triangle edges for `assetPath` objects instead of falling back to the proxy cube edges.
+- Native viewport picking and focus must use real imported mesh bounds for `assetPath` objects instead of proxy/unit-cube interaction bounds.
+- Native imported GPU mesh cache must track source file modification metadata and rebuild GPU buffers when the imported asset changes on disk.
+- Physics pipeline may use a minimal native runtime while Jolt/Bullet are being linked, but it must return a step-able `worldSnapshot` and deterministic gravity integration instead of placeholder-only responses.
+- The 3D workspace physics probe must be able to build physics bodies from visible mesh scene objects and apply stepped `worldSnapshot` body positions back to scene objects.
+- The 3D workspace must support continuous physics play/pause during the minimal runtime phase and avoid recording every playback frame into undo history.
+- The 3D workspace must expose physics reset and visible runtime stats so the minimal physics world can be rebuilt from the current scene and inspected while playing.
+- The minimal physics runtime must support deterministic AABB body-body collision resolution and report `contactCount` until Jolt/Bullet replaces it.
+- The 3D workspace physics HUD and probe output must surface `contactCount` so body-body collision activity is visible during playback.
+- Physics bodies generated from imported `assetPath` meshes must use the same bounds normalization target as native viewport imported mesh rendering, so visible mesh size and collider size stay aligned.
+- The minimal physics runtime must support fixed substeps and damping during playback to reduce tunneling and jitter before Jolt/Bullet is linked.
 
 ## Non-Negotiable Rules
 
