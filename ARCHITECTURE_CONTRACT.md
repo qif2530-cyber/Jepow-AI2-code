@@ -23,6 +23,8 @@ This is not a temporary implementation detail. Future changes must optimize with
 - Cycles/CL render status must expose runtime capabilities and render devices so diagnostics can distinguish CPU-ready, Metal/CL-ready, and bridge-binary-ready states.
 - Rust/wgpu viewport status must expose runtime capability flags so diagnostics can distinguish native host availability from concrete editor/rendering behavior.
 - Native viewport UI integration must use bounds-first startup and normal window level by default so the wgpu host does not flash at fallback size or cover React panels as an always-on-top window.
+- Commercial 3D workspace default must be a docked editor view; native Rust/wgpu popout windows are debug/inspection mode only and must be explicitly enabled by the user.
+- Architecture/runtime diagnostics overlays must be user-toggleable instead of permanently covering the viewport during normal editing.
 - Runtime HUD overlays must stay compact and bounded so physics/architecture diagnostics do not obscure editing controls during normal 3D workspace use.
 - The 3D workspace must keep UI probes for import pipeline, physics world creation, and physics stepping until those controls are replaced by full production panels.
 - The 3D workspace must keep a diagnostics UI for the fixed architecture until replaced by a full production diagnostics panel.

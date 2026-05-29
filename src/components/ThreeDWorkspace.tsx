@@ -342,6 +342,8 @@ export function ThreeDWorkspace({
   const [physicsStats, setPhysicsStats] = useState<PhysicsStats | null>(null);
   const [hostReady, setHostReady] = useState(false);
   const [hostError, setHostError] = useState<string | null>(null);
+  const [nativeViewportPopout, setNativeViewportPopout] = useState(false);
+  const [showRuntimeOverlay, setShowRuntimeOverlay] = useState(false);
   const selectedObject = useMemo(
     () => objects.find((object) => object.id === selectedObjectId) || objects[0],
     [objects, selectedObjectId],
@@ -895,6 +897,12 @@ export function ThreeDWorkspace({
 
   useEffect(() => {
     const host = window.jepowDesktop?.viewportHost;
+    if (!nativeViewportPopout) {
+      host?.setVisible(false).catch(() => undefined);
+      setHostReady(false);
+      setHostError(null);
+      return;
+    }
     if (!host) {
       setHostReady(false);
       setHostError("当前环境没有原生 viewport host，桌面端编译后可用。");
@@ -954,7 +962,7 @@ export function ThreeDWorkspace({
       window.clearInterval(timer);
       host.setVisible(false).catch(() => undefined);
     };
-  }, []);
+  }, [nativeViewportPopout]);
 
   useEffect(() => {
     if (!hostReady) return;
@@ -1295,6 +1303,30 @@ export function ThreeDWorkspace({
             </button>
             <button
               type="button"
+              onClick={() => setShowRuntimeOverlay((current) => !current)}
+              className={`rounded-[3px] px-2 py-0.5 ${
+                showRuntimeOverlay
+                  ? "bg-emerald-500/25 text-white"
+                  : "text-emerald-200 hover:bg-emerald-400/10 hover:text-white"
+              }`}
+              title="显示/隐藏运行时诊断叠层"
+            >
+              诊断层
+            </button>
+            <button
+              type="button"
+              onClick={() => setNativeViewportPopout((current) => !current)}
+              className={`rounded-[3px] px-2 py-0.5 ${
+                nativeViewportPopout
+                  ? "bg-sky-500/25 text-white"
+                  : "text-sky-200 hover:bg-sky-400/10 hover:text-white"
+              }`}
+              title="调试模式：弹出 Rust/wgpu 原生视窗。商业默认视图保持停靠式。"
+            >
+              {nativeViewportPopout ? "收回原生" : "弹出原生"}
+            </button>
+            <button
+              type="button"
               onClick={probeArchitectureSelfTest}
               disabled={pipelineBusy !== null}
               className="rounded-[3px] px-2 py-0.5 text-emerald-200 hover:bg-emerald-400/10 hover:text-white disabled:cursor-wait disabled:opacity-50"
@@ -1404,10 +1436,31 @@ export function ThreeDWorkspace({
             <span className="absolute left-2 text-red-300">X</span>
             <span className="rounded-full bg-white/10 px-1.5 py-0.5">视图</span>
           </div>
+          {!nativeViewportPopout && (
+            <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
+              <div className="relative h-32 w-32 [transform-style:preserve-3d] [transform:rotateX(58deg)_rotateZ(-38deg)]">
+                {selectedObject?.type === "网格" ? (
+                  <>
+                    <div className="absolute inset-0 border border-orange-300/80 bg-[#9ebeed]/90 shadow-2xl shadow-black/30" />
+                    <div className="absolute inset-y-0 left-full w-10 origin-left border border-orange-300/60 bg-[#6f8db9]/85 [transform:skewY(-35deg)]" />
+                    <div className="absolute bottom-full left-0 h-10 w-full origin-bottom border border-orange-300/60 bg-[#b8d4ff]/90 [transform:skewX(-55deg)]" />
+                  </>
+                ) : selectedObject?.type === "相机" ? (
+                  <div className="grid h-28 w-36 place-items-center border border-orange-300/80 bg-black/20 text-[11px] text-orange-100">
+                    Camera
+                  </div>
+                ) : (
+                  <div className="grid h-24 w-24 place-items-center rounded-full border border-yellow-200/80 bg-yellow-300/20 text-[11px] text-yellow-100">
+                    Light
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
           <div className="pointer-events-none absolute left-3 top-3 rounded bg-black/35 px-2 py-1 text-[10px] text-neutral-300">
-            原生透视 · Collection | {selectedObject?.name || "对象"} · {activeTool}
+            {nativeViewportPopout ? "原生弹出" : "停靠预览"} · Collection | {selectedObject?.name || "对象"} · {activeTool}
           </div>
-          {nativeStatus?.architecture && (
+          {showRuntimeOverlay && nativeStatus?.architecture && (
             <div className="pointer-events-none absolute left-3 top-10 max-h-[34vh] max-w-[560px] overflow-hidden rounded bg-black/35 px-2 py-1 text-[10px] text-neutral-300 backdrop-blur">
               <div className="mb-1 font-bold text-neutral-200">
                 架构状态 ·{" "}
@@ -1679,7 +1732,7 @@ export function ThreeDWorkspace({
             Ctrl+L 锁定 · 方向键微移 · Alt+方向旋转 · [/] 缩放 · Shift+A/C/L 添加 · Tab 切对象 ·
             Z/Alt+Z 显示 · H/Alt+H 显隐 · / 隔离
           </div>
-          {!hostReady && (
+          {nativeViewportPopout && !hostReady && (
             <div className="absolute inset-0 grid place-items-center bg-[#30343a] text-center">
               <div className="rounded-[10px] border border-[#25272b] bg-[#1f2023]/90 px-5 py-4 shadow-2xl">
                 <div className="text-[12px] font-bold text-neutral-200">
@@ -1689,6 +1742,11 @@ export function ThreeDWorkspace({
                   {hostError || "首次启动会拉起 jepow-engine viewport-host。"}
                 </p>
               </div>
+            </div>
+          )}
+          {!nativeViewportPopout && (
+            <div className="pointer-events-none absolute right-3 bottom-3 rounded border border-white/10 bg-black/30 px-2 py-1 text-[10px] text-neutral-300 backdrop-blur">
+              停靠式商业视图 · Rust/wgpu 视窗在“弹出原生”调试模式启动
             </div>
           )}
         </div>
