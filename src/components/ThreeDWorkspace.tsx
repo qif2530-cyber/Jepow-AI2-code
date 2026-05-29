@@ -151,6 +151,18 @@ const displayModes = ["线框", "实体", "材质", "CL"];
 const objectModes = ["对象", "编辑", "雕刻", "姿态"] as const;
 const transformOrientations = ["全局", "局部", "视图"] as const;
 const pivotPoints = ["中点", "原点", "游标"] as const;
+const selectionModes = ["对象", "点", "边", "面"] as const;
+const axisConstraints = ["自由", "X", "Y", "Z"] as const;
+const blenderMenuSections = ["文件", "编辑", "渲染", "窗口", "帮助"] as const;
+const workspaceTabs = ["Layout", "Modeling", "Sculpting", "UV Editing", "Shading", "Animation", "Render"] as const;
+const viewportHeaderMenus = ["视图", "选择", "添加", "对象"] as const;
+const propertiesTabs = ["工具", "对象", "材质", "物理", "渲染"] as const;
+const viewportSidebarTabs = ["Item", "Tool", "View"] as const;
+const transformRows = [
+  { label: "Location", field: "position" as const },
+  { label: "Rotation", field: "rotation" as const },
+  { label: "Scale", field: "scale" as const },
+];
 
 const viewPresets: Record<
   string,
@@ -191,6 +203,7 @@ const toolIcons: Record<string, string> = {
   移动: "↔",
   旋转: "⟳",
   缩放: "□",
+  游标: "⊕",
   游走: "⌁",
   测量: "⌇",
   注释: "✎",
@@ -350,6 +363,11 @@ const physicsContactLabel = (contact: unknown) => {
   return a && b ? `${a}/${b}:${axis}:${penetration.toFixed(2)}` : "";
 };
 
+const scenePixel = (value: number) => value * 72;
+const formatTransformNumber = (value: number) => Number(value.toFixed(3));
+const normalizeHexColor = (value?: string) =>
+  typeof value === "string" && /^#[0-9a-f]{6}$/i.test(value) ? value : "#9ebeed";
+
 const physicsColliderSignature = (objects: ThreeDObject[]) =>
   objects
     .filter((object) => object.type === "网格" && object.visible !== false)
@@ -389,12 +407,18 @@ export function ThreeDWorkspace({
   const hostSceneEpochRef = useRef(0);
   const dockedDragRef = useRef<{ button: number; x: number; y: number } | null>(null);
   const objectsRef = useRef(objects);
+  const [activeWorkspace, setActiveWorkspace] = useState<(typeof workspaceTabs)[number]>("Layout");
   const [activeTool, setActiveTool] = useState("选择");
+  const [propertiesTab, setPropertiesTab] = useState<(typeof propertiesTabs)[number]>("对象");
+  const [threeDCursor, setThreeDCursor] = useState<[number, number, number]>([0, 0, 0]);
   const [displayMode, setDisplayMode] = useState("CL");
   const [objectMode, setObjectMode] = useState<(typeof objectModes)[number]>("对象");
   const [transformOrientation, setTransformOrientation] =
     useState<(typeof transformOrientations)[number]>("全局");
   const [pivotPoint, setPivotPoint] = useState<(typeof pivotPoints)[number]>("中点");
+  const [selectionMode, setSelectionMode] = useState<(typeof selectionModes)[number]>("对象");
+  const [axisConstraint, setAxisConstraint] = useState<(typeof axisConstraints)[number]>("自由");
+  const [proportionalEditing, setProportionalEditing] = useState(false);
   const [snapEnabled, setSnapEnabled] = useState(false);
   const [snapStep, setSnapStep] = useState(0.5);
   const [cameraProjection, setCameraProjection] = useState<"perspective" | "orthographic">(
@@ -411,6 +435,28 @@ export function ThreeDWorkspace({
   const [nativeViewportPopout, setNativeViewportPopout] = useState(false);
   const [showRuntimeOverlay, setShowRuntimeOverlay] = useState(false);
   const [showDeveloperTools, setShowDeveloperTools] = useState(false);
+  const [showViewportOverlays, setShowViewportOverlays] = useState(true);
+  const [showViewportGizmos, setShowViewportGizmos] = useState(true);
+  const [showViewportSidebar, setShowViewportSidebar] = useState(true);
+  const [viewportSidebarTab, setViewportSidebarTab] = useState<(typeof viewportSidebarTabs)[number]>("Item");
+  const [viewportFocalLength, setViewportFocalLength] = useState(50);
+  const [viewportClipStart, setViewportClipStart] = useState(0.1);
+  const [viewportClipEnd, setViewportClipEnd] = useState(1000);
+  const [viewportContextMenu, setViewportContextMenu] = useState<{
+    x: number;
+    y: number;
+    objectId?: string;
+  } | null>(null);
+  const [operatorSearchOpen, setOperatorSearchOpen] = useState(false);
+  const [operatorSearchQuery, setOperatorSearchQuery] = useState("");
+  const [outlinerSearch, setOutlinerSearch] = useState("");
+  const [openPropertySections, setOpenPropertySections] = useState({
+    transform: true,
+    objectData: true,
+    material: true,
+    physics: true,
+    render: true,
+  });
   const [dockedCamera, setDockedCamera] = useState({
     yaw: -38,
     pitch: 58,
@@ -422,6 +468,27 @@ export function ThreeDWorkspace({
     () => objects.find((object) => object.id === selectedObjectId) || objects[0],
     [objects, selectedObjectId],
   );
+  const filteredOutlinerObjects = useMemo(() => {
+    const query = outlinerSearch.trim().toLowerCase();
+    if (!query) return objects;
+    return objects.filter(
+      (object) =>
+        object.name.toLowerCase().includes(query) ||
+        object.type.toLowerCase().includes(query) ||
+        object.importBackend?.toLowerCase().includes(query),
+    );
+  }, [objects, outlinerSearch]);
+  const sceneStats = useMemo(() => {
+    const visibleObjects = objects.filter((object) => object.visible !== false);
+    return {
+      total: objects.length,
+      visible: visibleObjects.length,
+      meshes: objects.filter((object) => object.type === "网格").length,
+      cameras: objects.filter((object) => object.type === "相机").length,
+      lights: objects.filter((object) => object.type === "灯光").length,
+      triangles: objects.reduce((sum, object) => sum + (object.triangleCount || 0), 0),
+    };
+  }, [objects]);
   const uiCapabilityBadges = useMemo(
     () =>
       (nativeStatus?.uiRuntimeCapabilities || [])
@@ -465,6 +532,32 @@ export function ThreeDWorkspace({
   useEffect(() => {
     objectsRef.current = objects;
   }, [objects]);
+  useEffect(() => {
+    if (!viewportContextMenu) return;
+    const onWindowPointerDown = () => closeViewportContextMenu();
+    const onWindowKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") closeViewportContextMenu();
+    };
+    window.addEventListener("pointerdown", onWindowPointerDown);
+    window.addEventListener("keydown", onWindowKeyDown);
+    return () => {
+      window.removeEventListener("pointerdown", onWindowPointerDown);
+      window.removeEventListener("keydown", onWindowKeyDown);
+    };
+  }, [viewportContextMenu]);
+  useEffect(() => {
+    if (!operatorSearchOpen) return;
+    const onWindowPointerDown = () => closeOperatorSearch();
+    const onWindowKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") closeOperatorSearch();
+    };
+    window.addEventListener("pointerdown", onWindowPointerDown);
+    window.addEventListener("keydown", onWindowKeyDown);
+    return () => {
+      window.removeEventListener("pointerdown", onWindowPointerDown);
+      window.removeEventListener("keydown", onWindowKeyDown);
+    };
+  }, [operatorSearchOpen]);
   const applyViewPreset = (preset: keyof typeof viewPresets) => {
     const nextProjection = viewPresets[preset].projection;
     const presetCamera = viewPresets[preset];
@@ -557,6 +650,10 @@ export function ThreeDWorkspace({
       selectedObjectId,
     );
   };
+  const closeOperatorSearch = () => {
+    setOperatorSearchOpen(false);
+    setOperatorSearchQuery("");
+  };
   const selectAdjacentVisibleObject = (direction: 1 | -1) => {
     const visibleObjects = objectsRef.current.filter((object) => object.visible !== false);
     if (!visibleObjects.length) return;
@@ -597,10 +694,47 @@ export function ThreeDWorkspace({
       scale: object.scale.map((value) => Math.max(0.01, value * factor)) as [number, number, number],
     });
   };
+  const updateSelectedVector = (
+    field: "position" | "rotation" | "scale",
+    axis: 0 | 1 | 2,
+    value: number,
+  ) => {
+    const object = objectsRef.current.find((item) => item.id === selectedObjectId);
+    if (!object || object.locked || Number.isNaN(value)) return;
+    const next = [...object[field]] as [number, number, number];
+    next[axis] = field === "scale" ? Math.max(0.01, value) : value;
+    onUpdateObject(object.id, { [field]: next });
+  };
+  const updateSelectedMaterialColor = (color: string) => {
+    const object = objectsRef.current.find((item) => item.id === selectedObjectId);
+    if (!object || object.locked) return;
+    onUpdateObject(object.id, { materialColor: color, color });
+  };
+  const updateThreeDCursor = (axis: 0 | 1 | 2, value: number) => {
+    if (Number.isNaN(value)) return;
+    setThreeDCursor((current) => {
+      const next = [...current] as [number, number, number];
+      next[axis] = value;
+      return next;
+    });
+  };
+  const closeViewportContextMenu = () => setViewportContextMenu(null);
+  const runViewportContextAction = (action: () => void) => {
+    action();
+    closeViewportContextMenu();
+  };
+  const moveSelectionToCursor = () => {
+    const object = objectsRef.current.find((item) => item.id === selectedObjectId);
+    if (!object || object.locked) return;
+    onUpdateObject(object.id, { position: threeDCursor });
+  };
   const toggleSelectedObjectLock = () => {
     const object = objectsRef.current.find((item) => item.id === selectedObjectId);
     if (!object) return;
     onUpdateObject(object.id, { locked: object.locked !== true });
+  };
+  const togglePropertySection = (section: keyof typeof openPropertySections) => {
+    setOpenPropertySections((current) => ({ ...current, [section]: !current[section] }));
   };
   const unlockAllObjects = () => {
     onSyncObjects?.(
@@ -986,6 +1120,58 @@ export function ThreeDWorkspace({
       return created;
     });
 
+  const operatorCommands = useMemo(
+    () => [
+      { label: "Add Mesh", group: "Add", run: () => onAddObject?.("网格") },
+      { label: "Add Camera", group: "Add", run: () => onAddObject?.("相机") },
+      { label: "Add Light", group: "Add", run: () => onAddObject?.("灯光") },
+      { label: "Duplicate Object", group: "Object", run: () => onDuplicateObject?.(), disabled: !onDuplicateObject },
+      { label: "Delete Object", group: "Object", run: () => onDeleteObject?.(), disabled: !onDeleteObject },
+      { label: "Focus Selection", group: "View", run: () => window.jepowDesktop?.viewportHost?.focusSelection?.() },
+      { label: "Isolate Selection", group: "View", run: isolateSelection, disabled: !onSyncObjects || !selectedObjectId },
+      { label: "Reveal All Objects", group: "View", run: revealAllObjects, disabled: !onSyncObjects },
+      { label: "Toggle Wireframe", group: "Viewport", run: () => setDisplayMode("线框") },
+      { label: "Toggle Material Preview", group: "Viewport", run: () => setDisplayMode("材质") },
+      { label: "Toggle CL View", group: "Viewport", run: () => setDisplayMode("CL") },
+      { label: "Toggle Overlays", group: "Viewport", run: () => setShowViewportOverlays((current) => !current) },
+      { label: "Toggle Gizmos", group: "Viewport", run: () => setShowViewportGizmos((current) => !current) },
+      { label: "Toggle N Panel", group: "Viewport", run: () => setShowViewportSidebar((current) => !current) },
+      { label: "Cursor to Selection", group: "Cursor", run: () => selectedObject && setThreeDCursor(selectedObject.position), disabled: !selectedObject },
+      { label: "Selection to Cursor", group: "Cursor", run: moveSelectionToCursor, disabled: !selectedObject || selectedObject.locked },
+      { label: "Physics Play/Pause", group: "Physics", run: togglePhysicsPlayback, disabled: pipelineBusy !== null },
+      { label: "Physics Step", group: "Physics", run: probePhysicsStep, disabled: pipelineBusy !== null },
+      { label: "Run Architecture Diagnostics", group: "Diagnostics", run: runArchitectureDiagnostics, disabled: pipelineBusy !== null },
+    ],
+    [
+      isolateSelection,
+      moveSelectionToCursor,
+      onAddObject,
+      onDeleteObject,
+      onDuplicateObject,
+      onSyncObjects,
+      pipelineBusy,
+      probePhysicsStep,
+      revealAllObjects,
+      runArchitectureDiagnostics,
+      selectedObject,
+      selectedObjectId,
+      togglePhysicsPlayback,
+    ],
+  );
+  const filteredOperatorCommands = useMemo(() => {
+    const query = operatorSearchQuery.trim().toLowerCase();
+    if (!query) return operatorCommands;
+    return operatorCommands.filter(
+      (command) =>
+        command.label.toLowerCase().includes(query) || command.group.toLowerCase().includes(query),
+    );
+  }, [operatorCommands, operatorSearchQuery]);
+  const runOperatorCommand = (command: (typeof operatorCommands)[number]) => {
+    if (command.disabled) return;
+    command.run();
+    closeOperatorSearch();
+  };
+
   useEffect(() => {
     let stopped = false;
     const loadStatus = async () => {
@@ -1140,6 +1326,12 @@ export function ThreeDWorkspace({
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement) {
+        return;
+      }
+      if (event.key === "F3") {
+        event.preventDefault();
+        setOperatorSearchOpen(true);
+        setOperatorSearchQuery("");
         return;
       }
       if (event.key === "Tab") {
@@ -1335,10 +1527,162 @@ export function ThreeDWorkspace({
     return () => window.clearInterval(timer);
   }, [hostReady, onSelectObject, onSyncObjects]);
 
+  const renderDockedSceneObject = (object: ThreeDObject) => {
+    const isSelected = object.id === selectedObjectId;
+    const baseTransform = `translate3d(calc(-50% + ${scenePixel(object.position[0])}px), calc(-50% + ${scenePixel(
+      -object.position[2],
+    )}px), ${scenePixel(object.position[1])}px) rotateX(${object.rotation[0]}deg) rotateY(${
+      object.rotation[1]
+    }deg) rotateZ(${object.rotation[2]}deg) scale3d(${object.scale[0]}, ${object.scale[1]}, ${
+      object.scale[2]
+    })`;
+    const renderTransformGizmo = () => {
+      if (!isSelected || !showViewportGizmos) return null;
+      if (activeTool === "旋转") {
+        return (
+          <div className="absolute left-1/2 top-1/2 h-40 w-40 -translate-x-1/2 -translate-y-1/2 [transform:translateZ(74px)] blender-transform-gizmo blender-rotate-gizmo">
+            <div className="absolute inset-0 rounded-full border-2 border-red-400/80" />
+            <div className="absolute inset-3 rounded-full border-2 border-green-400/80 [transform:rotateX(70deg)]" />
+            <div className="absolute inset-6 rounded-full border-2 border-blue-400/80 [transform:rotateY(70deg)]" />
+          </div>
+        );
+      }
+      if (activeTool === "缩放") {
+        return (
+          <div className="absolute left-1/2 top-1/2 [transform-style:preserve-3d] blender-transform-gizmo blender-scale-gizmo">
+            <div className="absolute h-1 w-32 bg-red-400/80 [transform:translateZ(68px)]" />
+            <div className="absolute h-32 w-1 bg-green-400/80 [transform:translateZ(70px)]" />
+            <div className="absolute h-1 w-24 bg-blue-400/80 [transform:rotateY(90deg)_translateZ(70px)]" />
+            <div className="absolute left-32 top-0 h-4 w-4 -translate-y-1/2 bg-red-400 [transform:translateZ(72px)]" />
+            <div className="absolute left-0 top-32 h-4 w-4 -translate-x-1/2 bg-green-400 [transform:translateZ(72px)]" />
+            <div className="absolute left-0 top-0 h-4 w-4 -translate-x-1/2 -translate-y-1/2 bg-blue-400 [transform:rotateY(90deg)_translateZ(82px)]" />
+          </div>
+        );
+      }
+      return (
+        <div className="absolute left-1/2 top-1/2 [transform-style:preserve-3d] blender-transform-gizmo blender-translate-gizmo">
+          <div className="absolute h-1 w-36 -translate-y-1/2 bg-red-400/80 [transform:translateZ(66px)]" />
+          <div className="absolute left-[142px] top-1/2 h-0 w-0 -translate-y-1/2 border-y-[6px] border-l-[10px] border-y-transparent border-l-red-400 [transform:translateZ(66px)]" />
+          <div className="absolute h-36 w-1 -translate-x-1/2 bg-green-400/80 [transform:translateZ(68px)]" />
+          <div className="absolute left-1/2 top-[-10px] h-0 w-0 -translate-x-1/2 border-x-[6px] border-b-[10px] border-x-transparent border-b-green-400 [transform:translateZ(68px)]" />
+          <div className="absolute h-1 w-28 -translate-x-1/2 bg-blue-400/80 [transform:rotateY(90deg)_translateZ(68px)]" />
+          <div className="absolute left-1/2 top-1/2 h-3 w-3 -translate-x-1/2 -translate-y-1/2 rounded-full border border-white/80 bg-orange-300 [transform:translateZ(72px)]" />
+        </div>
+      );
+    };
+
+    if (object.type === "网格") {
+      return (
+        <div
+          key={object.id}
+          className="pointer-events-auto absolute left-1/2 top-1/2 h-24 w-24 cursor-pointer [transform-style:preserve-3d]"
+          style={{ transform: baseTransform }}
+          title={`${object.name} · 位置 ${object.position.map(formatTransformNumber).join(", ")}`}
+          onPointerDown={(event) => {
+            event.stopPropagation();
+            onSelectObject(object.id);
+          }}
+        >
+          {isSelected && <div className="absolute -inset-2 border-2 border-orange-300/95 [transform:translateZ(68px)]" />}
+          <div
+            className={`absolute inset-0 border ${
+              isSelected ? "border-orange-300/80" : "border-sky-200/45"
+            } bg-[#9ebeed]/90 [transform:translateZ(48px)]`}
+          />
+          <div className="absolute inset-0 border border-sky-200/30 bg-[#58749e]/85 [transform:rotateY(180deg)_translateZ(48px)]" />
+          <div className="absolute inset-0 border border-sky-200/35 bg-[#6f8db9]/85 [transform:rotateY(90deg)_translateZ(48px)]" />
+          <div className="absolute inset-0 border border-sky-200/35 bg-[#6f8db9]/80 [transform:rotateY(-90deg)_translateZ(48px)]" />
+          <div className="absolute inset-0 border border-sky-200/40 bg-[#b8d4ff]/90 [transform:rotateX(90deg)_translateZ(48px)]" />
+          <div className="absolute inset-0 border border-sky-200/25 bg-[#3e536f]/90 [transform:rotateX(-90deg)_translateZ(48px)]" />
+          {renderTransformGizmo()}
+        </div>
+      );
+    }
+
+    if (object.type === "相机") {
+      return (
+        <div
+          key={object.id}
+          className={`pointer-events-auto absolute left-1/2 top-1/2 h-20 w-28 cursor-pointer border-2 bg-black/10 text-[10px] [transform-style:preserve-3d] ${
+            isSelected ? "border-orange-300/90 text-orange-100" : "border-emerald-300/70 text-emerald-100"
+          }`}
+          style={{ transform: baseTransform }}
+          title={`${object.name} · Camera`}
+          onPointerDown={(event) => {
+            event.stopPropagation();
+            onSelectObject(object.id);
+          }}
+        >
+          <div className="absolute inset-2 border border-current/60" />
+          <div className="absolute -left-7 top-1/2 h-px w-7 bg-current/70" />
+          <div className="absolute -right-7 top-1/2 h-px w-7 bg-current/70" />
+          <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2">Camera</div>
+        </div>
+      );
+    }
+
+    return (
+      <div
+        key={object.id}
+        className={`pointer-events-auto absolute left-1/2 top-1/2 grid h-20 w-20 cursor-pointer place-items-center rounded-full border-2 text-[10px] ${
+          isSelected ? "border-orange-300/90 text-orange-100" : "border-yellow-200/80 text-yellow-100"
+        } bg-yellow-300/20`}
+        style={{ transform: baseTransform }}
+        title={`${object.name} · Light`}
+        onPointerDown={(event) => {
+          event.stopPropagation();
+          onSelectObject(object.id);
+        }}
+      >
+        <div className="absolute h-28 w-px bg-yellow-200/50" />
+        <div className="absolute h-px w-28 bg-yellow-200/50" />
+        <span className="rounded-full bg-yellow-300/20 px-2 py-1">Light</span>
+      </div>
+    );
+  };
+
   return (
-    <div className="flex h-full w-full overflow-hidden rounded-[12px] bg-[#1f2023] text-[#d6d6d6]">
+    <div className="flex h-full w-full flex-col overflow-hidden rounded-[12px] bg-[#1f2023] text-[#d6d6d6]">
+      <div className="flex h-7 shrink-0 items-center gap-3 border-b border-[#25272b] bg-[#191a1d] px-2 text-[11px]">
+        <div className="flex items-center gap-2">
+          <span className="rounded bg-[#4772b3] px-1.5 py-0.5 text-[10px] font-bold text-white">Jepow</span>
+          {blenderMenuSections.map((section) => (
+            <button
+              key={section}
+              type="button"
+              className="rounded px-1.5 py-0.5 text-neutral-300 hover:bg-white/[0.08] hover:text-white"
+              title={`Blender-style ${section} menu`}
+            >
+              {section}
+            </button>
+          ))}
+        </div>
+        <div className="min-w-0 flex-1 truncate text-center text-[10px] text-neutral-500">
+          React/Electron UI + Rust/wgpu Core Viewport + Cycles/CL Render + Assimp/USD Import + Bullet/Jolt Physics
+        </div>
+        <div className="text-[10px] text-neutral-400">Scene · ViewLayer</div>
+      </div>
+      <div className="flex h-8 shrink-0 items-center gap-1 border-b border-[#25272b] bg-[#252629] px-2 text-[11px]">
+        {workspaceTabs.map((tab) => (
+          <button
+            key={tab}
+            type="button"
+            onClick={() => setActiveWorkspace(tab)}
+            className={`h-6 rounded-t px-2 text-[10px] ${
+              activeWorkspace === tab
+                ? "bg-[#303236] text-white"
+                : "text-neutral-400 hover:bg-white/[0.06] hover:text-neutral-100"
+            }`}
+            title={`${tab} workspace`}
+          >
+            {tab}
+          </button>
+        ))}
+        <span className="ml-auto text-[10px] text-neutral-500">Workspace · {activeWorkspace}</span>
+      </div>
+      <div className="flex min-h-0 flex-1">
       <div className="w-9 shrink-0 border-r border-[#25272b] bg-[#252629] py-1.5">
-        {["选择", "移动", "旋转", "缩放", "游走", "测量", "注释"].map((label) => (
+        {["选择", "游标", "移动", "旋转", "缩放", "游走", "测量", "注释"].map((label) => (
           <button
             key={label}
             type="button"
@@ -1370,6 +1714,21 @@ export function ThreeDWorkspace({
                 </option>
               ))}
             </select>
+            <div className="flex items-center gap-0.5 rounded-[3px] bg-[#252629] p-0.5 blender-selection-mode-strip">
+              {selectionModes.map((mode) => (
+                <button
+                  key={mode}
+                  type="button"
+                  onClick={() => setSelectionMode(mode)}
+                  className={`h-5 min-w-5 rounded-[3px] px-1.5 text-[10px] ${
+                    selectionMode === mode ? "bg-[#4772b3] text-white" : "text-neutral-400 hover:bg-white/[0.08]"
+                  }`}
+                  title={`选择模式 · ${mode}`}
+                >
+                  {mode}
+                </button>
+              ))}
+            </div>
             <span className="mx-1 h-4 w-px shrink-0 bg-white/10" />
             {(["前", "后", "右", "左", "顶", "底", "透"] as const).map((item) => (
               <button
@@ -1571,6 +1930,28 @@ export function ThreeDWorkspace({
             </select>
             <button
               type="button"
+              onClick={() => setProportionalEditing((current) => !current)}
+              className={`grid h-5 min-w-5 place-items-center rounded-[3px] px-1.5 text-[10px] font-bold ${
+                proportionalEditing ? "bg-[#4772b3] text-white" : "text-neutral-400 hover:bg-white/[0.08]"
+              }`}
+              title="Proportional Editing"
+            >
+              ○
+            </button>
+            <select
+              value={axisConstraint}
+              onChange={(event) => setAxisConstraint(event.target.value as (typeof axisConstraints)[number])}
+              className="h-5 rounded-[3px] border border-[#3a3c40] bg-[#1f2023] px-1 text-[10px] text-neutral-300 outline-none blender-axis-constraint-control"
+              title="轴向约束"
+            >
+              {axisConstraints.map((axis) => (
+                <option key={axis} value={axis}>
+                  {axis}
+                </option>
+              ))}
+            </select>
+            <button
+              type="button"
               onClick={() => setSnapEnabled((current) => !current)}
               className={`grid h-5 min-w-5 place-items-center rounded-[3px] px-1.5 font-mono text-[10px] font-bold ${
                 snapEnabled ? "bg-[#4772b3] text-white" : "text-neutral-400"
@@ -1604,6 +1985,19 @@ export function ThreeDWorkspace({
             ))}
           </div>
         </div>
+        <div className="flex h-6 shrink-0 items-center gap-2 border-b border-[#25272b] bg-[#292b2f] px-2 text-[10px] text-neutral-400 blender-tool-settings-strip">
+          <span className="font-bold text-neutral-200">{activeTool}</span>
+          <span>选择模式 {selectionMode}</span>
+          <span>坐标系 {transformOrientation}</span>
+          <span>枢轴 {pivotPoint}</span>
+          <span>轴向 {axisConstraint}</span>
+          <span>{proportionalEditing ? "比例编辑 ON" : "比例编辑 OFF"}</span>
+          <span>Gizmo {showViewportGizmos ? activeTool : "隐藏"}</span>
+          <span>3D Cursor {threeDCursor.map(formatTransformNumber).join(" / ")}</span>
+          <span className="ml-auto">
+            {selectedObject?.name || "No Selection"} · {selectedObject?.locked ? "Locked" : "Editable"}
+          </span>
+        </div>
 
         <div
           ref={mountRef}
@@ -1613,21 +2007,121 @@ export function ThreeDWorkspace({
           onPointerCancel={onDockedViewportPointerUp}
           onWheel={onDockedViewportWheel}
           onContextMenu={(event) => {
-            if (!nativeViewportPopout) event.preventDefault();
+            if (nativeViewportPopout) return;
+            event.preventDefault();
+            const bounds = event.currentTarget.getBoundingClientRect();
+            setViewportContextMenu({
+              x: Math.min(event.clientX - bounds.left, bounds.width - 220),
+              y: Math.min(event.clientY - bounds.top, bounds.height - 260),
+              objectId: selectedObjectId,
+            });
           }}
           className={`relative min-h-0 flex-1 overflow-hidden bg-[#30343a] ${
             nativeViewportPopout ? "" : "cursor-grab active:cursor-grabbing"
           }`}
         >
           <div
-            className="pointer-events-none absolute inset-0 opacity-45"
+            className={`pointer-events-none absolute inset-0 ${showViewportOverlays ? "opacity-45" : "opacity-0"}`}
             style={{
               backgroundImage:
                 "linear-gradient(rgba(255,255,255,0.055) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.055) 1px, transparent 1px)",
               backgroundSize: "28px 28px",
             }}
           />
-          <div className="absolute right-3 top-3 h-24 w-24 rounded-full border border-white/10 bg-black/20 text-[10px] text-neutral-300 backdrop-blur">
+          <div className="pointer-events-auto absolute inset-x-0 top-0 z-10 flex h-8 items-center justify-between border-b border-black/25 bg-[#303236]/90 px-2 text-[10px] text-neutral-300 backdrop-blur viewport-header-menu">
+            <div className="flex items-center gap-1">
+              {viewportHeaderMenus.map((menu) => (
+                <button
+                  key={menu}
+                  type="button"
+                  className="rounded px-1.5 py-0.5 hover:bg-white/[0.08] hover:text-white"
+                  title={`3D Viewport ${menu}`}
+                >
+                  {menu}
+                </button>
+              ))}
+              <span className="mx-1 h-4 w-px bg-white/10" />
+              <span className="text-neutral-500">Object Mode</span>
+              <span className="mx-1 h-4 w-px bg-white/10" />
+              <button
+                type="button"
+                onClick={() => {
+                  setOperatorSearchOpen(true);
+                  setOperatorSearchQuery("");
+                }}
+                className="rounded bg-black/25 px-1.5 py-0.5 text-neutral-300 hover:bg-white/[0.08] hover:text-white operator-search-trigger"
+                title="Operator Search · F3"
+              >
+                F3 Search
+              </button>
+              <span className="mx-1 h-4 w-px bg-white/10" />
+              <div className="flex items-center gap-0.5 viewport-quick-add-controls">
+                {[
+                  { label: "Mesh", type: "网格" as const },
+                  { label: "Camera", type: "相机" as const },
+                  { label: "Light", type: "灯光" as const },
+                ].map((item) => (
+                  <button
+                    key={item.label}
+                    type="button"
+                    onClick={() => onAddObject?.(item.type)}
+                    className="rounded bg-black/25 px-1.5 py-0.5 text-neutral-300 hover:bg-white/[0.08] hover:text-white"
+                    title={`Quick Add ${item.label}`}
+                  >
+                    +{item.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div className="flex items-center gap-1">
+              <button
+                type="button"
+                onClick={() => setShowViewportOverlays((current) => !current)}
+                className={`rounded px-1.5 py-0.5 ${
+                  showViewportOverlays ? "bg-[#4772b3] text-white" : "text-neutral-400 hover:bg-white/[0.08]"
+                }`}
+                title="Viewport Overlays"
+              >
+                Overlay
+              </button>
+              <button
+                type="button"
+                onClick={() => setShowViewportGizmos((current) => !current)}
+                className={`rounded px-1.5 py-0.5 ${
+                  showViewportGizmos ? "bg-[#4772b3] text-white" : "text-neutral-400 hover:bg-white/[0.08]"
+                }`}
+                title="Viewport Gizmos"
+              >
+                Gizmo
+              </button>
+              <button
+                type="button"
+                onClick={() => setShowViewportSidebar((current) => !current)}
+                className={`rounded px-1.5 py-0.5 ${
+                  showViewportSidebar ? "bg-[#4772b3] text-white" : "text-neutral-400 hover:bg-white/[0.08]"
+                }`}
+                title="Toggle N Sidebar"
+              >
+                N Panel
+              </button>
+              <span className="mx-1 h-4 w-px bg-white/10" />
+              {displayModes.map((item) => (
+                <button
+                  key={`viewport-${item}`}
+                  type="button"
+                  onClick={() => setDisplayMode(item)}
+                  className={`grid h-5 min-w-5 place-items-center rounded-full px-1.5 font-mono ${
+                    displayMode === item ? "bg-[#4772b3] text-white" : "text-neutral-400 hover:bg-white/[0.08]"
+                  }`}
+                  title={`Viewport Shading · ${item}`}
+                >
+                  {displayIcons[item] || item}
+                </button>
+              ))}
+            </div>
+          </div>
+          {showViewportGizmos && (
+          <div className="absolute right-3 top-12 h-24 w-24 rounded-full border border-white/10 bg-black/20 text-[10px] text-neutral-300 backdrop-blur">
             <button
               type="button"
               onClick={(event) => {
@@ -1654,6 +2148,7 @@ export function ThreeDWorkspace({
               </button>
             ))}
           </div>
+          )}
           {!nativeViewportPopout && (
             <div className="pointer-events-none absolute inset-0 flex items-center justify-center [perspective:900px]">
               <div
@@ -1671,47 +2166,242 @@ export function ThreeDWorkspace({
                     transform: "translateZ(-36px)",
                   }}
                 />
-                {selectedObject?.type === "网格" ? (
-                  <div className="absolute left-1/2 top-1/2 h-28 w-28 -translate-x-1/2 -translate-y-1/2 [transform-style:preserve-3d]">
-                    <div className="absolute -inset-2 border-2 border-orange-300/95 [transform:translateZ(79px)]" />
-                    <div className="absolute inset-0 border border-orange-300/80 bg-[#9ebeed]/95 [transform:translateZ(56px)]" />
-                    <div className="absolute inset-0 border border-orange-300/50 bg-[#58749e]/95 [transform:rotateY(180deg)_translateZ(56px)]" />
-                    <div className="absolute inset-0 border border-orange-300/60 bg-[#6f8db9]/95 [transform:rotateY(90deg)_translateZ(56px)]" />
-                    <div className="absolute inset-0 border border-orange-300/60 bg-[#6f8db9]/90 [transform:rotateY(-90deg)_translateZ(56px)]" />
-                    <div className="absolute inset-0 border border-orange-300/70 bg-[#b8d4ff]/95 [transform:rotateX(90deg)_translateZ(56px)]" />
-                    <div className="absolute inset-0 border border-orange-300/40 bg-[#3e536f]/95 [transform:rotateX(-90deg)_translateZ(56px)]" />
-                    <div className="absolute left-1/2 top-1/2 h-1 w-36 -translate-y-1/2 bg-red-400/80 [transform:translateZ(74px)]" />
-                    <div className="absolute left-1/2 top-1/2 h-36 w-1 -translate-x-1/2 bg-green-400/80 [transform:translateZ(76px)]" />
-                    <div className="absolute left-1/2 top-1/2 h-1 w-28 -translate-x-1/2 bg-blue-400/80 [transform:rotateY(90deg)_translateZ(76px)]" />
-                    <div className="absolute left-1/2 top-1/2 h-3 w-3 -translate-x-1/2 -translate-y-1/2 rounded-full border border-white/80 bg-orange-300 [transform:translateZ(82px)]" />
-                  </div>
-                ) : selectedObject?.type === "相机" ? (
-                  <div className="absolute left-1/2 top-1/2 h-28 w-36 -translate-x-1/2 -translate-y-1/2 border-2 border-orange-300/90 bg-black/10 text-[11px] text-orange-100 [transform-style:preserve-3d]">
-                    <div className="absolute inset-2 border border-orange-200/60" />
-                    <div className="absolute -left-8 top-1/2 h-px w-8 bg-orange-200/70" />
-                    <div className="absolute -right-8 top-1/2 h-px w-8 bg-orange-200/70" />
-                    <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2">Camera</div>
-                  </div>
-                ) : (
-                  <div className="absolute left-1/2 top-1/2 grid h-24 w-24 -translate-x-1/2 -translate-y-1/2 place-items-center rounded-full border-2 border-orange-300/90 bg-yellow-300/20 text-[11px] text-yellow-100">
-                    <div className="absolute h-32 w-px bg-yellow-200/50" />
-                    <div className="absolute h-px w-32 bg-yellow-200/50" />
-                    <span className="rounded-full bg-yellow-300/20 px-2 py-1">Light</span>
-                  </div>
-                )}
+                <div className="pointer-events-none absolute left-1/2 top-1/2 text-[10px] font-bold text-red-300 [transform:translate3d(348px,-12px,-32px)]">
+                  X
+                </div>
+                <div className="pointer-events-none absolute left-1/2 top-1/2 text-[10px] font-bold text-green-300 [transform:translate3d(10px,-348px,-32px)]">
+                  Y
+                </div>
+                <div
+                  className="pointer-events-none absolute left-1/2 top-1/2 h-12 w-12 -translate-x-1/2 -translate-y-1/2 rounded-full border border-red-300/70 text-[10px] text-white three-d-cursor-marker"
+                  style={{
+                    transform: `translate3d(calc(-50% + ${scenePixel(threeDCursor[0])}px), calc(-50% + ${scenePixel(
+                      -threeDCursor[2],
+                    )}px), ${scenePixel(threeDCursor[1])}px)`,
+                  }}
+                >
+                  <div className="absolute left-1/2 top-0 h-full w-px -translate-x-1/2 bg-white/60" />
+                  <div className="absolute left-0 top-1/2 h-px w-full -translate-y-1/2 bg-white/60" />
+                  <div className="absolute left-1/2 top-1/2 h-2 w-2 -translate-x-1/2 -translate-y-1/2 rounded-full bg-red-300" />
+                </div>
+                {objects.filter((object) => object.visible !== false).map(renderDockedSceneObject)}
               </div>
             </div>
           )}
-          <div className="pointer-events-none absolute left-3 top-3 rounded bg-black/35 px-2 py-1 text-[10px] text-neutral-300">
+          <div className="pointer-events-none absolute left-3 top-11 rounded bg-black/35 px-2 py-1 text-[10px] text-neutral-300">
             <div className="font-bold text-neutral-100">
               {nativeViewportPopout ? "原生弹出" : "停靠视图"} · {cameraProjection === "orthographic" ? "正交" : "透视"} · {displayMode}
             </div>
             <div className="mt-0.5 text-neutral-400">
               {objectMode}模式 · Collection / {selectedObject?.name || "对象"} · 工具 {activeTool} ·{" "}
-              {transformOrientation} / {pivotPoint} · {selectedObject?.locked ? "锁定" : "可编辑"} ·{" "}
-              {snapEnabled ? `吸附 ${snapStep}` : "自由"} · 已选 {selectedObject ? 1 : 0}/{objects.length}
+              {selectionMode}选择 · {transformOrientation} / {pivotPoint} · 轴向 {axisConstraint} ·{" "}
+              {proportionalEditing ? "比例编辑" : "普通编辑"} · {selectedObject?.locked ? "锁定" : "可编辑"} ·{" "}
+              {snapEnabled ? `吸附 ${snapStep}` : "自由"} · 3D Cursor {threeDCursor.map(formatTransformNumber).join("/")} · 已选{" "}
+              {selectedObject ? 1 : 0}/{objects.length}
             </div>
           </div>
+          <div className="pointer-events-none absolute left-3 top-[84px] rounded bg-black/30 px-2 py-1 text-[10px] text-neutral-400 viewport-scene-stats">
+            Stats · objects {sceneStats.visible}/{sceneStats.total} · mesh {sceneStats.meshes} · camera{" "}
+            {sceneStats.cameras} · light {sceneStats.lights} · tris {sceneStats.triangles.toLocaleString()}
+          </div>
+          {viewportContextMenu && (
+            <div
+              className="pointer-events-auto absolute z-30 w-52 overflow-hidden rounded border border-white/10 bg-[#252629]/98 py-1 text-[10px] text-neutral-300 shadow-2xl backdrop-blur viewport-context-menu"
+              style={{ left: viewportContextMenu.x, top: viewportContextMenu.y }}
+              onPointerDown={(event) => event.stopPropagation()}
+            >
+              <div className="border-b border-white/10 px-2 py-1 text-neutral-500">
+                Object Context · {selectedObject?.name || "No Selection"}
+              </div>
+              {[
+                { label: "Duplicate Object", action: () => onDuplicateObject?.(), disabled: !selectedObject || !onDuplicateObject },
+                { label: "Delete Object", action: () => onDeleteObject?.(), disabled: !selectedObject || !onDeleteObject },
+                {
+                  label: selectedObject?.visible === false ? "Show Object" : "Hide Object",
+                  action: () => selectedObject && onUpdateObject(selectedObject.id, { visible: selectedObject.visible === false }),
+                  disabled: !selectedObject,
+                },
+                {
+                  label: selectedObject?.locked ? "Unlock Object" : "Lock Object",
+                  action: () => selectedObject && onUpdateObject(selectedObject.id, { locked: selectedObject.locked !== true }),
+                  disabled: !selectedObject,
+                },
+                {
+                  label: "Focus Selection",
+                  action: () => window.jepowDesktop?.viewportHost?.focusSelection?.(),
+                  disabled: !selectedObject,
+                },
+                {
+                  label: "Cursor to Selection",
+                  action: () => selectedObject && setThreeDCursor(selectedObject.position),
+                  disabled: !selectedObject,
+                },
+                {
+                  label: "Selection to Cursor",
+                  action: moveSelectionToCursor,
+                  disabled: !selectedObject || selectedObject.locked,
+                },
+                {
+                  label: "Reveal All Objects",
+                  action: revealAllObjects,
+                  disabled: !onSyncObjects,
+                },
+              ].map((item) => (
+                <button
+                  key={item.label}
+                  type="button"
+                  disabled={item.disabled}
+                  onClick={() => runViewportContextAction(item.action)}
+                  className="flex w-full items-center justify-between px-2 py-1 text-left hover:bg-white/[0.08] hover:text-white disabled:cursor-not-allowed disabled:text-neutral-600 disabled:hover:bg-transparent"
+                >
+                  <span>{item.label}</span>
+                  <span className="text-neutral-600">›</span>
+                </button>
+              ))}
+            </div>
+          )}
+          {operatorSearchOpen && (
+            <div
+              className="pointer-events-auto absolute left-1/2 top-16 z-40 w-[360px] -translate-x-1/2 overflow-hidden rounded border border-white/10 bg-[#252629]/98 text-[10px] text-neutral-300 shadow-2xl backdrop-blur operator-search-palette"
+              onPointerDown={(event) => event.stopPropagation()}
+            >
+              <div className="border-b border-white/10 p-2">
+                <div className="mb-1 flex items-center justify-between">
+                  <span className="font-bold text-neutral-100">Operator Search</span>
+                  <span className="text-neutral-500">F3 · Esc</span>
+                </div>
+                <input
+                  autoFocus
+                  value={operatorSearchQuery}
+                  onChange={(event) => setOperatorSearchQuery(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Escape") closeOperatorSearch();
+                    if (event.key === "Enter" && filteredOperatorCommands[0]) {
+                      runOperatorCommand(filteredOperatorCommands[0]);
+                    }
+                  }}
+                  placeholder="Search commands..."
+                  className="h-7 w-full rounded border border-white/10 bg-black/25 px-2 text-neutral-100 outline-none placeholder:text-neutral-600"
+                />
+              </div>
+              <div className="max-h-64 overflow-auto py-1">
+                {filteredOperatorCommands.map((command) => (
+                  <button
+                    key={`${command.group}-${command.label}`}
+                    type="button"
+                    disabled={command.disabled}
+                    onClick={() => runOperatorCommand(command)}
+                    className="flex w-full items-center gap-2 px-2 py-1.5 text-left hover:bg-white/[0.08] hover:text-white disabled:cursor-not-allowed disabled:text-neutral-600 disabled:hover:bg-transparent"
+                  >
+                    <span className="w-20 shrink-0 text-neutral-500">{command.group}</span>
+                    <span className="min-w-0 flex-1 truncate">{command.label}</span>
+                  </button>
+                ))}
+                {filteredOperatorCommands.length === 0 && (
+                  <div className="px-2 py-4 text-center text-neutral-500">No matching operators</div>
+                )}
+              </div>
+            </div>
+          )}
+          {showViewportSidebar && (
+            <div className="pointer-events-auto absolute right-3 top-40 w-64 overflow-hidden rounded border border-white/10 bg-[#252629]/95 text-[10px] text-neutral-300 shadow-2xl backdrop-blur viewport-n-sidebar">
+              <div className="flex h-7 items-center gap-1 border-b border-white/10 px-1.5">
+                {viewportSidebarTabs.map((tab) => (
+                  <button
+                    key={tab}
+                    type="button"
+                    onClick={() => setViewportSidebarTab(tab)}
+                    className={`h-5 rounded px-2 ${
+                      viewportSidebarTab === tab ? "bg-[#4772b3] text-white" : "text-neutral-400 hover:bg-white/[0.08]"
+                    }`}
+                  >
+                    {tab}
+                  </button>
+                ))}
+                <button
+                  type="button"
+                  onClick={() => setShowViewportSidebar(false)}
+                  className="ml-auto rounded px-1.5 text-neutral-500 hover:bg-white/[0.08] hover:text-white"
+                  title="Close N Sidebar"
+                >
+                  ×
+                </button>
+              </div>
+              <div className="max-h-[38vh] overflow-auto p-2">
+                {viewportSidebarTab === "Item" && (
+                  <div className="space-y-2 viewport-n-sidebar-item">
+                    <div className="font-bold text-neutral-100">Item</div>
+                    <div className="grid grid-cols-[66px_1fr] gap-y-1 text-neutral-400">
+                      <span>Name</span>
+                      <span className="truncate text-neutral-200">{selectedObject?.name || "No Selection"}</span>
+                      <span>Type</span>
+                      <span className="text-neutral-200">{selectedObject?.type || "-"}</span>
+                      <span>Location</span>
+                      <span className="text-neutral-200">
+                        {(selectedObject?.position || [0, 0, 0]).map(formatTransformNumber).join(" / ")}
+                      </span>
+                      <span>Rotation</span>
+                      <span className="text-neutral-200">
+                        {(selectedObject?.rotation || [0, 0, 0]).map(formatTransformNumber).join(" / ")}
+                      </span>
+                      <span>Scale</span>
+                      <span className="text-neutral-200">
+                        {(selectedObject?.scale || [1, 1, 1]).map(formatTransformNumber).join(" / ")}
+                      </span>
+                    </div>
+                  </div>
+                )}
+                {viewportSidebarTab === "Tool" && (
+                  <div className="space-y-2 viewport-n-sidebar-tool">
+                    <div className="font-bold text-neutral-100">Tool</div>
+                    <div className="grid grid-cols-[82px_1fr] gap-y-1 text-neutral-400">
+                      <span>Active</span>
+                      <span className="text-neutral-200">{activeTool}</span>
+                      <span>Gizmo</span>
+                      <span className="text-neutral-200">{showViewportGizmos ? activeTool : "Hidden"}</span>
+                      <span>Selection</span>
+                      <span className="text-neutral-200">{selectionMode}</span>
+                      <span>Axis</span>
+                      <span className="text-neutral-200">{axisConstraint}</span>
+                      <span>3D Cursor</span>
+                      <span className="text-neutral-200">{threeDCursor.map(formatTransformNumber).join(" / ")}</span>
+                    </div>
+                  </div>
+                )}
+                {viewportSidebarTab === "View" && (
+                  <div className="space-y-2 viewport-n-sidebar-view">
+                    <div className="font-bold text-neutral-100">View</div>
+                    {[
+                      { label: "Focal", value: viewportFocalLength, setter: setViewportFocalLength, step: 1 },
+                      { label: "Clip Start", value: viewportClipStart, setter: setViewportClipStart, step: 0.1 },
+                      { label: "Clip End", value: viewportClipEnd, setter: setViewportClipEnd, step: 10 },
+                    ].map((row) => (
+                      <label key={row.label} className="grid grid-cols-[72px_1fr] items-center gap-2 text-neutral-400">
+                        <span>{row.label}</span>
+                        <input
+                          type="number"
+                          step={row.step}
+                          value={row.value}
+                          onChange={(event) => row.setter(Number(event.target.value))}
+                          className="h-6 rounded border border-white/10 bg-black/25 px-2 text-right text-neutral-100 outline-none"
+                        />
+                      </label>
+                    ))}
+                    <div className="grid grid-cols-[72px_1fr] gap-y-1 border-t border-white/10 pt-2 text-neutral-400">
+                      <span>Projection</span>
+                      <span className="text-neutral-200">{cameraProjection}</span>
+                      <span>Zoom</span>
+                      <span className="text-neutral-200">{dockedCamera.zoom.toFixed(2)}</span>
+                      <span>Pan</span>
+                      <span className="text-neutral-200">
+                        {formatTransformNumber(dockedCamera.panX)} / {formatTransformNumber(dockedCamera.panY)}
+                      </span>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
           {showRuntimeOverlay && nativeStatus?.architecture && (
             <div className="pointer-events-none absolute left-3 top-10 max-h-[34vh] max-w-[560px] overflow-hidden rounded bg-black/35 px-2 py-1 text-[10px] text-neutral-300 backdrop-blur">
               <div className="mb-1 font-bold text-neutral-200">
@@ -2003,17 +2693,435 @@ export function ThreeDWorkspace({
           )}
         </div>
 
-        <div className="h-14 shrink-0 border-t border-[#25272b] bg-[#252629] px-2 py-1">
+        <div className="h-[68px] shrink-0 border-t border-[#25272b] bg-[#252629] px-2 py-1 blender-status-timeline-area">
           <div className="mb-1 flex items-center gap-2 text-[10px] text-neutral-400">
             <span>起始 1</span>
             <span>结束 250</span>
-            <span className="ml-auto">当前帧 1</span>
+            <div className="ml-auto flex items-center gap-1">
+              {["|<", "<", "▶", ">", ">|"].map((control) => (
+                <button
+                  key={control}
+                  type="button"
+                  className="h-4 min-w-5 rounded bg-black/25 px-1 text-[9px] text-neutral-300 hover:bg-white/[0.08]"
+                  title={`Timeline ${control}`}
+                >
+                  {control}
+                </button>
+              ))}
+              <span className="ml-2">当前帧 1</span>
+            </div>
           </div>
-          <div className="relative h-6 rounded bg-[#1b1c1f]">
-            <div className="absolute inset-y-0 left-4 w-px bg-[#4772b3]" />
+          <div className="relative h-6 rounded bg-[#1b1c1f] timeline-dopesheet-strip">
+            <div className="absolute inset-y-0 left-4 w-px bg-[#4772b3] timeline-current-frame" />
             <div className="absolute inset-x-2 top-1/2 h-px bg-white/10" />
+            {Array.from({ length: 10 }).map((_, index) => (
+              <div
+                key={index}
+                className="absolute top-1/2 h-2 w-px -translate-y-1/2 bg-white/10"
+                style={{ left: `${8 + index * 9}%` }}
+              />
+            ))}
+          </div>
+          <div className="mt-1 flex items-center gap-3 text-[9px] text-neutral-500 blender-status-bar">
+            <span>工具 {activeTool}</span>
+            <span>模式 {objectMode}/{selectionMode}</span>
+            <span>约束 {axisConstraint}</span>
+            <span>比例编辑 {proportionalEditing ? "ON" : "OFF"}</span>
+            <span>Gizmo {showViewportGizmos ? activeTool : "OFF"}</span>
+            <span>Cursor {threeDCursor.map(formatTransformNumber).join("/")}</span>
+            <span className="ml-auto">LMB 选择 · Shift 多选 · G/R/S 变换 · X/Y/Z 约束</span>
           </div>
         </div>
+      </div>
+      <aside className="flex w-72 shrink-0 flex-col border-l border-[#25272b] bg-[#252629] text-[10px] blender-right-sidebar">
+        <section className="min-h-0 flex-[0.9] border-b border-[#1b1c1f]">
+          <div className="flex h-7 items-center justify-between border-b border-[#1b1c1f] px-2 text-neutral-300">
+            <span className="font-bold text-neutral-100">Scene Collection</span>
+            <span className="text-neutral-500">{objects.length} objects</span>
+          </div>
+          <div className="border-b border-[#1b1c1f] p-1 outliner-search-filter">
+            <input
+              value={outlinerSearch}
+              onChange={(event) => setOutlinerSearch(event.target.value)}
+              placeholder="Search objects"
+              className="h-6 w-full rounded border border-white/10 bg-[#1b1c1f] px-2 text-[10px] text-neutral-200 outline-none placeholder:text-neutral-600"
+            />
+          </div>
+          <div className="max-h-full overflow-auto py-1">
+            <div className="px-2 py-1 text-neutral-400">▾ Collection</div>
+            {filteredOutlinerObjects.map((object) => (
+              <div
+                key={object.id}
+                role="button"
+                tabIndex={0}
+                onClick={() => onSelectObject(object.id)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" || event.key === " ") {
+                    event.preventDefault();
+                    onSelectObject(object.id);
+                  }
+                }}
+                className={`flex w-full items-center gap-2 px-4 py-1 text-left hover:bg-white/[0.06] ${
+                  object.id === selectedObjectId ? "bg-[#4772b3]/35 text-white" : "text-neutral-300"
+                }`}
+                title={`Select ${object.name}`}
+              >
+                <span className={typeColor[object.type]}>
+                  {object.type === "网格" ? "▣" : object.type === "相机" ? "▱" : "✦"}
+                </span>
+                <span className="min-w-0 flex-1 truncate">{object.name}</span>
+                <span
+                  role="button"
+                  tabIndex={0}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    onUpdateObject(object.id, { visible: object.visible === false });
+                  }}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter" || event.key === " ") {
+                      event.preventDefault();
+                      event.stopPropagation();
+                      onUpdateObject(object.id, { visible: object.visible === false });
+                    }
+                  }}
+                  className={object.visible === false ? "text-neutral-600" : "text-neutral-300"}
+                  title="Toggle viewport visibility"
+                >
+                  ◉
+                </span>
+                <span
+                  role="button"
+                  tabIndex={0}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    onUpdateObject(object.id, { locked: object.locked !== true });
+                  }}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter" || event.key === " ") {
+                      event.preventDefault();
+                      event.stopPropagation();
+                      onUpdateObject(object.id, { locked: object.locked !== true });
+                    }
+                  }}
+                  className={object.locked ? "text-amber-300" : "text-neutral-600"}
+                  title="Toggle selectable/edit lock"
+                >
+                  ⌕
+                </span>
+              </div>
+            ))}
+            {filteredOutlinerObjects.length === 0 && (
+              <div className="px-4 py-3 text-neutral-500">No matching objects</div>
+            )}
+          </div>
+        </section>
+        <section className="min-h-0 flex-1 overflow-auto">
+          <div className="flex h-7 items-center gap-1 border-b border-[#1b1c1f] px-2">
+            {propertiesTabs.map((tab) => (
+              <button
+                key={tab}
+                type="button"
+                onClick={() => setPropertiesTab(tab)}
+                className={`h-5 rounded px-1.5 ${
+                  propertiesTab === tab ? "bg-[#4772b3] text-white" : "text-neutral-400 hover:bg-white/[0.06]"
+                }`}
+              >
+                {tab}
+              </button>
+            ))}
+          </div>
+          {selectedObject ? (
+            <div className="space-y-2 p-2">
+              {propertiesTab === "工具" && (
+                <div className="rounded border border-white/10 bg-black/15 p-2 text-neutral-400 properties-tool-context-panel">
+                  <div className="mb-1 font-bold text-neutral-100">Active Tool</div>
+                  <div className="grid grid-cols-[72px_1fr] gap-y-1">
+                    <span>Tool</span>
+                    <span className="text-neutral-200">{activeTool}</span>
+                    <span>Selection</span>
+                    <span className="text-neutral-200">{selectionMode}</span>
+                    <span>Axis</span>
+                    <span className="text-neutral-200">{axisConstraint}</span>
+                    <span>Proportional</span>
+                    <span className="text-neutral-200">{proportionalEditing ? "Enabled" : "Disabled"}</span>
+                  </div>
+                  <div className="mt-2 border-t border-white/10 pt-2 three-d-cursor-properties">
+                    <div className="mb-1 font-bold text-neutral-100">3D Cursor</div>
+                    <div className="grid grid-cols-3 gap-1">
+                      {(["X", "Y", "Z"] as const).map((axisLabel, axisIndex) => (
+                        <label key={axisLabel} className="flex items-center gap-1 rounded bg-black/25 px-1">
+                          <span
+                            className={
+                              axisLabel === "X"
+                                ? "text-red-300"
+                                : axisLabel === "Y"
+                                  ? "text-green-300"
+                                  : "text-blue-300"
+                            }
+                          >
+                            {axisLabel}
+                          </span>
+                          <input
+                            type="number"
+                            step={0.1}
+                            value={formatTransformNumber(threeDCursor[axisIndex])}
+                            onChange={(event) => updateThreeDCursor(axisIndex as 0 | 1 | 2, Number(event.target.value))}
+                            className="h-5 w-full bg-transparent text-right text-neutral-100 outline-none"
+                          />
+                        </label>
+                      ))}
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setThreeDCursor(selectedObject.position)}
+                      className="mt-2 w-full rounded bg-[#4772b3]/25 px-2 py-1 text-neutral-100 hover:bg-[#4772b3]/40"
+                    >
+                      Cursor to Selection
+                    </button>
+                  </div>
+                </div>
+              )}
+              {(propertiesTab === "对象" || propertiesTab === "工具") && (
+              <div className="rounded border border-white/10 bg-black/15">
+                <button
+                  type="button"
+                  onClick={() => togglePropertySection("transform")}
+                  className="flex w-full items-center justify-between border-b border-white/10 px-2 py-1.5 properties-collapsible-section"
+                >
+                  <span className="font-bold text-neutral-100">
+                    {openPropertySections.transform ? "▾" : "▸"} Transform
+                  </span>
+                  <span className={typeColor[selectedObject.type]}>
+                    {selectedObject.type} · {selectedObject.locked ? "Locked" : "Editable"}
+                  </span>
+                </button>
+                {openPropertySections.transform && (
+                <div className="space-y-1.5 p-2">
+                  {transformRows.map((row) => {
+                    const values = selectedObject[row.field];
+                    return (
+                      <div key={row.field} className="grid grid-cols-[58px_1fr] items-center gap-2">
+                        <span className="text-neutral-400">{row.label}</span>
+                        <div className="grid grid-cols-3 gap-1">
+                          {(["X", "Y", "Z"] as const).map((axisLabel, axisIndex) => (
+                            <label key={axisLabel} className="flex items-center gap-1 rounded bg-black/25 px-1">
+                              <span
+                                className={
+                                  axisLabel === "X"
+                                    ? "text-red-300"
+                                    : axisLabel === "Y"
+                                      ? "text-green-300"
+                                      : "text-blue-300"
+                                }
+                              >
+                                {axisLabel}
+                              </span>
+                              <input
+                                type="number"
+                                step={row.field === "rotation" ? 1 : 0.1}
+                                value={formatTransformNumber(values[axisIndex])}
+                                onChange={(event) =>
+                                  updateSelectedVector(
+                                    row.field,
+                                    axisIndex as 0 | 1 | 2,
+                                    Number(event.target.value),
+                                  )
+                                }
+                                disabled={selectedObject.locked}
+                                className="h-5 w-full bg-transparent text-right text-neutral-100 outline-none disabled:text-neutral-500"
+                              />
+                            </label>
+                          ))}
+                        </div>
+                      </div>
+                    );
+                  })}
+                  <div className="grid grid-cols-[58px_1fr] items-center gap-2 border-t border-white/10 pt-1.5">
+                    <span className="text-neutral-400">Dimensions</span>
+                    <span className="text-neutral-200">
+                      {(selectedObject.boundsSize || [1, 1, 1])
+                        .map((value, index) => formatTransformNumber(value * selectedObject.scale[index]))
+                        .join(" x ")}
+                    </span>
+                  </div>
+                </div>
+                )}
+              </div>
+              )}
+              {propertiesTab === "对象" && (
+              <div className="rounded border border-white/10 bg-black/15">
+                <button
+                  type="button"
+                  onClick={() => togglePropertySection("objectData")}
+                  className="w-full border-b border-white/10 px-2 py-1.5 text-left font-bold text-neutral-100 properties-collapsible-section"
+                >
+                  {openPropertySections.objectData ? "▾" : "▸"} Object Data
+                </button>
+                {openPropertySections.objectData && (
+                <div className="grid grid-cols-[72px_1fr] gap-y-1 p-2 text-neutral-400">
+                  <span>Name</span>
+                  <span className="truncate text-neutral-200">{selectedObject.name}</span>
+                  <span>Backend</span>
+                  <span className="truncate text-neutral-200">{selectedObject.importBackend || "native scene"}</span>
+                  <span>Triangles</span>
+                  <span className="text-neutral-200">{selectedObject.triangleCount ?? "proxy"}</span>
+                  <span>Material</span>
+                  <span className="text-neutral-200">{selectedObject.materialColor || selectedObject.color}</span>
+                </div>
+                )}
+              </div>
+              )}
+              {propertiesTab === "材质" && (
+              <div className="rounded border border-white/10 bg-black/15 material-properties-panel">
+                <button
+                  type="button"
+                  onClick={() => togglePropertySection("material")}
+                  className="w-full border-b border-white/10 px-2 py-1.5 text-left font-bold text-neutral-100 properties-collapsible-section"
+                >
+                  {openPropertySections.material ? "▾" : "▸"} Material
+                </button>
+                {openPropertySections.material && (
+                  <div className="space-y-2 p-2 text-neutral-400">
+                    <div className="grid grid-cols-[72px_1fr] items-center gap-2">
+                      <span>Base Color</span>
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="color"
+                          value={normalizeHexColor(selectedObject.materialColor || selectedObject.color)}
+                          onChange={(event) => updateSelectedMaterialColor(event.target.value)}
+                          disabled={selectedObject.locked}
+                          className="h-6 w-9 rounded border border-white/10 bg-black/20 disabled:opacity-40"
+                        />
+                        <span className="font-mono text-neutral-200">
+                          {normalizeHexColor(selectedObject.materialColor || selectedObject.color)}
+                        </span>
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-[72px_1fr] gap-y-1">
+                      <span>Metallic</span>
+                      <span className="text-neutral-200">{(selectedObject.metallicFactor ?? 0).toFixed(2)}</span>
+                      <span>Roughness</span>
+                      <span className="text-neutral-200">{(selectedObject.roughnessFactor ?? 0.5).toFixed(2)}</span>
+                      <span>Textures</span>
+                      <span className="text-neutral-200">
+                        {selectedObject.hasBaseColorTexture ? "Base Color" : "No base color"} ·{" "}
+                        {selectedObject.hasMetallicRoughnessTexture ? "Metal/Rough" : "No PBR map"}
+                      </span>
+                    </div>
+                  </div>
+                )}
+              </div>
+              )}
+              {propertiesTab === "物理" && (
+              <div className="rounded border border-white/10 bg-black/15 physics-properties-panel">
+                <button
+                  type="button"
+                  onClick={() => togglePropertySection("physics")}
+                  className="w-full border-b border-white/10 px-2 py-1.5 text-left font-bold text-neutral-100 properties-collapsible-section"
+                >
+                  {openPropertySections.physics ? "▾" : "▸"} Physics
+                </button>
+                {openPropertySections.physics && (
+                  <div className="space-y-2 p-2 text-neutral-400">
+                    {selectedObject.type === "网格" ? (
+                      <>
+                        <div className="grid grid-cols-[72px_1fr] gap-y-1">
+                          <span>Rigid Body</span>
+                          <span className="text-neutral-200">{selectedObject.locked ? "Static" : "Dynamic"}</span>
+                          <span>Collider</span>
+                          <span className="text-neutral-200">Box · {physicsHalfExtents(selectedObject).map(formatTransformNumber).join(" / ")}</span>
+                          <span>Mass</span>
+                          <span className="text-neutral-200">
+                            {physicsBodyMass(physicsHalfExtents(selectedObject), selectedObject).toFixed(3)}
+                          </span>
+                        </div>
+                        <div className="grid grid-cols-3 gap-1">
+                          <button
+                            type="button"
+                            onClick={probePhysicsWorld}
+                            disabled={pipelineBusy !== null}
+                            className="rounded bg-sky-500/15 px-1.5 py-1 text-sky-100 hover:bg-sky-500/25 disabled:opacity-45"
+                          >
+                            World
+                          </button>
+                          <button
+                            type="button"
+                            onClick={probePhysicsStep}
+                            disabled={pipelineBusy !== null}
+                            className="rounded bg-sky-500/15 px-1.5 py-1 text-sky-100 hover:bg-sky-500/25 disabled:opacity-45"
+                          >
+                            Step
+                          </button>
+                          <button
+                            type="button"
+                            onClick={togglePhysicsPlayback}
+                            disabled={pipelineBusy !== null}
+                            className="rounded bg-sky-500/15 px-1.5 py-1 text-sky-100 hover:bg-sky-500/25 disabled:opacity-45"
+                          >
+                            {physicsPlaying ? "Pause" : "Play"}
+                          </button>
+                        </div>
+                      </>
+                    ) : (
+                      <div className="text-neutral-500">Physics body applies to mesh objects.</div>
+                    )}
+                  </div>
+                )}
+              </div>
+              )}
+              {propertiesTab === "渲染" && (
+              <div className="rounded border border-white/10 bg-black/15 render-properties-panel">
+                <button
+                  type="button"
+                  onClick={() => togglePropertySection("render")}
+                  className="w-full border-b border-white/10 px-2 py-1.5 text-left font-bold text-neutral-100 properties-collapsible-section"
+                >
+                  {openPropertySections.render ? "▾" : "▸"} Render
+                </button>
+                {openPropertySections.render && (
+                  <div className="space-y-2 p-2 text-neutral-400">
+                    <div className="grid grid-cols-[72px_1fr] gap-y-1">
+                      <span>Engine</span>
+                      <span className="text-neutral-200">Cycles/CL · {nativeStatus?.cyclesBackend || "bridge"}</span>
+                      <span>Devices</span>
+                      <span className="text-neutral-200">
+                        {nativeStatus?.cyclesRenderDevices?.length ? nativeStatus.cyclesRenderDevices.join(" / ") : "CPU/CL pending"}
+                      </span>
+                      <span>Viewport</span>
+                      <span className="text-neutral-200">{displayMode}</span>
+                    </div>
+                    <div className="flex flex-wrap gap-1 render-shading-controls">
+                      {displayModes.map((item) => (
+                        <button
+                          key={`properties-${item}`}
+                          type="button"
+                          onClick={() => setDisplayMode(item)}
+                          className={`rounded px-1.5 py-1 ${
+                            displayMode === item ? "bg-[#4772b3] text-white" : "bg-black/25 text-neutral-300 hover:bg-white/[0.08]"
+                          }`}
+                        >
+                          {item}
+                        </button>
+                      ))}
+                      <button
+                        type="button"
+                        onClick={runArchitectureDiagnostics}
+                        disabled={pipelineBusy !== null}
+                        className="rounded bg-purple-500/15 px-1.5 py-1 text-purple-100 hover:bg-purple-500/25 disabled:opacity-45"
+                      >
+                        Render Check
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+              )}
+            </div>
+          ) : (
+            <div className="p-3 text-neutral-500">No object selected</div>
+          )}
+        </section>
+      </aside>
       </div>
     </div>
   );
