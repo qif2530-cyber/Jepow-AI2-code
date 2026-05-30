@@ -7260,7 +7260,7 @@ export default function App() {
       setShowUserMenu(false);
       setShowTransferMenu(false);
       setShowLayoutMenu(false);
-      if (node.type !== "modelAssetNode") {
+      if (node.type !== "modelAssetNode" && node.type !== "threeDEditorNode") {
         clearModelSceneObjectSelection();
         setRightPanelMode("properties");
       }
@@ -7470,20 +7470,34 @@ export default function App() {
 
   const effectiveSceneObjectSelection = useMemo(() => {
     if (selectedSceneObject) return selectedSceneObject;
-    if (hasCanvasNodeSelection) return null;
     for (const node of nodes) {
       if (node.type !== "modelAssetNode") continue;
       const data = node.data as {
         selectedSceneObjectId?: string;
+        selectedSceneObjectName?: string;
         sceneObjects?: SceneObjectEntry[];
       };
       const objectId = data.selectedSceneObjectId?.trim();
       if (!objectId) continue;
-      const entry = data.sceneObjects?.find((object) => object.id === objectId);
+      const entry =
+        data.sceneObjects?.find((object) => object.id === objectId) ||
+        (data.selectedSceneObjectName
+          ? data.sceneObjects?.find(
+              (object) => object.name === data.selectedSceneObjectName,
+            )
+          : undefined);
       if (entry) return { nodeId: node.id, object: entry };
+      return {
+        nodeId: node.id,
+        object: {
+          id: objectId,
+          name: data.selectedSceneObjectName || objectId,
+          kind: "mesh",
+        },
+      };
     }
     return null;
-  }, [hasCanvasNodeSelection, selectedSceneObject, nodes]);
+  }, [selectedSceneObject, nodes]);
 
   const selectSceneObject = useCallback(
     (canvasNodeId: string, entry: SceneObjectEntry) => {

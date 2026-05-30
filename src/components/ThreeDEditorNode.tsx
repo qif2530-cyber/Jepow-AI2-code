@@ -692,6 +692,13 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
       const objects =
         (modelNode.data as { sceneObjects?: SceneObjectEntry[] })
           ?.sceneObjects ?? [];
+      const commitSceneObject = (entry: SceneObjectEntry) => {
+        updateNodeData(modelNode.id, {
+          selectedSceneObjectId: entry.id,
+          selectedSceneObjectName: entry.name,
+        });
+        dispatchSceneObjectSelection({ nodeId: modelNode.id, object: entry });
+      };
       if (!objectId) {
         updateNodeData(modelNode.id, {
           selectedSceneObjectId: undefined,
@@ -700,15 +707,18 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
         dispatchSceneObjectSelection({ nodeId: modelNode.id, object: null });
         return;
       }
-      const entry = objects.find((row) => row.id === objectId);
+      const entry =
+        objects.find((row) => row.id === objectId) ||
+        objects.find((row) => row.name === objectId);
       if (entry) {
-        updateNodeData(modelNode.id, {
-          selectedSceneObjectId: entry.id,
-          selectedSceneObjectName: entry.name,
-        });
-        dispatchSceneObjectSelection({ nodeId: modelNode.id, object: entry });
+        commitSceneObject(entry);
         return;
       }
+      commitSceneObject({
+        id: objectId,
+        name: objectId,
+        kind: "mesh",
+      });
       const scenePath =
         (modelNode.data as { nativeScenePath?: string } | undefined)
           ?.nativeScenePath?.trim() || "";
@@ -716,16 +726,11 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
       void fetchSceneObjectList(scenePath).then((freshObjects) => {
         if (freshObjects.length === 0) return;
         updateNodeData(modelNode.id, { sceneObjects: freshObjects });
-        const resolved = freshObjects.find((row) => row.id === objectId);
+        const resolved =
+          freshObjects.find((row) => row.id === objectId) ||
+          freshObjects.find((row) => row.name === objectId);
         if (!resolved) return;
-        updateNodeData(modelNode.id, {
-          selectedSceneObjectId: resolved.id,
-          selectedSceneObjectName: resolved.name,
-        });
-        dispatchSceneObjectSelection({
-          nodeId: modelNode.id,
-          object: resolved,
-        });
+        commitSceneObject(resolved);
       });
     },
     [modelNode, updateNodeData],
@@ -1918,7 +1923,7 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
           viewportExpanded
             ? "relative min-h-0 flex-1 w-full"
             : "absolute inset-0"
-        } bg-neutral-950 overflow-hidden nodrag nowheel nopan z-0 select-none`}
+        } bg-black overflow-hidden nodrag nowheel nopan z-0 select-none`}
         onMouseDown={(e) => e.stopPropagation()}
         onTouchStart={(e) => e.stopPropagation()}
         onDragStart={(e) => e.preventDefault()}

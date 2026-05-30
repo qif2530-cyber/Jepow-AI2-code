@@ -957,8 +957,8 @@ impl ViewportSession {
 
     pub fn draw_frame(&mut self, output_path: &str, width: u32, height: u32) -> Result<u64> {
         let started = std::time::Instant::now();
-        let width = width.clamp(64, 2560);
-        let height = height.clamp(64, 1536);
+        let width = width.clamp(64, 4096);
+        let height = height.clamp(64, 4096);
         self.ensure_frame_size(width, height);
 
         let view = camera_mvp(width, height, self.camera);

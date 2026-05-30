@@ -1,4 +1,7 @@
-import { clientToRenderPixels } from "./viewport-pick-coords";
+import {
+  clientToRenderPixels,
+  clientToRenderPixelsFill,
+} from "./viewport-pick-coords";
 import type {
   ViewportCamera,
   ViewportObjectTransform,
@@ -11,6 +14,8 @@ export async function pickSceneObjectAtCursor(opts: {
   scenePath: string;
   width: number;
   height: number;
+  /** 画幅框与渲染同比例铺满时使用线性映射 */
+  filmFrameFill?: boolean;
   camera?: ViewportCamera;
   transform?: ViewportObjectTransform;
 }): Promise<string | null> {
@@ -18,13 +23,21 @@ export async function pickSceneObjectAtCursor(opts: {
   if (!path) return null;
   const api = window.jepowDesktop?.viewport;
   if (!api?.pickSceneObject) return null;
-  const mapped = clientToRenderPixels(
-    opts.clientX,
-    opts.clientY,
-    opts.containerRect,
-    opts.width,
-    opts.height,
-  );
+  const mapped = opts.filmFrameFill
+    ? clientToRenderPixelsFill(
+        opts.clientX,
+        opts.clientY,
+        opts.containerRect,
+        opts.width,
+        opts.height,
+      )
+    : clientToRenderPixels(
+        opts.clientX,
+        opts.clientY,
+        opts.containerRect,
+        opts.width,
+        opts.height,
+      );
   if (!mapped) return null;
   try {
     const cam = opts.camera ?? {};
