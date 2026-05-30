@@ -830,6 +830,8 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
         ? activeViewportMaterial
         : null;
   const jepAssignedSubmeshMaterials = inLightView ? [] : assignedSubmeshMaterials;
+  const jepPreviewMaxWidth = Math.min(2048, Math.max(640, jepRenderSettings.width));
+  const jepFilmFrameKey = `${jepRenderSettings.width}x${jepRenderSettings.height}`;
 
   // Position, Rotation, Scale configurations
   const [transform, setTransform] = useState({
@@ -2043,15 +2045,17 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
             onTouchStart={(e) => e.stopPropagation()}
           >
             <JepowViewportPreview
-              key={`${id}-mat-${materialPreviewRevision}-${sceneObjectMaterialsKey}-${inLightView ? "light" : "cam"}`}
+              key={`${id}-mat-${materialPreviewRevision}-${sceneObjectMaterialsKey}-${jepFilmFrameKey}-${inLightView ? "light" : "cam"}`}
               scenePath={resolvedScenePath}
               fill
               mode="orbit"
               liveRender={jepViewportLiveRender}
-              previewMaxWidth={2048}
+              previewMaxWidth={jepPreviewMaxWidth}
+              filmFrameWidth={jepRenderSettings.width}
+              filmFrameHeight={jepRenderSettings.height}
               native2KFinal
               jepRenderMode="physical-preview"
-              lockRenderSize
+              lockRenderSize={false}
               highPerformanceMode={false}
               shading={jepViewportShading}
               ghostOverlay={false}
@@ -2101,12 +2105,14 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
               onTouchStart={(e) => e.stopPropagation()}
             >
               <JepowViewportPreview
-                key={`${id}-mat-paused-${materialPreviewRevision}-${sceneObjectMaterialsKey}`}
+                key={`${id}-mat-paused-${materialPreviewRevision}-${sceneObjectMaterialsKey}-${jepFilmFrameKey}`}
                 scenePath={resolvedScenePath}
                 fill
                 mode="orbit"
                 liveRender={false}
-                previewMaxWidth={2048}
+                previewMaxWidth={jepPreviewMaxWidth}
+                filmFrameWidth={jepRenderSettings.width}
+                filmFrameHeight={jepRenderSettings.height}
                 native2KFinal
                 jepRenderMode="physical-preview"
                 shading={jepViewportShading}

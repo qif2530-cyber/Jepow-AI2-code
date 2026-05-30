@@ -80,6 +80,32 @@ export function focalLengthToFovRad(focalLengthMm: number, sensorWidthMm = 36): 
   return 2 * Math.atan(s / (2 * f));
 }
 
+/** 在容器内按比例居中放置成片画幅（letterbox / pillarbox）。 */
+export function fitFilmFrameInContainer(
+  containerW: number,
+  containerH: number,
+  filmW: number,
+  filmH: number,
+): { w: number; h: number; marginX: number; marginY: number } {
+  const safeW = Math.max(1, filmW);
+  const safeH = Math.max(1, filmH);
+  const ratio = safeW / safeH;
+  const boxW = Math.max(1, containerW);
+  const boxH = Math.max(1, containerH);
+  let w = boxW;
+  let h = w / ratio;
+  if (h > boxH) {
+    h = boxH;
+    w = h * ratio;
+  }
+  return {
+    w,
+    h,
+    marginX: (boxW - w) / 2,
+    marginY: (boxH - h) / 2,
+  };
+}
+
 export function applyAspectToResolution(
   aspect: string,
   baseWidth = 2048,

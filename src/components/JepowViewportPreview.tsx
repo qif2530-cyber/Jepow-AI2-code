@@ -16,6 +16,7 @@ import type {
   ViewportMaterialPreview,
   ViewportObjectTransform,
 } from "../lib/viewport-engine/types";
+import { fitFilmFrameInContainer } from "../lib/jep-renderer";
 
 function materialToHighlightPayload(mat: ViewportMaterialPreview | null | undefined) {
   if (!mat) return {};
@@ -75,6 +76,10 @@ interface JepowViewportPreviewProps {
   lockRenderSize?: boolean;
   /** 静态预览最大宽度（3D 编辑器默认 2048） */
   previewMaxWidth?: number;
+  /** JEP 渲染设置成片宽度（视口内按此比例 letterbox，离屏渲染对齐画幅） */
+  filmFrameWidth?: number;
+  /** JEP 渲染设置成片高度 */
+  filmFrameHeight?: number;
   /** final 质量时按 previewMaxWidth 离屏渲染（显示更清晰，与容器 CSS 尺寸无关） */
   native2KFinal?: boolean;
   /** Orbit 相机变化时同步给父组件，供 Cycles 使用同一视角。 */
@@ -126,11 +131,18 @@ function computeRenderSize(
   liveRender: boolean,
   previewMaxWidth = 2048,
   native2KFinal = false,
+  filmFrame?: { width: number; height: number },
 ) {
   const vw = Math.max(1, viewportW);
   const vh = Math.max(1, viewportH);
-  const aspect = vh / vw;
-  const finalCapW = Math.max(640, Math.min(2048, previewMaxWidth));
+  const hasFilm =
+    !!filmFrame && filmFrame.width > 0 && filmFrame.height > 0;
+  const aspect = hasFilm
+    ? filmFrame.height / filmFrame.width
+    : vh / vw;
+  const finalCapW = hasFilm
+    ? Math.max(640, Math.min(previewMaxWidth, filmFrame.width))
+    : Math.max(640, Math.min(2048, previewMaxWidth));
   const maxH = quality === "draft" ? 720 : Math.round((1536 * finalCapW) / 2048);
   if (quality === "final" && native2KFinal) {
     let w = finalCapW;
@@ -204,6 +216,8 @@ export function JepowViewportPreview({
   viewCamera,
   lockRenderSize = false,
   previewMaxWidth = 2048,
+  filmFrameWidth,
+  filmFrameHeight,
   native2KFinal = false,
   onCameraChange,
   onInteractingChange,
@@ -230,6 +244,19 @@ export function JepowViewportPreview({
     ],
   );
   const containerRef = useRef<HTMLDivElement>(null);
+  const filmFrameRef = useRef<HTMLDivElement>(null);
+  const filmActive =
+    fill &&
+    (filmFrameWidth ?? 0) > 0 &&
+    (filmFrameHeight ?? 0) > 0;
+  const filmFrameSpec = useMemo(
+    () =>
+      filmActive
+        ? { width: filmFrameWidth!, height: filmFrameHeight! }
+        : undefined,
+    [filmActive, filmFrameWidth, filmFrameHeight],
+  );
+  const [filmFrameLayout, setFilmFrameLayout] = useState({ w: 0, h: 0 });
   const staticPreviewSize = useRef({ w: 480, h: Math.max(200, height) });
   const [viewportSize, setViewportSize] = useState(() =>
     liveRender
@@ -391,6 +418,12 @@ export function JepowViewportPreview({
     if (!el) return;
     let debounce: ReturnType<typeof setTimeout> | null = null;
     const applySize = (w: number, h: number) => {
+      if (filmActive) {
+        lockedRenderSize.current = null;
+        setFilmFrameLayout({ w, h });
+        setViewportSize({ w, h });
+        return;
+      }
       if (lockRenderSize) {
         if (!lockedRenderSize.current) {
           lockedRenderSize.current = { w, h };
@@ -402,6 +435,18 @@ export function JepowViewportPreview({
     };
     const measure = () => {
       const r = el.getBoundingClientRect();
+      if (filmActive && filmFrameSpec) {
+        const fit = fitFilmFrameInContainer(
+          r.width,
+          r.height,
+          filmFrameSpec.width,
+          filmFrameSpec.height,
+        );
+        const w = Math.max(64, Math.round(fit.w));
+        const h = Math.max(64, Math.round(fit.h));
+        applySize(w, h);
+        return;
+      }
       const w = Math.max(280, Math.round(r.width));
       const h = Math.max(200, Math.round(r.height));
       if (lockRenderSize) {
@@ -418,12 +463,26 @@ export function JepowViewportPreview({
       ro.disconnect();
       if (debounce) clearTimeout(debounce);
     };
-  }, [fill, height, liveRender, lockRenderSize]);
+  }, [
+    fill,
+    height,
+    liveRender,
+    lockRenderSize,
+    filmActive,
+    filmFrameSpec,
+    filmFrameWidth,
+    filmFrameHeight,
+  ]);
 
   useEffect(() => {
-    if (!fill || !lockRenderSize) return;
+    if (!fill) return;
+    if (filmActive) {
+      lockedRenderSize.current = null;
+      return;
+    }
+    if (!lockRenderSize) return;
     lockedRenderSize.current = null;
-  }, [scenePath, fill, lockRenderSize]);
+  }, [scenePath, fill, lockRenderSize, filmActive, filmFrameWidth, filmFrameHeight]);
 
   const renderWithCamera = useCallback(
     async (
@@ -465,6 +524,7 @@ export function JepowViewportPreview({
           liveRender,
           previewMaxWidth,
           native2KFinal,
+          filmFrameSpec,
         );
         lastPickRenderSize.current = { w: previewW, h: previewH };
         const lit = mapEditorLighting(lightingRef.current);
@@ -573,6 +633,7 @@ export function JepowViewportPreview({
       liveRender,
       previewMaxWidth,
       native2KFinal,
+      filmFrameSpec,
     ],
   );
   const renderWithCameraRef = useRef(renderWithCamera);
@@ -601,6 +662,10 @@ export function JepowViewportPreview({
     engineReady,
     sceneMetaReady,
     liveRender,
+    viewportSize.w,
+    viewportSize.h,
+    filmFrameWidth,
+    filmFrameHeight,
   ]);
 
   const lastResetToken = useRef(0);
@@ -970,42 +1035,34 @@ export function JepowViewportPreview({
   }
 
   const shellClass = fill
-    ? "absolute inset-0 w-full h-full"
+    ? `absolute inset-0 w-full h-full ${filmActive ? "flex items-center justify-center" : ""}`
     : "relative w-full rounded-md overflow-hidden";
   const shellStyle = fill ? undefined : { height };
+  const interactionClass =
+    (liveRender || onSceneObjectPick || orbitOnly) && mode === "orbit"
+      ? "cursor-grab active:cursor-grabbing"
+      : "";
+  const interactionHandlers = {
+    onPointerDown,
+    onPointerMove,
+    onPointerUp,
+    onPointerCancel: onPointerUp,
+    onPointerLeave: onPointerUp,
+    onLostPointerCapture: onPointerUp,
+    onWheel,
+    onContextMenu: (e: React.MouseEvent) => e.preventDefault(),
+    onDragStart: (e: React.DragEvent) => e.preventDefault(),
+  };
 
-  return (
-    <div
-      ref={containerRef}
-      className={`${shellClass} nodrag nopan nowheel select-none ${
-        ghostOverlay ? "bg-transparent border-0" : "bg-neutral-950 border"
-      } ${
-        !ghostOverlay && !fill
-          ? mode === "orbit"
-            ? "border-purple-500/50"
-            : "border-emerald-500/40"
-          : ""
-      } ${
-        (liveRender || onSceneObjectPick || orbitOnly) && mode === "orbit"
-          ? "cursor-grab active:cursor-grabbing"
-          : ""
-      }`}
-      style={shellStyle}
-      onPointerDown={onPointerDown}
-      onPointerMove={onPointerMove}
-      onPointerUp={onPointerUp}
-      onPointerCancel={onPointerUp}
-      onPointerLeave={onPointerUp}
-      onLostPointerCapture={onPointerUp}
-      onWheel={onWheel}
-      onContextMenu={(e) => e.preventDefault()}
-      onDragStart={(e) => e.preventDefault()}
-    >
+  const viewportBody = (
+    <>
       {previewSrc ? (
         <img
           src={previewSrc}
           alt="Jepow native viewport"
-          className={`w-full h-full pointer-events-none select-none object-contain transition-opacity duration-75 [user-drag:none] [-webkit-user-drag:none] ${
+          className={`w-full h-full pointer-events-none select-none ${
+            filmActive ? "object-cover" : "object-contain"
+          } transition-opacity duration-75 [user-drag:none] [-webkit-user-drag:none] ${
             ghostOverlay ? "opacity-100 bg-[#1a1b1e]" : "opacity-100 bg-[#1a1b1e]"
           }`}
           style={{ imageRendering: "auto", WebkitUserDrag: "none" } as React.CSSProperties}
@@ -1095,6 +1152,44 @@ export function JepowViewportPreview({
           <RefreshCw className={`w-3.5 h-3.5 ${loading ? "animate-spin" : ""}`} />
         </Button>
       </div>
+    </>
+  );
+
+  return (
+    <div
+      ref={containerRef}
+      className={`${shellClass} nodrag nopan nowheel select-none ${
+        ghostOverlay ? "bg-transparent border-0" : "bg-neutral-950 border"
+      } ${
+        !ghostOverlay && !fill
+          ? mode === "orbit"
+            ? "border-purple-500/50"
+            : "border-emerald-500/40"
+          : ""
+      } ${filmActive ? "" : interactionClass}`}
+      style={shellStyle}
+      {...(filmActive ? {} : interactionHandlers)}
+    >
+      {filmActive ? (
+        <div
+          ref={filmFrameRef}
+          className={`relative shrink-0 overflow-hidden bg-[#1a1b1e] border border-cyan-500/35 shadow-[0_0_0_1px_rgba(0,0,0,0.6)] nodrag nopan nowheel select-none ${interactionClass}`}
+          style={{
+            width: filmFrameLayout.w > 0 ? filmFrameLayout.w : "100%",
+            height: filmFrameLayout.h > 0 ? filmFrameLayout.h : "100%",
+            maxWidth: "100%",
+            maxHeight: "100%",
+          }}
+          {...interactionHandlers}
+        >
+          {viewportBody}
+          <div className="absolute bottom-1 left-1/2 -translate-x-1/2 pointer-events-none rounded bg-black/65 px-1.5 py-0.5 text-[8px] font-mono text-cyan-200/90 border border-cyan-900/50">
+            {filmFrameWidth}×{filmFrameHeight}
+          </div>
+        </div>
+      ) : (
+        viewportBody
+      )}
     </div>
   );
 }
