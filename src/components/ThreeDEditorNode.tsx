@@ -678,8 +678,19 @@ export function ThreeDEditorNode({ id, data, selected }: ThreeDEditorNodeProps) 
   }, [modelNode, sceneObjectMaterialsKey, nodes, getNodes, getEdges]);
   const hasPerObjectViewportMaterial = assignedSubmeshMaterials.length > 0;
 
-  /** 选中反馈由原生引擎描边通道绘制，不再整片填充高亮 */
-  const viewportSelectionHighlightMaterial = null;
+  /** 选中反馈：原生引擎对子网格做半透明整片高亮（无外围描边） */
+  const viewportSelectionHighlightMaterial = useMemo(() => {
+    if (highlightSubmeshMaterial) return highlightSubmeshMaterial;
+    return {
+      tint: "#3db8ff",
+      roughness: 0.2,
+      metalness: 0,
+      specular: 0.2,
+      clearcoat: 0,
+      transmission: 0,
+      emissionStrength: 0.35,
+    };
+  }, [highlightSubmeshMaterial]);
 
   const [materialPreviewRevision, setMaterialPreviewRevision] = useState(0);
   useEffect(() => {

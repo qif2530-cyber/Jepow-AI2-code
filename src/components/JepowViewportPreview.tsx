@@ -510,9 +510,11 @@ export function JepowViewportPreview({
       debounce = setTimeout(() => applySize(w, h), 320);
     };
     measure();
+    const raf = requestAnimationFrame(() => measure());
     const ro = new ResizeObserver(measure);
     ro.observe(el);
     return () => {
+      cancelAnimationFrame(raf);
       ro.disconnect();
       if (debounce) clearTimeout(debounce);
     };
@@ -1303,24 +1305,32 @@ export function JepowViewportPreview({
               aria-hidden
             />
           ) : null}
-          {filmGateReady && filmLetterbox ? (
-            <div
-              ref={filmFrameRef}
-              className={`absolute z-20 overflow-hidden bg-[#0a0a0a] ring-1 ring-inset ring-cyan-400/45 shadow-[0_0_0_1px_rgba(0,0,0,1)] nodrag nopan nowheel select-none ${interactionClass}`}
-              style={{
-                left: filmLetterbox.left,
-                top: filmLetterbox.top,
-                width: filmLetterbox.width,
-                height: filmLetterbox.height,
-              }}
-              {...interactionHandlers}
-            >
-              {viewportBody}
+          <div
+            ref={filmFrameRef}
+            className={`absolute z-20 overflow-hidden bg-[#0a0a0a] nodrag nopan nowheel select-none ${interactionClass} ${
+              filmGateReady && filmLetterbox
+                ? "ring-1 ring-inset ring-cyan-400/45 shadow-[0_0_0_1px_rgba(0,0,0,1)]"
+                : ""
+            }`}
+            style={
+              filmGateReady && filmLetterbox
+                ? {
+                    left: filmLetterbox.left,
+                    top: filmLetterbox.top,
+                    width: filmLetterbox.width,
+                    height: filmLetterbox.height,
+                  }
+                : { left: 0, top: 0, right: 0, bottom: 0 }
+            }
+            {...interactionHandlers}
+          >
+            {viewportBody}
+            {filmGateReady ? (
               <div className="absolute bottom-1 left-1/2 -translate-x-1/2 pointer-events-none rounded bg-black/80 px-1.5 py-0.5 text-[8px] font-mono text-cyan-200/95 border border-cyan-800/60">
                 {filmFrameWidth}×{filmFrameHeight}
               </div>
-            </div>
-          ) : null}
+            ) : null}
+          </div>
         </>
       ) : (
         viewportBody

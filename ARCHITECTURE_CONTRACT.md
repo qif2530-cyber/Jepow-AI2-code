@@ -22,7 +22,7 @@ This is not a temporary implementation detail. Future changes must optimize with
 - Interactive viewport shading may approximate the same material (tint, roughness, metalness, emission, staged textures) while Cycles/CL owns path-traced final output.
 - Cycles resident mesh-cache updates may pass scalar principled parameters first; full `shaderGraph` and staged textures remain on the XML/export path until the bridge parity is filled in.
 - UI panels and material-gen nodes edit `cyclesMaterial` only; preview and render sessions read that object through the native 3D pipeline registry.
-- Native viewport orbit mode must support click-picking scene sub-objects (`pick_scene_object`) and draw a rim-outline highlight for the picked outliner id (FBX/glTF node ids), not a full-mesh fill overlay.
+- Native viewport orbit mode must support click-picking scene sub-objects (`pick_scene_object`) and draw a semi-transparent full-mesh highlight for the picked outliner id (FBX/glTF node ids), not a rim-outline pass.
 
 ## JEP Renderer Physical Rendering Target
 

@@ -1721,93 +1721,6 @@ export default function App() {
     object: SceneObjectEntry;
   } | null>(null);
 
-  useEffect(() => {
-    const onViewportPick = (event: Event) => {
-      const detail = (event as CustomEvent<SceneObjectSelectionDetail>).detail;
-      if (!detail?.nodeId) return;
-      if (!detail.object) {
-        setSelectedSceneObject(null);
-        return;
-      }
-      setSelectedSceneObject({
-        nodeId: detail.nodeId,
-        object: detail.object,
-      });
-      setSelectedNodes([]);
-      setRightPanelMode("properties");
-      setNodes((currentNodes) =>
-        currentNodes.map((item) => {
-          if (item.id === detail.nodeId) {
-            return {
-              ...item,
-              selected: false,
-              data: {
-                ...(item.data as Record<string, unknown>),
-                selectedSceneObjectId: detail.object.id,
-                selectedSceneObjectName: detail.object.name,
-              },
-            };
-          }
-          return { ...item, selected: false };
-        }),
-      );
-      const modelNode = nodes.find((node) => node.id === detail.nodeId);
-      const sceneObjects =
-        (modelNode?.data as { sceneObjects?: SceneObjectEntry[] } | undefined)
-          ?.sceneObjects ?? [];
-      const parentOverrides = (
-        modelNode?.data as
-          | { sceneObjectParentOverrides?: SceneObjectParentOverrides }
-          | undefined
-      )?.sceneObjectParentOverrides;
-      const parentById = new Map<string, string | null>();
-      for (const object of sceneObjects) {
-        parentById.set(
-          object.id,
-          parentOverrides && object.id in parentOverrides
-            ? parentOverrides[object.id]
-            : object.parentId ?? null,
-        );
-      }
-      const ancestors = new Set<string>();
-      let currentParent = parentById.get(detail.object.id) ?? null;
-      while (currentParent) {
-        ancestors.add(currentParent);
-        currentParent = parentById.get(currentParent) ?? null;
-      }
-      if (ancestors.size > 0) {
-        setCollapsedSceneObjectIds((current) => {
-          const next = new Set(current);
-          for (const ancestor of ancestors) next.delete(ancestor);
-          return next;
-        });
-      }
-      setCollapsedSceneModelSubtreeIds((current) => {
-        if (!current.has(detail.nodeId)) return current;
-        const next = new Set(current);
-        next.delete(detail.nodeId);
-        return next;
-      });
-      window.setTimeout(() => {
-        const rows = document.querySelectorAll<HTMLElement>(
-          "[data-scene-object-row]",
-        );
-        for (const row of rows) {
-          if (
-            row.dataset.canvasNodeId === detail.nodeId &&
-            row.dataset.sceneObjectId === detail.object.id
-          ) {
-            row.scrollIntoView({ block: "center", behavior: "smooth" });
-            break;
-          }
-        }
-      }, 80);
-    };
-    window.addEventListener(SCENE_OBJECT_SELECTION_EVENT, onViewportPick);
-    return () =>
-      window.removeEventListener(SCENE_OBJECT_SELECTION_EVENT, onViewportPick);
-  }, [nodes, setNodes]);
-
   const [shouldAutoLayout, setShouldAutoLayout] = useState(false);
   const [globalLayoutDirection, setGlobalLayoutDirection] = useState<
     "LR" | "TB" | "GRID"
@@ -7499,13 +7412,71 @@ export default function App() {
     return null;
   }, [selectedSceneObject, nodes]);
 
+  const scrollSceneObjectRowIntoView = useCallback(
+    (canvasNodeId: string, objectId: string, objectName?: string) => {
+      window.setTimeout(() => {
+        const rows = document.querySelectorAll<HTMLElement>(
+          "[data-scene-object-row]",
+        );
+        for (const row of rows) {
+          if (row.dataset.canvasNodeId !== canvasNodeId) continue;
+          if (
+            row.dataset.sceneObjectId === objectId ||
+            (objectName && row.dataset.sceneObjectName === objectName)
+          ) {
+            row.scrollIntoView({ block: "center", behavior: "smooth" });
+            break;
+          }
+        }
+      }, 80);
+    },
+    [],
+  );
+
   const selectSceneObject = useCallback(
     (canvasNodeId: string, entry: SceneObjectEntry) => {
       setSelectedSceneObject({ nodeId: canvasNodeId, object: entry });
       setSelectedNodes([]);
       setRightPanelMode("properties");
-      setNodes((currentNodes) =>
-        currentNodes.map((item) => {
+      setNodes((currentNodes) => {
+        const modelNode = currentNodes.find((n) => n.id === canvasNodeId);
+        const sceneObjects =
+          (modelNode?.data as { sceneObjects?: SceneObjectEntry[] } | undefined)
+            ?.sceneObjects ?? [];
+        const parentOverrides = (
+          modelNode?.data as
+            | { sceneObjectParentOverrides?: SceneObjectParentOverrides }
+            | undefined
+        )?.sceneObjectParentOverrides;
+        const parentById = new Map<string, string | null>();
+        for (const object of sceneObjects) {
+          parentById.set(
+            object.id,
+            parentOverrides && object.id in parentOverrides
+              ? parentOverrides[object.id]
+              : object.parentId ?? null,
+          );
+        }
+        const ancestors = new Set<string>();
+        let currentParent = parentById.get(entry.id) ?? null;
+        while (currentParent) {
+          ancestors.add(currentParent);
+          currentParent = parentById.get(currentParent) ?? null;
+        }
+        if (ancestors.size > 0) {
+          setCollapsedSceneObjectIds((current) => {
+            const next = new Set(current);
+            for (const ancestor of ancestors) next.delete(ancestor);
+            return next;
+          });
+        }
+        setCollapsedSceneModelSubtreeIds((current) => {
+          if (!current.has(canvasNodeId)) return current;
+          const next = new Set(current);
+          next.delete(canvasNodeId);
+          return next;
+        });
+        return currentNodes.map((item) => {
           if (item.id === canvasNodeId) {
             return {
               ...item,
@@ -7518,11 +7489,27 @@ export default function App() {
             };
           }
           return { ...item, selected: false };
-        }),
-      );
+        });
+      });
+      scrollSceneObjectRowIntoView(canvasNodeId, entry.id, entry.name);
     },
-    [setNodes],
+    [setNodes, scrollSceneObjectRowIntoView],
   );
+
+  useEffect(() => {
+    const onViewportPick = (event: Event) => {
+      const detail = (event as CustomEvent<SceneObjectSelectionDetail>).detail;
+      if (!detail?.nodeId) return;
+      if (!detail.object) {
+        setSelectedSceneObject(null);
+        return;
+      }
+      selectSceneObject(detail.nodeId, detail.object);
+    };
+    window.addEventListener(SCENE_OBJECT_SELECTION_EVENT, onViewportPick);
+    return () =>
+      window.removeEventListener(SCENE_OBJECT_SELECTION_EVENT, onViewportPick);
+  }, [selectSceneObject]);
 
   const setSceneObjectParentOverride = useCallback(
     (
@@ -7561,15 +7548,18 @@ export default function App() {
     materialAssignments?: Record<string, string>,
     materialTintByNodeId?: Record<string, string>,
   ): React.ReactNode => {
-    const nodeSelectedSceneObjectId = (
-      nodes.find((node) => node.id === canvasNodeId)?.data as
-        | { selectedSceneObjectId?: string }
-        | undefined
-    )?.selectedSceneObjectId;
+    const modelNodeData = nodes.find((node) => node.id === canvasNodeId)?.data as
+      | { selectedSceneObjectId?: string; selectedSceneObjectName?: string }
+      | undefined;
+    const nodeSelectedSceneObjectId = modelNodeData?.selectedSceneObjectId;
+    const nodeSelectedSceneObjectName = modelNodeData?.selectedSceneObjectName;
     const isObjectSelected =
       (effectiveSceneObjectSelection?.nodeId === canvasNodeId &&
-        effectiveSceneObjectSelection.object.id === entry.id) ||
-      nodeSelectedSceneObjectId === entry.id;
+        (effectiveSceneObjectSelection.object.id === entry.id ||
+          effectiveSceneObjectSelection.object.name === entry.name)) ||
+      nodeSelectedSceneObjectId === entry.id ||
+      (!!nodeSelectedSceneObjectName &&
+        nodeSelectedSceneObjectName === entry.name);
     const hasChildren = entry.children.length > 0;
     const isCollapsed = collapsedSceneObjectIds.has(entry.id);
     const assignedMatId = materialAssignments?.[entry.id];
@@ -7588,6 +7578,7 @@ export default function App() {
           data-scene-object-row="true"
           data-canvas-node-id={canvasNodeId}
           data-scene-object-id={entry.id}
+          data-scene-object-name={entry.name}
           onClick={(event) => {
             event.stopPropagation();
             if (sceneObjectDragRef.current) return;
@@ -7634,7 +7625,7 @@ export default function App() {
           }}
           className={`flex h-6 w-full items-center gap-1 px-2 text-left text-[10px] transition-colors outline-none ${
             isObjectSelected
-              ? "bg-cyan-500/30 text-cyan-50 ring-1 ring-inset ring-cyan-300/60"
+              ? "bg-blue-500/25 text-blue-100 shadow-[inset_0_-2px_0_0_rgba(96,165,250,0.95)]"
               : isDragTarget && sceneObjectDragRef.current
                 ? "bg-sky-500/10 text-sky-200/90 ring-1 ring-inset ring-sky-400/40"
                 : "text-neutral-500 hover:bg-white/[0.04] hover:text-neutral-300"
@@ -8567,7 +8558,14 @@ export default function App() {
                   onSelectionChange={({ nodes: picked }) => {
                     setSelectedNodes(picked);
                     if (picked.length > 0) {
-                      clearModelSceneObjectSelection();
+                      const clearsSubObjectSelection = picked.some(
+                        (n) =>
+                          n.type !== "threeDEditorNode" &&
+                          n.type !== "modelAssetNode",
+                      );
+                      if (clearsSubObjectSelection) {
+                        clearModelSceneObjectSelection();
+                      }
                       setRightPanelMode("properties");
                     }
                   }}
@@ -9500,17 +9498,7 @@ export default function App() {
                     </div>
                   ) : (
                     <>
-                  {!selectedPrimaryNode && !effectiveSceneObjectSelection ? (
-                    <div className="h-full min-h-[420px] rounded-xl border border-dashed border-white/10 bg-black/20 px-5 py-8 text-center flex flex-col items-center justify-center">
-                      <MousePointer2 className="mb-3 h-8 w-8 text-neutral-600" />
-                      <div className="text-[12px] font-black text-neutral-300">
-                        选择一个节点
-                      </div>
-                      <p className="mt-2 text-[10px] leading-relaxed text-neutral-500">
-                        点击画布节点或场景集合中的模型子对象，在这里查看可编辑参数。
-                      </p>
-                    </div>
-                  ) : effectiveSceneObjectSelection ? (
+                  {effectiveSceneObjectSelection ? (
                     (() => {
                       const parentNode = nodes.find(
                         (n) => n.id === effectiveSceneObjectSelection.nodeId,
@@ -9604,6 +9592,16 @@ export default function App() {
                         </div>
                       );
                     })()
+                  ) : !selectedPrimaryNode ? (
+                    <div className="h-full min-h-[420px] rounded-xl border border-dashed border-white/10 bg-black/20 px-5 py-8 text-center flex flex-col items-center justify-center">
+                      <MousePointer2 className="mb-3 h-8 w-8 text-neutral-600" />
+                      <div className="text-[12px] font-black text-neutral-300">
+                        选择一个节点
+                      </div>
+                      <p className="mt-2 text-[10px] leading-relaxed text-neutral-500">
+                        点击画布节点或场景集合中的模型子对象，在这里查看可编辑参数。
+                      </p>
+                    </div>
                   ) : (
                     <div className="space-y-3">
                       {(selectedPrimaryNode.type === "imageShotNode" ||
